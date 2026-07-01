@@ -36,6 +36,18 @@ async function init() {
     )
   `);
 
+  // `sessions` appartiene alla piattaforma strumenti; l'Hub la legge in sola
+  // lettura (conteggio strumenti compilati per cliente). Sul DB reale esiste già.
+  await query(`
+    CREATE TABLE IF NOT EXISTS sessions (
+      id         TEXT PRIMARY KEY,
+      client_id  TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+      tool       TEXT NOT NULL,
+      data       TEXT DEFAULT '{}',
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
   await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS telefono TEXT`);
   await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS tipo_percorso TEXT DEFAULT 'Individuale'`);
   await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS note_preliminari TEXT`);
