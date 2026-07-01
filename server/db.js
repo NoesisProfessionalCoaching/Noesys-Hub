@@ -1,9 +1,17 @@
 const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 
+// SSL: la rete privata di Railway (*.railway.internal) non usa SSL; le connessioni
+// pubbliche/proxy sì. Rileviamo dall'URL così funziona in entrambi i casi.
+function sslConfig() {
+  const url = process.env.DATABASE_URL || '';
+  if (url.includes('.railway.internal') || url.includes('localhost') || url.includes('127.0.0.1')) return false;
+  return { rejectUnauthorized: false };
+}
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+  ssl: sslConfig(),
 });
 
 async function query(text, params) {
