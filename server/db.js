@@ -68,6 +68,7 @@ async function init() {
   // Espansione anagrafica cliente (A2.4)
   await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS data_nascita DATE`);
   await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS citta TEXT`);
+  await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS indirizzo TEXT`);
   await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS professione TEXT`);
   await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS altro_recapito TEXT`);
   await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS area TEXT DEFAULT 'Personal'`);

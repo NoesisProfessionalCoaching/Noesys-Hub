@@ -120,7 +120,7 @@ router.post('/dashboard/clients/:id', requireCoach, express.json(), async (req, 
     const consenso = !!b.consenso_privacy;
     await db.query(
       `UPDATE clients SET
-        name=$1, email=$2, telefono=$3, altro_recapito=$4, data_nascita=$5, citta=$6,
+        name=$1, email=$2, telefono=$3, altro_recapito=$4, data_nascita=$5, indirizzo=$6,
         professione=$7, area=$8, fonte=$9, obiettivo=$10, stato_cliente=$11,
         prossima_azione=$12, prossima_azione_data=$13, drive_url=$14, note_preliminari=$15,
         consenso_privacy=$16,
@@ -128,7 +128,7 @@ router.post('/dashboard/clients/:id', requireCoach, express.json(), async (req, 
                              WHEN $16 THEN consenso_data ELSE NULL END
        WHERE id=$17`,
       [b.name.trim(), (b.email||'').trim(), (b.telefono||'').trim(), (b.altro_recapito||'').trim(),
-       b.data_nascita||null, (b.citta||'').trim(), (b.professione||'').trim(),
+       b.data_nascita||null, (b.indirizzo||'').trim(), (b.professione||'').trim(),
        b.area||'Personal', b.fonte||'altro', (b.obiettivo||'').trim(), b.stato_cliente||'attivo',
        (b.prossima_azione||'').trim(), b.prossima_azione_data||null, (b.drive_url||'').trim(),
        (b.note_preliminari||'').trim(), consenso, req.params.id]
@@ -449,7 +449,7 @@ function dashboardPage(clients, req) {
       const ac = AREA_COLOR[area] || '#1A5280';
       const st = STATO_CLIENTE[c.stato_cliente] || STATO_CLIENTE.attivo;
       const recall = c.prossima_azione
-        ? `${esc(c.prossima_azione)}${c.prossima_azione_data ? `<br><span style="font-size:11px;color:#aaa">${String(c.prossima_azione_data).slice(0,10)}</span>` : ''}`
+        ? `${esc(c.prossima_azione)}${c.prossima_azione_data ? `<br><span style="font-size:11px;color:#aaa">${itDate(c.prossima_azione_data)}</span>` : ''}`
         : '<span style="color:#ccc">—</span>';
       return `<tr onclick="location.href='/dashboard/clients/${c.id}'" style="cursor:pointer">
         <td><strong>${esc(c.name)}</strong>${c.email ? `<br><span style="color:#aaa;font-size:11px">${esc(c.email)}</span>` : ''}</td>
@@ -471,11 +471,13 @@ function dashboardPage(clients, req) {
       <div><h1>Clienti</h1><p style="color:#aaa;font-size:13px">${clients.length} clienti registrati</p></div>
       <button onclick="openNewClient()" class="btn btn-primary">+ Nuovo cliente</button>
     </div>
+    <input id="cerca" type="search" placeholder="🔍 Cerca cliente (nome, email, area…)" oninput="filtra()" style="margin-bottom:14px">
     <div class="card" style="padding:0;overflow:hidden">
       <table>
         <thead><tr><th>Cliente</th><th>Area</th><th>Stato</th><th>Percorso</th><th>Prossima azione</th><th></th></tr></thead>
-        <tbody>${rows}</tbody>
+        <tbody id="lista-clienti">${rows}</tbody>
       </table>
+      <div id="nessun-risultato" class="empty" style="display:none">Nessun cliente corrisponde alla ricerca.</div>
     </div>
   </div>
 
@@ -509,6 +511,16 @@ function dashboardPage(clients, req) {
 
   <script>
     const PLATFORM_URL = ${JSON.stringify(PLATFORM_URL)};
+    function filtra() {
+      const q = document.getElementById('cerca').value.trim().toLowerCase();
+      let visibili = 0;
+      document.querySelectorAll('#lista-clienti tr').forEach(tr => {
+        const match = tr.textContent.toLowerCase().includes(q);
+        tr.style.display = match ? '' : 'none';
+        if (match) visibili++;
+      });
+      document.getElementById('nessun-risultato').style.display = visibili ? 'none' : 'block';
+    }
     function openNewClient() {
       document.getElementById('modal-overlay').style.display = 'flex';
       document.getElementById('new-result').style.display = 'none';
@@ -583,7 +595,7 @@ function clientDetailPage(client, sessions, percorsi, payments, req) {
             </td>
             <td>${p.prezzo ? `€ ${Number(p.prezzo).toLocaleString('it-IT',{minimumFractionDigits:2})}` : '<span style="color:#aaa">—</span>'}</td>
             <td>${p.promo ? `<span class="badge badge-pausa">Promo</span>${p.sconto_note ? ` <span style="font-size:11px;color:#aaa">${esc(p.sconto_note)}</span>` : ''}` : '<span style="color:#aaa;font-size:12px">—</span>'}</td>
-            <td style="font-size:12px;color:#aaa">${p.data_inizio ? String(p.data_inizio).slice(0,10) : '—'}</td>
+            <td style="font-size:12px;color:#aaa">${p.data_inizio ? itDate(p.data_inizio) : '—'}</td>
             <td><span class="badge ${p.stato==='attivo'?'badge-active':'badge-inactive'}">${p.stato==='attivo'?'Attivo':'Concluso'}</span></td>
             <td>${p.stato==='attivo' ? `<button onclick="chiudiPercorso('${p.id}')" class="btn btn-neutral btn-sm">Chiudi</button>` : ''}</td>
           </tr>`).join('')}
@@ -612,7 +624,7 @@ function clientDetailPage(client, sessions, percorsi, payments, req) {
           ${payments.map(p => `<tr>
             <td><strong>€ ${Number(p.importo).toLocaleString('it-IT',{minimumFractionDigits:2})}</strong></td>
             <td style="font-size:12px">${esc(p.tipo)}</td>
-            <td style="font-size:12px;color:#aaa">${p.data_pagamento ? String(p.data_pagamento).slice(0,10) : '—'}</td>
+            <td style="font-size:12px;color:#aaa">${p.data_pagamento ? itDate(p.data_pagamento) : '—'}</td>
             <td>${p.stato==='ricevuto' ? `<span class="badge badge-active">Ricevuto</span>` : `<span class="badge badge-inactive">In attesa</span>`}</td>
             <td style="font-size:12px;color:#aaa">${esc(p.note||'')}</td>
             <td style="white-space:nowrap">
@@ -641,7 +653,7 @@ function clientDetailPage(client, sessions, percorsi, payments, req) {
   const recallHtml = client.prossima_azione ? `
     <div style="margin-top:12px;font-size:13px;background:#fff8ec;padding:10px 14px;border-radius:8px;border-left:3px solid var(--gold)">
       <strong>Prossima azione:</strong> ${esc(client.prossima_azione)}
-      ${client.prossima_azione_data ? ` — <span style="color:#7a5c00">${String(client.prossima_azione_data).slice(0,10)}</span>` : ''}
+      ${client.prossima_azione_data ? ` — <span style="color:#7a5c00">${itDate(client.prossima_azione_data)}</span>` : ''}
     </div>` : '';
 
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — ${esc(client.name)}</title>${baseStyle()}</head><body>
@@ -658,15 +670,19 @@ function clientDetailPage(client, sessions, percorsi, payments, req) {
             <span class="badge ${st.cls}">${st.label}</span>
             ${!client.active ? `<span class="badge badge-inactive" title="Accesso agli strumenti disattivato">🔒 Accesso off</span>` : ''}
           </div>
+          <div style="margin-top:14px"><div class="field-label">Indirizzo</div><div class="field-value">${val(client.indirizzo)}</div></div>
+          <div style="margin-top:12px"><div class="field-label">Contatti</div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-top:4px">
+              <div><span style="font-size:11px;color:var(--hint)">Telefono</span><div class="field-value">${val(client.telefono)}</div></div>
+              <div><span style="font-size:11px;color:var(--hint)">Email</span><div class="field-value">${val(client.email)}</div></div>
+              <div><span style="font-size:11px;color:var(--hint)">Altro</span><div class="field-value">${val(client.altro_recapito)}</div></div>
+            </div>
+          </div>
           <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-top:12px">
-            <div><div class="field-label">Email</div><div class="field-value">${val(client.email)}</div></div>
-            <div><div class="field-label">Telefono</div><div class="field-value">${val(client.telefono)}</div></div>
-            <div><div class="field-label">Altro recapito</div><div class="field-value">${val(client.altro_recapito)}</div></div>
+            <div><div class="field-label">Data di nascita</div><div class="field-value">${client.data_nascita ? itDate(client.data_nascita) : '<span style="color:#ccc">—</span>'}</div></div>
             <div><div class="field-label">Professione</div><div class="field-value">${val(client.professione)}</div></div>
-            <div><div class="field-label">Città</div><div class="field-value">${val(client.citta)}</div></div>
-            <div><div class="field-label">Data di nascita</div><div class="field-value">${client.data_nascita ? String(client.data_nascita).slice(0,10) : '<span style="color:#ccc">—</span>'}</div></div>
             <div><div class="field-label">Come ci ha conosciuto</div><div class="field-value">${FONTE_LABEL[client.fonte]||val(client.fonte)}</div></div>
-            <div><div class="field-label">Consenso privacy</div><div class="field-value">${client.consenso_privacy ? `Sì${client.consenso_data ? ` (${String(client.consenso_data).slice(0,10)})` : ''}` : '<span style="color:#ccc">No</span>'}</div></div>
+            <div><div class="field-label">Consenso privacy</div><div class="field-value">${client.consenso_privacy ? `Sì${client.consenso_data ? ` (${itDate(client.consenso_data)})` : ''}` : '<span style="color:#ccc">No</span>'}</div></div>
           </div>
           ${client.obiettivo ? `<div style="margin-top:14px"><div class="field-label">Obiettivo / motivo</div><div style="font-size:13px;background:#f8f9fb;padding:10px 12px;border-radius:8px;border-left:3px solid var(--blue)">${esc(client.obiettivo)}</div></div>` : ''}
           ${client.note_preliminari ? `<div style="margin-top:10px"><div class="field-label">Note CRM</div><div style="font-size:13px;color:#6B7280">${esc(client.note_preliminari)}</div></div>` : ''}
@@ -698,21 +714,22 @@ function clientDetailPage(client, sessions, percorsi, payments, req) {
     <div class="modal-box">
       <h2 style="margin-bottom:16px">Modifica dati cliente</h2>
       <div class="form-group"><label>Nome e cognome *</label><input id="e-name" type="text" value="${attr(client.name)}"></div>
+      <div class="form-group"><label>Indirizzo completo</label><input id="e-indirizzo" type="text" value="${attr(client.indirizzo)}" placeholder="via, numero, CAP, città"></div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div class="form-group"><label>Email</label><input id="e-email" type="email" value="${attr(client.email)}"></div>
         <div class="form-group"><label>Telefono</label><input id="e-tel" type="tel" value="${attr(client.telefono)}"></div>
+        <div class="form-group"><label>Email</label><input id="e-email" type="email" value="${attr(client.email)}"></div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
         <div class="form-group"><label>Altro recapito / social</label><input id="e-altro" type="text" value="${attr(client.altro_recapito)}"></div>
         <div class="form-group"><label>Professione / ruolo</label><input id="e-prof" type="text" value="${attr(client.professione)}"></div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div class="form-group"><label>Città</label><input id="e-citta" type="text" value="${attr(client.citta)}"></div>
         <div class="form-group"><label>Data di nascita</label><input id="e-nascita" type="date" value="${client.data_nascita ? String(client.data_nascita).slice(0,10) : ''}"></div>
+        <div class="form-group"><label>Area</label><select id="e-area">${areaOptions(area)}</select></div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div class="form-group"><label>Area</label><select id="e-area">${areaOptions(area)}</select></div>
         <div class="form-group"><label>Come ci ha conosciuto</label><select id="e-fonte">${fonteOptions(client.fonte||'altro')}</select></div>
+        <div class="form-group"></div>
       </div>
       <div class="form-group"><label>Obiettivo / motivo del percorso</label><textarea id="e-obiettivo">${esc(client.obiettivo||'')}</textarea></div>
       <hr style="border:none;border-top:1px solid var(--line);margin:6px 0 14px">
@@ -795,7 +812,7 @@ function clientDetailPage(client, sessions, percorsi, payments, req) {
       const payload = {
         name, email:document.getElementById('e-email').value, telefono:document.getElementById('e-tel').value,
         altro_recapito:document.getElementById('e-altro').value, professione:document.getElementById('e-prof').value,
-        citta:document.getElementById('e-citta').value, data_nascita:document.getElementById('e-nascita').value||null,
+        indirizzo:document.getElementById('e-indirizzo').value, data_nascita:document.getElementById('e-nascita').value||null,
         area:document.getElementById('e-area').value, fonte:document.getElementById('e-fonte').value,
         obiettivo:document.getElementById('e-obiettivo').value, stato_cliente:document.getElementById('e-stato').value,
         prossima_azione:document.getElementById('e-azione').value, prossima_azione_data:document.getElementById('e-azione-data').value||null,
@@ -879,7 +896,7 @@ function leadsPage(leads, req) {
       </td>
       <td><span class="badge" style="background:${sc.bg};color:${sc.color}">${sc.label}</span></td>
       <td style="font-size:12px;color:#aaa">${FONTE_LABEL[l.fonte]||l.fonte}</td>
-      <td style="font-size:12px;color:#aaa">${l.data_prossimo_contatto ? String(l.data_prossimo_contatto).slice(0,10) : '—'}</td>
+      <td style="font-size:12px;color:#aaa">${l.data_prossimo_contatto ? itDate(l.data_prossimo_contatto) : '—'}</td>
       <td style="font-size:12px;color:#4a5568;max-width:180px">${esc(l.note||'')}</td>
       <td style="white-space:nowrap">
         <button onclick="editLead('${l.id}','${attr(l.nome)}','${attr(l.cognome||'')}','${attr(l.email||'')}','${attr(l.telefono||'')}','${l.fonte}','${l.stato}','${attr(l.note||'')}','${l.data_prossimo_contatto?String(l.data_prossimo_contatto).slice(0,10):''}')" class="btn btn-neutral btn-sm">Modifica</button>
@@ -896,6 +913,8 @@ function leadsPage(leads, req) {
       <div><h1>Lead</h1><p style="color:#aaa;font-size:13px">${attivi.length} attivi · ${archiviati.length} archiviati</p></div>
       <button onclick="openNew()" class="btn btn-primary">+ Nuovo lead</button>
     </div>
+
+    <input id="cerca" type="search" placeholder="🔍 Cerca lead (nome, email, telefono…)" oninput="filtra()" style="margin-bottom:14px">
 
     <div class="card" style="padding:0;overflow:hidden">
       <table>
@@ -942,6 +961,12 @@ function leadsPage(leads, req) {
   </div>
 
   <script>
+    function filtra() {
+      const q = document.getElementById('cerca').value.trim().toLowerCase();
+      document.querySelectorAll('tbody tr').forEach(tr => {
+        tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none';
+      });
+    }
     function openNew() {
       document.getElementById('modal-lead-title').textContent='Nuovo lead';
       document.getElementById('lead-id').value='';
@@ -1066,6 +1091,14 @@ function fmtDate(d) {
   if (!d) return '—';
   const s = d instanceof Date ? d.toISOString() : String(d);
   return s.slice(0, 16).replace('T', ' ');
+}
+
+// Data 'AAAA-MM-GG' → 'GG/MM/AAAA' (formato italiano per la visualizzazione).
+function itDate(d) {
+  if (!d) return '';
+  const s = String(d).slice(0, 10);
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : s;
 }
 
 function esc(str) {
