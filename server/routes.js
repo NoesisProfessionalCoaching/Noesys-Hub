@@ -14,6 +14,7 @@ const PLATFORM_URL = process.env.PLATFORM_URL || 'https://coaching-tools-product
 // Fonti condivise tra lead e clienti (niente Calendly: non è una fonte).
 const FONTI = ['sito', 'social', 'linkedin', 'passaparola', 'ebook', 'altro'];
 const FONTE_LABEL = { sito:'Sito', social:'Social', linkedin:'LinkedIn', passaparola:'Passaparola', ebook:'E-book', altro:'Altro' };
+const SOCIAL = ['Facebook', 'Instagram', 'LinkedIn', 'Altro'];
 const AREE = ['Personal', 'Business', 'Young'];
 const AREA_COLOR = { Personal:'#1A5280', Business:'#4F8B73', Young:'#D8AE2E' };
 const STATO_CLIENTE = {
@@ -120,15 +121,17 @@ router.post('/dashboard/clients/:id', requireCoach, express.json(), async (req, 
     const consenso = !!b.consenso_privacy;
     await db.query(
       `UPDATE clients SET
-        name=$1, email=$2, telefono=$3, altro_recapito=$4, data_nascita=$5, indirizzo=$6,
-        professione=$7, area=$8, fonte=$9, obiettivo=$10, stato_cliente=$11,
-        prossima_azione=$12, prossima_azione_data=$13, drive_url=$14, note_preliminari=$15,
-        consenso_privacy=$16,
-        consenso_data = CASE WHEN $16 AND consenso_data IS NULL THEN CURRENT_DATE
-                             WHEN $16 THEN consenso_data ELSE NULL END
-       WHERE id=$17`,
+        name=$1, email=$2, telefono=$3, altro_recapito=$4, social_tipo=$5,
+        via=$6, cap=$7, citta=$8, provincia=$9, data_nascita=$10,
+        professione=$11, area=$12, fonte=$13, obiettivo=$14, stato_cliente=$15,
+        prossima_azione=$16, prossima_azione_data=$17, drive_url=$18, note_preliminari=$19,
+        consenso_privacy=$20,
+        consenso_data = CASE WHEN $20 AND consenso_data IS NULL THEN CURRENT_DATE
+                             WHEN $20 THEN consenso_data ELSE NULL END
+       WHERE id=$21`,
       [b.name.trim(), (b.email||'').trim(), (b.telefono||'').trim(), (b.altro_recapito||'').trim(),
-       b.data_nascita||null, (b.indirizzo||'').trim(), (b.professione||'').trim(),
+       (b.social_tipo||'').trim(), (b.via||'').trim(), (b.cap||'').trim(), (b.citta||'').trim(),
+       (b.provincia||'').trim(), b.data_nascita||null, (b.professione||'').trim(),
        b.area||'Personal', b.fonte||'altro', (b.obiettivo||'').trim(), b.stato_cliente||'attivo',
        (b.prossima_azione||'').trim(), b.prossima_azione_data||null, (b.drive_url||'').trim(),
        (b.note_preliminari||'').trim(), consenso, req.params.id]
@@ -420,6 +423,19 @@ function fonteOptions(sel) {
 function areaOptions(sel) {
   return AREE.map(a => `<option value="${a}"${a===sel?' selected':''}>${a}</option>`).join('');
 }
+function socialOptions(sel) {
+  return `<option value="">—</option>` + SOCIAL.map(s => `<option value="${s}"${s===sel?' selected':''}>${s}</option>`).join('');
+}
+// Compone l'indirizzo in una riga leggibile: "Via Roma 12, 20100 Milano (MI)".
+function composeAddress(c) {
+  const parts = [];
+  if (c.via) parts.push(c.via);
+  const cc = [c.cap, c.citta].filter(Boolean).join(' ');
+  if (cc) parts.push(cc);
+  let addr = parts.join(', ');
+  if (c.provincia) addr += ` (${c.provincia})`;
+  return addr;
+}
 
 // ═══════════════════════════════════════════════════════
 // PAGINE
@@ -670,12 +686,12 @@ function clientDetailPage(client, sessions, percorsi, payments, req) {
             <span class="badge ${st.cls}">${st.label}</span>
             ${!client.active ? `<span class="badge badge-inactive" title="Accesso agli strumenti disattivato">🔒 Accesso off</span>` : ''}
           </div>
-          <div style="margin-top:14px"><div class="field-label">Indirizzo</div><div class="field-value">${val(client.indirizzo)}</div></div>
+          <div style="margin-top:14px"><div class="field-label">Indirizzo</div><div class="field-value">${composeAddress(client) ? esc(composeAddress(client)) : '<span style="color:#ccc">—</span>'}</div></div>
           <div style="margin-top:12px"><div class="field-label">Contatti</div>
             <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-top:4px">
               <div><span style="font-size:11px;color:var(--hint)">Telefono</span><div class="field-value">${val(client.telefono)}</div></div>
               <div><span style="font-size:11px;color:var(--hint)">Email</span><div class="field-value">${val(client.email)}</div></div>
-              <div><span style="font-size:11px;color:var(--hint)">Altro</span><div class="field-value">${val(client.altro_recapito)}</div></div>
+              <div><span style="font-size:11px;color:var(--hint)">Social</span><div class="field-value">${client.altro_recapito ? `${client.social_tipo ? `<strong>${esc(client.social_tipo)}</strong> · ` : ''}${esc(client.altro_recapito)}` : '<span style="color:#ccc">—</span>'}</div></div>
             </div>
           </div>
           <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-top:12px">
@@ -714,22 +730,27 @@ function clientDetailPage(client, sessions, percorsi, payments, req) {
     <div class="modal-box">
       <h2 style="margin-bottom:16px">Modifica dati cliente</h2>
       <div class="form-group"><label>Nome e cognome *</label><input id="e-name" type="text" value="${attr(client.name)}"></div>
-      <div class="form-group"><label>Indirizzo completo</label><input id="e-indirizzo" type="text" value="${attr(client.indirizzo)}" placeholder="via, numero, CAP, città"></div>
+      <div class="form-group"><label>Via e numero civico</label><input id="e-via" type="text" value="${attr(client.via)}" placeholder="es. Via Roma 12"></div>
+      <div style="display:grid;grid-template-columns:1fr 2fr 1fr;gap:12px">
+        <div class="form-group"><label>CAP</label><input id="e-cap" type="text" value="${attr(client.cap)}"></div>
+        <div class="form-group"><label>Città</label><input id="e-citta" type="text" value="${attr(client.citta)}"></div>
+        <div class="form-group"><label>Provincia</label><input id="e-provincia" type="text" value="${attr(client.provincia)}" maxlength="4" placeholder="MI"></div>
+      </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
         <div class="form-group"><label>Telefono</label><input id="e-tel" type="tel" value="${attr(client.telefono)}"></div>
         <div class="form-group"><label>Email</label><input id="e-email" type="email" value="${attr(client.email)}"></div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div class="form-group"><label>Altro recapito / social</label><input id="e-altro" type="text" value="${attr(client.altro_recapito)}"></div>
+        <div class="form-group"><label>Social</label><select id="e-social-tipo">${socialOptions(client.social_tipo)}</select></div>
+        <div class="form-group"><label>Contatto social (username / link)</label><input id="e-altro" type="text" value="${attr(client.altro_recapito)}"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
         <div class="form-group"><label>Professione / ruolo</label><input id="e-prof" type="text" value="${attr(client.professione)}"></div>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
         <div class="form-group"><label>Data di nascita</label><input id="e-nascita" type="date" value="${client.data_nascita ? String(client.data_nascita).slice(0,10) : ''}"></div>
-        <div class="form-group"><label>Area</label><select id="e-area">${areaOptions(area)}</select></div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group"><label>Area</label><select id="e-area">${areaOptions(area)}</select></div>
         <div class="form-group"><label>Come ci ha conosciuto</label><select id="e-fonte">${fonteOptions(client.fonte||'altro')}</select></div>
-        <div class="form-group"></div>
       </div>
       <div class="form-group"><label>Obiettivo / motivo del percorso</label><textarea id="e-obiettivo">${esc(client.obiettivo||'')}</textarea></div>
       <hr style="border:none;border-top:1px solid var(--line);margin:6px 0 14px">
@@ -811,8 +832,10 @@ function clientDetailPage(client, sessions, percorsi, payments, req) {
       if (!name) { err.textContent='Il nome è obbligatorio'; err.style.display='block'; return; }
       const payload = {
         name, email:document.getElementById('e-email').value, telefono:document.getElementById('e-tel').value,
-        altro_recapito:document.getElementById('e-altro').value, professione:document.getElementById('e-prof').value,
-        indirizzo:document.getElementById('e-indirizzo').value, data_nascita:document.getElementById('e-nascita').value||null,
+        altro_recapito:document.getElementById('e-altro').value, social_tipo:document.getElementById('e-social-tipo').value,
+        via:document.getElementById('e-via').value, cap:document.getElementById('e-cap').value,
+        citta:document.getElementById('e-citta').value, provincia:document.getElementById('e-provincia').value,
+        professione:document.getElementById('e-prof').value, data_nascita:document.getElementById('e-nascita').value||null,
         area:document.getElementById('e-area').value, fonte:document.getElementById('e-fonte').value,
         obiettivo:document.getElementById('e-obiettivo').value, stato_cliente:document.getElementById('e-stato').value,
         prossima_azione:document.getElementById('e-azione').value, prossima_azione_data:document.getElementById('e-azione-data').value||null,

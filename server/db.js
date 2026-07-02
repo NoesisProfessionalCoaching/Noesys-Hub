@@ -69,6 +69,10 @@ async function init() {
   await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS data_nascita DATE`);
   await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS citta TEXT`);
   await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS indirizzo TEXT`);
+  await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS via TEXT`);
+  await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS cap TEXT`);
+  await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS provincia TEXT`);
+  await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS social_tipo TEXT`);
   await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS professione TEXT`);
   await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS altro_recapito TEXT`);
   await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS area TEXT DEFAULT 'Personal'`);
