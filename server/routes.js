@@ -11,6 +11,17 @@ const router = express.Router();
 // porta agli STRUMENTI, non all'Hub: qui gestiamo solo il CRM.
 const PLATFORM_URL = process.env.PLATFORM_URL || 'https://coaching-tools-production.up.railway.app';
 
+// Fonti condivise tra lead e clienti (niente Calendly: non è una fonte).
+const FONTI = ['sito', 'social', 'linkedin', 'passaparola', 'ebook', 'altro'];
+const FONTE_LABEL = { sito:'Sito', social:'Social', linkedin:'LinkedIn', passaparola:'Passaparola', ebook:'E-book', altro:'Altro' };
+const AREE = ['Personal', 'Business', 'Young'];
+const AREA_COLOR = { Personal:'#1A5280', Business:'#4F8B73', Young:'#D8AE2E' };
+const STATO_CLIENTE = {
+  attivo:    { label:'Attivo',   cls:'badge-active' },
+  'in pausa':{ label:'In pausa', cls:'badge-pausa' },
+  concluso:  { label:'Concluso', cls:'badge-inactive' },
+};
+
 // ═══════════════════════════════════════════════════════
 // AUTH COACH (stesso account della piattaforma strumenti)
 // ═══════════════════════════════════════════════════════
@@ -50,7 +61,11 @@ router.get('/', (req, res) => res.redirect('/dashboard'));
 router.get('/dashboard', requireCoach, async (req, res) => {
   try {
     const result = await db.query(`
-      SELECT c.*, (SELECT COUNT(*) FROM sessions s WHERE s.client_id = c.id) as tool_count
+      SELECT c.*,
+        (SELECT COUNT(*) FROM sessions s WHERE s.client_id = c.id) AS tool_count,
+        (SELECT p.tipo || ' · ' || p.n_sessioni_fatte || '/' || p.n_sessioni_previste
+           FROM percorsi p WHERE p.client_id = c.id AND p.stato = 'attivo'
+           ORDER BY p.created_at DESC LIMIT 1) AS percorso_attivo
       FROM clients c ORDER BY c.created_at DESC
     `);
     res.send(dashboardPage(result.rows, req));
@@ -61,19 +76,67 @@ router.get('/dashboard', requireCoach, async (req, res) => {
 });
 
 router.post('/dashboard/clients', requireCoach, express.json(), async (req, res) => {
-  const { name, email, telefono, tipo_percorso, note_preliminari } = req.body;
+  const { name, email, telefono, area, fonte, obiettivo } = req.body;
   if (!name) return res.status(400).json({ error: 'Nome obbligatorio' });
   const id    = uuidv4();
   const token = uuidv4().replace(/-/g, '');
   try {
     await db.query(
-      'INSERT INTO clients (id, name, email, telefono, tipo_percorso, note_preliminari, token) VALUES ($1,$2,$3,$4,$5,$6,$7)',
-      [id, name.trim(), (email||'').trim(), (telefono||'').trim(), tipo_percorso||'Individuale', (note_preliminari||'').trim(), token]
+      `INSERT INTO clients (id, name, email, telefono, area, fonte, obiettivo, token)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [id, name.trim(), (email||'').trim(), (telefono||'').trim(),
+       area||'Personal', fonte||'altro', (obiettivo||'').trim(), token]
     );
     res.json({ id, token });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Errore creazione cliente' });
+  }
+});
+
+router.get('/dashboard/clients/:id', requireCoach, async (req, res) => {
+  try {
+    const cr = await db.query('SELECT * FROM clients WHERE id = $1', [req.params.id]);
+    const client = cr.rows[0];
+    if (!client) return res.redirect('/dashboard');
+    const [sr, pr, payr] = await Promise.all([
+      db.query('SELECT * FROM sessions WHERE client_id=$1 ORDER BY updated_at DESC', [req.params.id]),
+      db.query('SELECT * FROM percorsi WHERE client_id=$1 ORDER BY created_at ASC', [req.params.id]),
+      db.query('SELECT * FROM payments WHERE client_id=$1 ORDER BY created_at DESC', [req.params.id]),
+    ]);
+    res.send(clientDetailPage(client, sr.rows, pr.rows, payr.rows, req));
+  } catch (err) {
+    console.error(err);
+    res.redirect('/dashboard');
+  }
+});
+
+// Aggiornamento dati anagrafici cliente
+router.post('/dashboard/clients/:id', requireCoach, express.json(), async (req, res) => {
+  const b = req.body;
+  if (!b.name || !b.name.trim()) return res.status(400).json({ error: 'Nome obbligatorio' });
+  try {
+    // Se il consenso è appena stato dato e non c'era una data, la impostiamo a oggi.
+    const consenso = !!b.consenso_privacy;
+    await db.query(
+      `UPDATE clients SET
+        name=$1, email=$2, telefono=$3, altro_recapito=$4, data_nascita=$5, citta=$6,
+        professione=$7, area=$8, fonte=$9, obiettivo=$10, stato_cliente=$11,
+        prossima_azione=$12, prossima_azione_data=$13, drive_url=$14, note_preliminari=$15,
+        consenso_privacy=$16,
+        consenso_data = CASE WHEN $16 AND consenso_data IS NULL THEN CURRENT_DATE
+                             WHEN $16 THEN consenso_data ELSE NULL END
+       WHERE id=$17`,
+      [b.name.trim(), (b.email||'').trim(), (b.telefono||'').trim(), (b.altro_recapito||'').trim(),
+       b.data_nascita||null, (b.citta||'').trim(), (b.professione||'').trim(),
+       b.area||'Personal', b.fonte||'altro', (b.obiettivo||'').trim(), b.stato_cliente||'attivo',
+       (b.prossima_azione||'').trim(), b.prossima_azione_data||null, (b.drive_url||'').trim(),
+       (b.note_preliminari||'').trim(), consenso, req.params.id]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Errore salvataggio' });
   }
 });
 
@@ -84,6 +147,115 @@ router.post('/dashboard/clients/:id/toggle', requireCoach, async (req, res) => {
     if (!client) return res.status(404).json({ error: 'Cliente non trovato' });
     await db.query('UPDATE clients SET active = $1 WHERE id = $2', [!client.active, client.id]);
     res.json({ active: !client.active });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Errore' });
+  }
+});
+
+router.get('/dashboard/clients/:id/data', requireCoach, async (req, res) => {
+  try {
+    const cr = await db.query('SELECT * FROM clients WHERE id = $1', [req.params.id]);
+    const client = cr.rows[0];
+    if (!client) return res.status(404).json({ error: 'Non trovato' });
+    const sr = await db.query('SELECT * FROM sessions WHERE client_id = $1', [req.params.id]);
+    res.json({ client, sessions: sr.rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Errore' });
+  }
+});
+
+router.delete('/dashboard/clients/:id', requireCoach, async (req, res) => {
+  try {
+    await db.query('DELETE FROM clients WHERE id = $1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Errore' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════
+// PERCORSI
+// ═══════════════════════════════════════════════════════
+
+router.post('/dashboard/clients/:id/percorsi', requireCoach, express.json(), async (req, res) => {
+  const { tipo, n_sessioni_previste, prezzo, promo, sconto_note, data_inizio } = req.body;
+  try {
+    const pid = uuidv4();
+    await db.query(
+      `INSERT INTO percorsi (id,client_id,tipo,n_sessioni_previste,prezzo,promo,sconto_note,data_inizio)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [pid, req.params.id, tipo||'Individuale', n_sessioni_previste||8,
+       prezzo||null, promo||false, sconto_note||'', data_inizio||null]
+    );
+    res.json({ ok: true, id: pid });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Errore' });
+  }
+});
+
+router.post('/dashboard/clients/:id/percorsi/:pid/sessione', requireCoach, express.json(), async (req, res) => {
+  try {
+    await db.query(
+      'UPDATE percorsi SET n_sessioni_fatte = GREATEST(0, n_sessioni_fatte + $1) WHERE id=$2',
+      [req.body.delta || 1, req.params.pid]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Errore' });
+  }
+});
+
+router.post('/dashboard/clients/:id/percorsi/:pid/chiudi', requireCoach, async (req, res) => {
+  try {
+    await db.query("UPDATE percorsi SET stato='concluso' WHERE id=$1", [req.params.pid]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Errore' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════
+// PAGAMENTI
+// ═══════════════════════════════════════════════════════
+
+router.post('/dashboard/clients/:id/payments', requireCoach, express.json(), async (req, res) => {
+  const { importo, data_pagamento, tipo, stato, percorso_id, note } = req.body;
+  if (!importo) return res.status(400).json({ error: 'Importo obbligatorio' });
+  try {
+    const pid = uuidv4();
+    await db.query(
+      `INSERT INTO payments (id,client_id,percorso_id,importo,data_pagamento,tipo,stato,note)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [pid, req.params.id, percorso_id||null, importo, data_pagamento||null,
+       tipo||'sessione', stato||'atteso', note||'']
+    );
+    res.json({ ok: true, id: pid });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Errore' });
+  }
+});
+
+router.post('/dashboard/clients/:id/payments/:pid/ricevuto', requireCoach, async (req, res) => {
+  try {
+    await db.query("UPDATE payments SET stato='ricevuto',data_pagamento=CURRENT_DATE WHERE id=$1", [req.params.pid]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Errore' });
+  }
+});
+
+router.delete('/dashboard/clients/:id/payments/:pid', requireCoach, async (req, res) => {
+  try {
+    await db.query('DELETE FROM payments WHERE id=$1', [req.params.pid]);
+    res.json({ ok: true });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Errore' });
@@ -146,9 +318,11 @@ router.post('/dashboard/leads/:id/convert', requireCoach, express.json(), async 
     const clientId = uuidv4();
     const token    = uuidv4().replace(/-/g, '');
     const nome     = [lead.nome, lead.cognome].filter(Boolean).join(' ');
+    // Portiamo con noi fonte e note del lead nel nuovo cliente.
     await db.query(
-      'INSERT INTO clients (id,name,email,telefono,token) VALUES ($1,$2,$3,$4,$5)',
-      [clientId, nome, lead.email||'', lead.telefono||'', token]
+      `INSERT INTO clients (id,name,email,telefono,fonte,note_preliminari,token)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [clientId, nome, lead.email||'', lead.telefono||'', lead.fonte||'altro', lead.note||'', token]
     );
     await db.query("UPDATE leads SET stato='convertito',updated_at=NOW() WHERE id=$1", [lead.id]);
     res.json({ ok: true, clientId, token });
@@ -202,8 +376,9 @@ function baseStyle() {
       .btn-neutral  { background: #eef1f5; color: #4a5568; }
       .btn-neutral:hover { background: #e2e7ee; }
       .btn-sm { padding: 6px 13px; font-size: 12px; }
-      input, select { width: 100%; padding: 9px 12px; border: 1.5px solid var(--line); border-radius: 9px; font-size: 13px; font-family: inherit; color: var(--ink); outline: none; transition: border-color 0.15s, box-shadow 0.15s; background: #fff; }
-      input:focus, select:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(26,82,128,0.12); }
+      input, select, textarea { width: 100%; padding: 9px 12px; border: 1.5px solid var(--line); border-radius: 9px; font-size: 13px; font-family: inherit; color: var(--ink); outline: none; transition: border-color 0.15s, box-shadow 0.15s; background: #fff; }
+      input:focus, select:focus, textarea:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(26,82,128,0.12); }
+      textarea { resize: vertical; min-height: 64px; }
       label { display: block; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; margin-bottom: 5px; }
       .form-group { margin-bottom: 14px; }
       h1 { font-size: 23px; font-weight: 800; color: var(--blue); letter-spacing: -0.01em; margin-bottom: 4px; }
@@ -212,18 +387,22 @@ function baseStyle() {
       .badge { display: inline-block; padding: 3px 11px; border-radius: 20px; font-size: 11px; font-weight: 600; }
       .badge-active   { background: #e7f1ec; color: #2e6b52; }
       .badge-inactive { background: #eef1f5; color: #7a8089; }
+      .badge-pausa    { background: #fff8dc; color: #7a5c00; }
       .appbar { position: sticky; top: 0; z-index: 50; background: #fff; border-bottom: 1px solid var(--line); }
       .appbar-inner { display: flex; align-items: center; justify-content: space-between; gap: 14px; max-width: 980px; margin: 0 auto; padding: 8px 18px; }
       .appbar-brand { display: flex; align-items: center; text-decoration: none; line-height: 0; }
       .appbar-actions { display: flex; align-items: center; gap: 10px; }
       .appbar-accent { height: 3px; background: var(--grad); }
-      .appbar-link { color: var(--blue); text-decoration: none; font-size: 13px; font-weight: 600; }
       table { width: 100%; border-collapse: collapse; }
       th { text-align: left; font-size: 11px; color: var(--hint); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; padding: 10px 14px; border-bottom: 1px solid var(--line); }
       td { padding: 13px 14px; border-bottom: 1px solid #f1f3f6; font-size: 13px; vertical-align: middle; }
       tr:last-child td { border-bottom: none; }
       .empty { text-align: center; color: var(--hint); font-style: italic; padding: 34px; font-size: 14px; }
       .flash-error { background: #fdf0ef; color: #c0392b; border: 1px solid #f3c9c4; border-radius: 9px; padding: 11px 14px; margin-bottom: 16px; font-size: 13px; }
+      .modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.3); z-index:100; align-items:center; justify-content:center; padding:16px; }
+      .modal-box { background:#fff; border-radius:12px; padding:26px; width:520px; max-width:100%; box-shadow:0 8px 32px rgba(0,0,0,0.18); max-height:90vh; overflow-y:auto; }
+      .field-label { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:0.06em; font-weight:600; margin-bottom:3px; }
+      .field-value { font-size:13px; color:var(--ink); }
     </style>
   `;
 }
@@ -233,6 +412,13 @@ function appBar({ home = '#', right = '' } = {}) {
     <a class="appbar-brand" href="${home}" aria-label="Noesys">${logoCompact(52)}</a>
     <div class="appbar-actions">${right}</div>
   </div><div class="appbar-accent"></div></header>`;
+}
+
+function fonteOptions(sel) {
+  return FONTI.map(f => `<option value="${f}"${f===sel?' selected':''}>${FONTE_LABEL[f]}</option>`).join('');
+}
+function areaOptions(sel) {
+  return AREE.map(a => `<option value="${a}"${a===sel?' selected':''}>${a}</option>`).join('');
 }
 
 // ═══════════════════════════════════════════════════════
@@ -257,45 +443,55 @@ function loginPage(error) {
 
 function dashboardPage(clients, req) {
   const rows = clients.length === 0
-    ? `<tr><td colspan="5" class="empty">Nessun cliente. Crea il primo con il pulsante qui sopra.</td></tr>`
-    : clients.map(c => `
-      <tr>
+    ? `<tr><td colspan="6" class="empty">Nessun cliente. Crea il primo con il pulsante qui sopra.</td></tr>`
+    : clients.map(c => {
+      const area = c.area || 'Personal';
+      const ac = AREA_COLOR[area] || '#1A5280';
+      const st = STATO_CLIENTE[c.stato_cliente] || STATO_CLIENTE.attivo;
+      const recall = c.prossima_azione
+        ? `${esc(c.prossima_azione)}${c.prossima_azione_data ? `<br><span style="font-size:11px;color:#aaa">${String(c.prossima_azione_data).slice(0,10)}</span>` : ''}`
+        : '<span style="color:#ccc">—</span>';
+      return `<tr onclick="location.href='/dashboard/clients/${c.id}'" style="cursor:pointer">
         <td><strong>${esc(c.name)}</strong>${c.email ? `<br><span style="color:#aaa;font-size:11px">${esc(c.email)}</span>` : ''}</td>
-        <td><span class="badge ${c.active ? 'badge-active' : 'badge-inactive'}">${c.active ? 'Attivo' : 'Disattivato'}</span></td>
-        <td style="color:#aaa;font-size:12px">${fmtDate(c.last_seen)}</td>
-        <td style="font-size:12px">${c.tool_count} sessioni</td>
-        <td style="white-space:nowrap">
-          <button onclick="toggleClient('${c.id}')" class="btn btn-sm ${c.active ? 'btn-gold' : 'btn-primary'}" style="margin-right:4px">${c.active ? 'Disattiva' : 'Riattiva'}</button>
-          <button onclick="copyLink('${PLATFORM_URL}/c/${c.token}')" class="btn btn-neutral btn-sm">🔗 Link strumenti</button>
+        <td><span class="badge" style="background:${ac}18;color:${ac}">${area}</span></td>
+        <td><span class="badge ${st.cls}">${st.label}</span></td>
+        <td style="font-size:12px">${c.percorso_attivo ? esc(c.percorso_attivo) : '<span style="color:#ccc">—</span>'}</td>
+        <td style="font-size:12px">${recall}</td>
+        <td style="white-space:nowrap" onclick="event.stopPropagation()">
+          <a href="/dashboard/clients/${c.id}" class="btn btn-neutral btn-sm">Dettaglio</a>
+          <button onclick="copyLink('${PLATFORM_URL}/c/${c.token}')" class="btn btn-neutral btn-sm">🔗</button>
         </td>
-      </tr>`).join('');
+      </tr>`;
+    }).join('');
 
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Clienti</title>${baseStyle()}</head><body>
   ${appBar({ home: '/dashboard', right: `<a href="/dashboard/leads" class="btn btn-neutral btn-sm">Lead</a><a href="/logout" class="btn btn-neutral btn-sm">Esci</a>` })}
-  <div class="container">
+  <div class="container" style="max-width:980px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px">
       <div><h1>Clienti</h1><p style="color:#aaa;font-size:13px">${clients.length} clienti registrati</p></div>
       <button onclick="openNewClient()" class="btn btn-primary">+ Nuovo cliente</button>
     </div>
     <div class="card" style="padding:0;overflow:hidden">
       <table>
-        <thead><tr><th>Cliente</th><th>Stato</th><th>Ultimo accesso</th><th>Dati</th><th>Azioni</th></tr></thead>
+        <thead><tr><th>Cliente</th><th>Area</th><th>Stato</th><th>Percorso</th><th>Prossima azione</th><th></th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>
   </div>
 
-  <div id="modal-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.3);z-index:100;align-items:center;justify-content:center">
-    <div style="background:#fff;border-radius:12px;padding:28px;width:440px;box-shadow:0 8px 32px rgba(0,0,0,0.2);max-height:90vh;overflow-y:auto">
+  <div id="modal-overlay" class="modal-overlay">
+    <div class="modal-box" style="width:440px">
       <h2 style="margin-bottom:16px">Nuovo cliente</h2>
+      <div class="form-group"><label>Nome e cognome *</label><input id="new-name" type="text" placeholder="es. Mario Rossi"></div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div class="form-group"><label>Nome *</label><input id="new-name" type="text" placeholder="es. Mario Rossi"></div>
+        <div class="form-group"><label>Email</label><input id="new-email" type="email" placeholder="mario@esempio.it"></div>
         <div class="form-group"><label>Telefono</label><input id="new-tel" type="tel" placeholder="+39…"></div>
       </div>
-      <div class="form-group"><label>Email</label><input id="new-email" type="email" placeholder="mario@esempio.it"></div>
-      <div class="form-group"><label>Tipo percorso</label>
-        <select id="new-tipo"><option>Individuale</option><option>Business</option><option>Young</option><option>Team</option><option>Group</option></select></div>
-      <div class="form-group"><label>Note preliminari</label><input id="new-note" type="text" placeholder="opzionale"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group"><label>Area</label><select id="new-area">${areaOptions('Personal')}</select></div>
+        <div class="form-group"><label>Come ti ha conosciuto</label><select id="new-fonte">${fonteOptions('altro')}</select></div>
+      </div>
+      <div class="form-group"><label>Obiettivo / motivo</label><textarea id="new-obiettivo" placeholder="opzionale"></textarea></div>
       <div id="new-error" style="display:none" class="flash-error"></div>
       <div id="new-result" style="display:none;background:#e8f5e9;border-radius:6px;padding:12px;margin-bottom:12px;font-size:13px">
         <strong>Cliente creato!</strong><br>Link agli strumenti (da inviare al cliente):<br>
@@ -317,7 +513,7 @@ function dashboardPage(clients, req) {
       document.getElementById('modal-overlay').style.display = 'flex';
       document.getElementById('new-result').style.display = 'none';
       document.getElementById('new-error').style.display = 'none';
-      ['new-name','new-email','new-tel','new-note'].forEach(id=>document.getElementById(id).value='');
+      ['new-name','new-email','new-tel','new-obiettivo'].forEach(id=>document.getElementById(id).value='');
       document.getElementById('btn-create').style.display = '';
       document.getElementById('new-name').focus();
     }
@@ -327,15 +523,15 @@ function dashboardPage(clients, req) {
     }
     async function createClient() {
       const name  = document.getElementById('new-name').value.trim();
-      const email = document.getElementById('new-email').value.trim();
       const errEl = document.getElementById('new-error');
       if (!name) { errEl.textContent = 'Il nome è obbligatorio'; errEl.style.display='block'; return; }
       errEl.style.display = 'none';
       const res = await fetch('/dashboard/clients', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({
-        name, email,
+        name, email: document.getElementById('new-email').value.trim(),
         telefono: document.getElementById('new-tel').value.trim(),
-        tipo_percorso: document.getElementById('new-tipo').value,
-        note_preliminari: document.getElementById('new-note').value.trim(),
+        area: document.getElementById('new-area').value,
+        fonte: document.getElementById('new-fonte').value,
+        obiettivo: document.getElementById('new-obiettivo').value.trim(),
       }) });
       const data = await res.json();
       if (data.error) { errEl.textContent = data.error; errEl.style.display='block'; return; }
@@ -344,10 +540,6 @@ function dashboardPage(clients, req) {
       document.getElementById('new-link').textContent = link;
       document.getElementById('new-result').style.display = 'block';
       document.getElementById('btn-create').style.display = 'none';
-    }
-    async function toggleClient(id) {
-      await fetch('/dashboard/clients/'+id+'/toggle', {method:'POST'});
-      location.reload();
     }
     function copyLink(url) { navigator.clipboard.writeText(url).then(showToast); }
     function copyLinkEl() { navigator.clipboard.writeText(document.getElementById('new-link').href).then(showToast); }
@@ -363,6 +555,309 @@ function dashboardPage(clients, req) {
   </body></html>`;
 }
 
+function clientDetailPage(client, sessions, percorsi, payments, req) {
+  const link = PLATFORM_URL + '/c/' + client.token;
+  const area = client.area || 'Personal';
+  const ac = AREA_COLOR[area] || '#1A5280';
+  const st = STATO_CLIENTE[client.stato_cliente] || STATO_CLIENTE.attivo;
+  const val = v => v ? esc(v) : '<span style="color:#ccc">—</span>';
+
+  // ── Percorsi ────────────────────────────────────────
+  const percorsiHtml = `
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+        <h2 style="margin:0">Percorsi</h2>
+        <button onclick="openPercorso()" class="btn btn-primary btn-sm">+ Nuovo percorso</button>
+      </div>
+      ${percorsi.length === 0 ? `<div class="empty">Nessun percorso registrato.</div>` : `
+      <table>
+        <thead><tr><th>Tipo</th><th>Sessioni</th><th>Prezzo</th><th>Promo/Sconto</th><th>Inizio</th><th>Stato</th><th></th></tr></thead>
+        <tbody>
+          ${percorsi.map(p => `<tr>
+            <td><strong>${esc(p.tipo)}</strong></td>
+            <td>
+              <span style="font-size:13px;font-weight:700;color:var(--blue)">${p.n_sessioni_fatte}</span>
+              <span style="color:#aaa"> / ${p.n_sessioni_previste}</span>
+              <button onclick="addSessione('${p.id}',1)" class="btn btn-neutral btn-sm" style="margin-left:6px" title="Aggiungi sessione">+1</button>
+              ${p.n_sessioni_fatte > 0 ? `<button onclick="addSessione('${p.id}',-1)" class="btn btn-neutral btn-sm" title="Rimuovi sessione">-1</button>` : ''}
+            </td>
+            <td>${p.prezzo ? `€ ${Number(p.prezzo).toLocaleString('it-IT',{minimumFractionDigits:2})}` : '<span style="color:#aaa">—</span>'}</td>
+            <td>${p.promo ? `<span class="badge badge-pausa">Promo</span>${p.sconto_note ? ` <span style="font-size:11px;color:#aaa">${esc(p.sconto_note)}</span>` : ''}` : '<span style="color:#aaa;font-size:12px">—</span>'}</td>
+            <td style="font-size:12px;color:#aaa">${p.data_inizio ? String(p.data_inizio).slice(0,10) : '—'}</td>
+            <td><span class="badge ${p.stato==='attivo'?'badge-active':'badge-inactive'}">${p.stato==='attivo'?'Attivo':'Concluso'}</span></td>
+            <td>${p.stato==='attivo' ? `<button onclick="chiudiPercorso('${p.id}')" class="btn btn-neutral btn-sm">Chiudi</button>` : ''}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`}
+    </div>`;
+
+  // ── Pagamenti ────────────────────────────────────────
+  const totRicevuto = payments.filter(p=>p.stato==='ricevuto').reduce((s,p)=>s+Number(p.importo),0);
+  const totAtteso   = payments.filter(p=>p.stato==='atteso').reduce((s,p)=>s+Number(p.importo),0);
+  const paymentsHtml = `
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+        <h2 style="margin:0">Pagamenti
+          <span style="font-size:12px;font-weight:400;color:#aaa;margin-left:10px">
+            Ricevuto: <strong style="color:#4F8B73">€ ${totRicevuto.toLocaleString('it-IT',{minimumFractionDigits:2})}</strong>
+            ${totAtteso > 0 ? ` · In attesa: <strong style="color:#D8AE2E">€ ${totAtteso.toLocaleString('it-IT',{minimumFractionDigits:2})}</strong>` : ''}
+          </span>
+        </h2>
+        <button onclick="openPayment()" class="btn btn-primary btn-sm">+ Pagamento</button>
+      </div>
+      ${payments.length === 0 ? `<div class="empty">Nessun pagamento registrato.</div>` : `
+      <table>
+        <thead><tr><th>Importo</th><th>Tipo</th><th>Data</th><th>Stato</th><th>Note</th><th></th></tr></thead>
+        <tbody>
+          ${payments.map(p => `<tr>
+            <td><strong>€ ${Number(p.importo).toLocaleString('it-IT',{minimumFractionDigits:2})}</strong></td>
+            <td style="font-size:12px">${esc(p.tipo)}</td>
+            <td style="font-size:12px;color:#aaa">${p.data_pagamento ? String(p.data_pagamento).slice(0,10) : '—'}</td>
+            <td>${p.stato==='ricevuto' ? `<span class="badge badge-active">Ricevuto</span>` : `<span class="badge badge-inactive">In attesa</span>`}</td>
+            <td style="font-size:12px;color:#aaa">${esc(p.note||'')}</td>
+            <td style="white-space:nowrap">
+              ${p.stato==='atteso' ? `<button onclick="segnaRicevuto('${p.id}')" class="btn btn-neutral btn-sm">✓ Ricevuto</button>` : ''}
+              <button onclick="deletePayment('${p.id}')" class="btn btn-danger btn-sm" style="margin-left:4px">✕</button>
+            </td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`}
+    </div>`;
+
+  // ── Strumenti ────────────────────────────────────────
+  const TOOL_LABEL = {valori:'💎 Valori',abilita:'⭐ Abilità',lineavita:'📈 Linea della Vita',genogramma:'🔗 Genogramma',ruotavita:'🎯 Ruota della Vita',brainstorming:'💡 Brainstorming'};
+  const sessionCards = sessions.length === 0
+    ? `<div class="empty">Nessuno strumento compilato dal cliente.</div>`
+    : sessions.map(s => `
+      <div class="card" style="margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+          <div style="font-size:15px;font-weight:700;color:var(--ink)">${TOOL_LABEL[s.tool] || esc(s.tool)}</div>
+          <span style="font-size:11px;color:#aaa">Aggiornato: ${fmtDate(s.updated_at)}</span>
+        </div>
+        <div style="font-size:13px;line-height:1.7">${renderSessionData(s.tool, s.data)}</div>
+      </div>`).join('');
+
+  // ── Recall / prossima azione (evidenziata se presente) ──
+  const recallHtml = client.prossima_azione ? `
+    <div style="margin-top:12px;font-size:13px;background:#fff8ec;padding:10px 14px;border-radius:8px;border-left:3px solid var(--gold)">
+      <strong>Prossima azione:</strong> ${esc(client.prossima_azione)}
+      ${client.prossima_azione_data ? ` — <span style="color:#7a5c00">${String(client.prossima_azione_data).slice(0,10)}</span>` : ''}
+    </div>` : '';
+
+  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — ${esc(client.name)}</title>${baseStyle()}</head><body>
+  ${appBar({ home: '/dashboard', right: `<a href="/dashboard" class="btn btn-neutral btn-sm">← Clienti</a><a href="/dashboard/leads" class="btn btn-neutral btn-sm">Lead</a><a href="/logout" class="btn btn-neutral btn-sm">Esci</a>` })}
+  <div class="container" style="max-width:980px">
+
+    <!-- SCHEDA CLIENTE -->
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap">
+        <div style="flex:1;min-width:260px">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
+            <h1 style="margin:0">${esc(client.name)}</h1>
+            <span class="badge" style="background:${ac}18;color:${ac}">${area}</span>
+            <span class="badge ${st.cls}">${st.label}</span>
+            ${!client.active ? `<span class="badge badge-inactive" title="Accesso agli strumenti disattivato">🔒 Accesso off</span>` : ''}
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-top:12px">
+            <div><div class="field-label">Email</div><div class="field-value">${val(client.email)}</div></div>
+            <div><div class="field-label">Telefono</div><div class="field-value">${val(client.telefono)}</div></div>
+            <div><div class="field-label">Altro recapito</div><div class="field-value">${val(client.altro_recapito)}</div></div>
+            <div><div class="field-label">Professione</div><div class="field-value">${val(client.professione)}</div></div>
+            <div><div class="field-label">Città</div><div class="field-value">${val(client.citta)}</div></div>
+            <div><div class="field-label">Data di nascita</div><div class="field-value">${client.data_nascita ? String(client.data_nascita).slice(0,10) : '<span style="color:#ccc">—</span>'}</div></div>
+            <div><div class="field-label">Come ci ha conosciuto</div><div class="field-value">${FONTE_LABEL[client.fonte]||val(client.fonte)}</div></div>
+            <div><div class="field-label">Consenso privacy</div><div class="field-value">${client.consenso_privacy ? `Sì${client.consenso_data ? ` (${String(client.consenso_data).slice(0,10)})` : ''}` : '<span style="color:#ccc">No</span>'}</div></div>
+          </div>
+          ${client.obiettivo ? `<div style="margin-top:14px"><div class="field-label">Obiettivo / motivo</div><div style="font-size:13px;background:#f8f9fb;padding:10px 12px;border-radius:8px;border-left:3px solid var(--blue)">${esc(client.obiettivo)}</div></div>` : ''}
+          ${client.note_preliminari ? `<div style="margin-top:10px"><div class="field-label">Note CRM</div><div style="font-size:13px;color:#6B7280">${esc(client.note_preliminari)}</div></div>` : ''}
+          ${client.drive_url ? `<div style="margin-top:10px"><div class="field-label">Cartella Drive</div><a href="${esc(client.drive_url)}" target="_blank" style="font-size:13px;word-break:break-all">${esc(client.drive_url)}</a></div>` : ''}
+          ${recallHtml}
+        </div>
+        <div style="text-align:right;min-width:210px">
+          <button onclick="openEdit()" class="btn btn-primary btn-sm" style="margin-bottom:10px">✎ Modifica dati</button>
+          <div class="field-label" style="margin-top:6px">Link accesso strumenti</div>
+          <code style="display:block;font-size:10px;background:#f5f5f5;padding:5px 8px;border-radius:5px;word-break:break-all;margin-bottom:8px">${link}</code>
+          <div style="display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap">
+            <button onclick="copyLink('${link}')" class="btn btn-neutral btn-sm">📋 Copia</button>
+            <button onclick="toggleAccess()" class="btn ${client.active?'btn-gold':'btn-primary'} btn-sm">${client.active?'Disattiva accesso':'Riattiva accesso'}</button>
+            <button onclick="deleteClient()" class="btn btn-danger btn-sm">🗑</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    ${percorsiHtml}
+    ${paymentsHtml}
+
+    <h2 style="margin:20px 0 12px">Strumenti compilati dal cliente <span style="font-weight:400;font-size:13px;color:#aaa">(${sessions.length})</span></h2>
+    ${sessionCards}
+  </div>
+
+  <!-- MODAL MODIFICA CLIENTE -->
+  <div id="modal-edit" class="modal-overlay">
+    <div class="modal-box">
+      <h2 style="margin-bottom:16px">Modifica dati cliente</h2>
+      <div class="form-group"><label>Nome e cognome *</label><input id="e-name" type="text" value="${attr(client.name)}"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group"><label>Email</label><input id="e-email" type="email" value="${attr(client.email)}"></div>
+        <div class="form-group"><label>Telefono</label><input id="e-tel" type="tel" value="${attr(client.telefono)}"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group"><label>Altro recapito / social</label><input id="e-altro" type="text" value="${attr(client.altro_recapito)}"></div>
+        <div class="form-group"><label>Professione / ruolo</label><input id="e-prof" type="text" value="${attr(client.professione)}"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group"><label>Città</label><input id="e-citta" type="text" value="${attr(client.citta)}"></div>
+        <div class="form-group"><label>Data di nascita</label><input id="e-nascita" type="date" value="${client.data_nascita ? String(client.data_nascita).slice(0,10) : ''}"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group"><label>Area</label><select id="e-area">${areaOptions(area)}</select></div>
+        <div class="form-group"><label>Come ci ha conosciuto</label><select id="e-fonte">${fonteOptions(client.fonte||'altro')}</select></div>
+      </div>
+      <div class="form-group"><label>Obiettivo / motivo del percorso</label><textarea id="e-obiettivo">${esc(client.obiettivo||'')}</textarea></div>
+      <hr style="border:none;border-top:1px solid var(--line);margin:6px 0 14px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group"><label>Stato relazione</label>
+          <select id="e-stato">
+            <option value="attivo"${client.stato_cliente==='attivo'?' selected':''}>Attivo</option>
+            <option value="in pausa"${client.stato_cliente==='in pausa'?' selected':''}>In pausa</option>
+            <option value="concluso"${client.stato_cliente==='concluso'?' selected':''}>Concluso</option>
+          </select></div>
+        <div class="form-group"><label>Data prossima azione</label><input id="e-azione-data" type="date" value="${client.prossima_azione_data ? String(client.prossima_azione_data).slice(0,10) : ''}"></div>
+      </div>
+      <div class="form-group"><label>Prossima azione (recall)</label><input id="e-azione" type="text" value="${attr(client.prossima_azione)}" placeholder="es. richiamare per proporre nuovo percorso"></div>
+      <div class="form-group"><label>Note CRM</label><textarea id="e-note">${esc(client.note_preliminari||'')}</textarea></div>
+      <div class="form-group"><label>Link cartella Google Drive</label><input id="e-drive" type="text" value="${attr(client.drive_url)}" placeholder="https://drive.google.com/…"></div>
+      <div class="form-group" style="display:flex;align-items:center;gap:8px">
+        <input id="e-consenso" type="checkbox" style="width:auto;margin:0" ${client.consenso_privacy?'checked':''}>
+        <label style="margin:0;text-transform:none;font-size:13px;letter-spacing:0">Consenso al trattamento dei dati personali${client.consenso_data ? ` (dato il ${String(client.consenso_data).slice(0,10)})` : ''}</label>
+      </div>
+      <div id="edit-error" style="display:none" class="flash-error"></div>
+      <div style="display:flex;gap:8px;margin-top:4px">
+        <button onclick="document.getElementById('modal-edit').style.display='none'" class="btn btn-neutral" style="flex:1">Annulla</button>
+        <button onclick="saveClient()" class="btn btn-primary" style="flex:1">Salva</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL NUOVO PERCORSO -->
+  <div id="modal-percorso" class="modal-overlay">
+    <div class="modal-box" style="width:420px">
+      <h2 style="margin-bottom:16px">Nuovo percorso</h2>
+      <div class="form-group"><label>Tipo</label>
+        <select id="p-tipo"><option>Individuale</option><option>Business</option><option>Young</option><option>Team</option><option>Group</option></select></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group"><label>Sessioni previste</label><input id="p-sess" type="number" value="8" min="1"></div>
+        <div class="form-group"><label>Prezzo (€)</label><input id="p-prezzo" type="number" step="0.01" placeholder="es. 900"></div>
+      </div>
+      <div class="form-group"><label>Data inizio</label><input id="p-data" type="date"></div>
+      <div class="form-group" style="display:flex;align-items:center;gap:8px">
+        <input id="p-promo" type="checkbox" style="width:auto;margin:0">
+        <label style="margin:0;text-transform:none;font-size:13px;letter-spacing:0">Promo / sconto applicato</label>
+      </div>
+      <div class="form-group"><label>Note sconto</label><input id="p-sconto" type="text" placeholder="es. 20% lancio…"></div>
+      <div style="display:flex;gap:8px;margin-top:4px">
+        <button onclick="document.getElementById('modal-percorso').style.display='none'" class="btn btn-neutral" style="flex:1">Annulla</button>
+        <button onclick="savePercorso()" class="btn btn-primary" style="flex:1">Salva</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL NUOVO PAGAMENTO -->
+  <div id="modal-payment" class="modal-overlay">
+    <div class="modal-box" style="width:380px">
+      <h2 style="margin-bottom:16px">Registra pagamento</h2>
+      <div class="form-group"><label>Importo (€) *</label><input id="pay-importo" type="number" step="0.01" placeholder="es. 450.00"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group"><label>Tipo</label>
+          <select id="pay-tipo"><option value="acconto">Acconto</option><option value="saldo">Saldo</option><option value="sessione">Sessione singola</option><option value="altro">Altro</option></select></div>
+        <div class="form-group"><label>Stato</label>
+          <select id="pay-stato"><option value="atteso">In attesa</option><option value="ricevuto">Ricevuto</option></select></div>
+      </div>
+      <div class="form-group"><label>Data</label><input id="pay-data" type="date"></div>
+      <div class="form-group"><label>Note</label><input id="pay-note" type="text" placeholder="opzionale"></div>
+      <div style="display:flex;gap:8px;margin-top:4px">
+        <button onclick="document.getElementById('modal-payment').style.display='none'" class="btn btn-neutral" style="flex:1">Annulla</button>
+        <button onclick="savePayment()" class="btn btn-primary" style="flex:1">Salva</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" style="display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--navy);color:#fff;padding:10px 20px;border-radius:20px;font-size:13px;font-weight:600;z-index:200">Fatto!</div>
+  <script>
+    const CID = '${client.id}';
+    function copyLink(url) { navigator.clipboard.writeText(url).then(() => { const t=document.getElementById('toast'); t.textContent='Link copiato!'; t.style.display='block'; setTimeout(()=>t.style.display='none',2000); }); }
+    function openEdit() { document.getElementById('modal-edit').style.display='flex'; }
+    async function saveClient() {
+      const name = document.getElementById('e-name').value.trim();
+      const err = document.getElementById('edit-error');
+      if (!name) { err.textContent='Il nome è obbligatorio'; err.style.display='block'; return; }
+      const payload = {
+        name, email:document.getElementById('e-email').value, telefono:document.getElementById('e-tel').value,
+        altro_recapito:document.getElementById('e-altro').value, professione:document.getElementById('e-prof').value,
+        citta:document.getElementById('e-citta').value, data_nascita:document.getElementById('e-nascita').value||null,
+        area:document.getElementById('e-area').value, fonte:document.getElementById('e-fonte').value,
+        obiettivo:document.getElementById('e-obiettivo').value, stato_cliente:document.getElementById('e-stato').value,
+        prossima_azione:document.getElementById('e-azione').value, prossima_azione_data:document.getElementById('e-azione-data').value||null,
+        note_preliminari:document.getElementById('e-note').value, drive_url:document.getElementById('e-drive').value,
+        consenso_privacy:document.getElementById('e-consenso').checked,
+      };
+      const r = await fetch('/dashboard/clients/'+CID,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      const d = await r.json();
+      if (d.error) { err.textContent=d.error; err.style.display='block'; return; }
+      location.reload();
+    }
+    async function toggleAccess() { await fetch('/dashboard/clients/'+CID+'/toggle',{method:'POST'}); location.reload(); }
+    async function deleteClient() {
+      if (!confirm('Eliminare ${attr(client.name)} e tutti i suoi dati? Operazione irreversibile.')) return;
+      await fetch('/dashboard/clients/'+CID,{method:'DELETE'}); location.href='/dashboard';
+    }
+    function openPercorso() { document.getElementById('modal-percorso').style.display='flex'; }
+    async function savePercorso() {
+      await fetch('/dashboard/clients/'+CID+'/percorsi',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+        tipo: document.getElementById('p-tipo').value,
+        n_sessioni_previste: document.getElementById('p-sess').value,
+        prezzo: document.getElementById('p-prezzo').value || null,
+        promo: document.getElementById('p-promo').checked,
+        sconto_note: document.getElementById('p-sconto').value,
+        data_inizio: document.getElementById('p-data').value || null,
+      })});
+      location.reload();
+    }
+    async function addSessione(pid,delta) {
+      await fetch('/dashboard/clients/'+CID+'/percorsi/'+pid+'/sessione',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({delta})});
+      location.reload();
+    }
+    async function chiudiPercorso(pid) {
+      if(!confirm('Chiudere questo percorso?')) return;
+      await fetch('/dashboard/clients/'+CID+'/percorsi/'+pid+'/chiudi',{method:'POST'}); location.reload();
+    }
+    function openPayment() { document.getElementById('modal-payment').style.display='flex'; }
+    async function savePayment() {
+      const importo = document.getElementById('pay-importo').value;
+      if (!importo) { alert('Importo obbligatorio'); return; }
+      await fetch('/dashboard/clients/'+CID+'/payments',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+        importo, tipo: document.getElementById('pay-tipo').value,
+        stato: document.getElementById('pay-stato').value,
+        data_pagamento: document.getElementById('pay-data').value || null,
+        note: document.getElementById('pay-note').value,
+      })});
+      location.reload();
+    }
+    async function segnaRicevuto(pid) {
+      await fetch('/dashboard/clients/'+CID+'/payments/'+pid+'/ricevuto',{method:'POST'}); location.reload();
+    }
+    async function deletePayment(pid) {
+      if(!confirm('Eliminare questo pagamento?')) return;
+      await fetch('/dashboard/clients/'+CID+'/payments/'+pid,{method:'DELETE'}); location.reload();
+    }
+    [document.getElementById('modal-edit'),document.getElementById('modal-percorso'),document.getElementById('modal-payment')].forEach(m=>{
+      m.addEventListener('click',e=>{ if(e.target===m) m.style.display='none'; });
+    });
+  </script>
+  </body></html>`;
+}
+
 function leadsPage(leads, req) {
   const STATO_CFG = {
     nuovo:       { label:'Nuovo',        bg:'#e8f4fd', color:'#1A5280' },
@@ -370,9 +865,6 @@ function leadsPage(leads, req) {
     call_fissata:{ label:'Call fissata', bg:'#e7f1ec', color:'#2e6b52' },
     convertito:  { label:'Convertito',   bg:'#d1fae5', color:'#065f46' },
     perso:       { label:'Perso',        bg:'#fdf0ef', color:'#c0392b' },
-  };
-  const FONTE_CFG = {
-    sito:'Sito', social:'Social', passaparola:'Passaparola', ebook:'E-book', calendly:'Calendly', altro:'Altro'
   };
 
   const attivi = leads.filter(l => l.stato !== 'convertito' && l.stato !== 'perso');
@@ -386,11 +878,11 @@ function leadsPage(leads, req) {
         ${l.telefono ? `<br><span style="font-size:11px;color:#aaa">${esc(l.telefono)}</span>` : ''}
       </td>
       <td><span class="badge" style="background:${sc.bg};color:${sc.color}">${sc.label}</span></td>
-      <td style="font-size:12px;color:#aaa">${FONTE_CFG[l.fonte]||l.fonte}</td>
+      <td style="font-size:12px;color:#aaa">${FONTE_LABEL[l.fonte]||l.fonte}</td>
       <td style="font-size:12px;color:#aaa">${l.data_prossimo_contatto ? String(l.data_prossimo_contatto).slice(0,10) : '—'}</td>
       <td style="font-size:12px;color:#4a5568;max-width:180px">${esc(l.note||'')}</td>
       <td style="white-space:nowrap">
-        <button onclick="editLead('${l.id}','${esc(l.nome)}','${esc(l.cognome||'')}','${esc(l.email||'')}','${esc(l.telefono||'')}','${l.fonte}','${l.stato}','${esc(l.note||'')}','${l.data_prossimo_contatto?String(l.data_prossimo_contatto).slice(0,10):''}')" class="btn btn-neutral btn-sm">Modifica</button>
+        <button onclick="editLead('${l.id}','${attr(l.nome)}','${attr(l.cognome||'')}','${attr(l.email||'')}','${attr(l.telefono||'')}','${l.fonte}','${l.stato}','${attr(l.note||'')}','${l.data_prossimo_contatto?String(l.data_prossimo_contatto).slice(0,10):''}')" class="btn btn-neutral btn-sm">Modifica</button>
         ${l.stato!=='convertito' ? `<button onclick="convertLead('${l.id}')" class="btn btn-primary btn-sm" style="margin:0 4px">→ Cliente</button>` : ''}
         <button onclick="deleteLead('${l.id}')" class="btn btn-danger btn-sm">✕</button>
       </td>
@@ -422,8 +914,8 @@ function leadsPage(leads, req) {
     </div>` : ''}
   </div>
 
-  <div id="modal-lead" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.3);z-index:100;align-items:center;justify-content:center">
-    <div style="background:#fff;border-radius:12px;padding:26px;width:440px;box-shadow:0 8px 32px rgba(0,0,0,0.18);max-height:90vh;overflow-y:auto">
+  <div id="modal-lead" class="modal-overlay">
+    <div class="modal-box" style="width:440px">
       <h2 style="margin-bottom:16px" id="modal-lead-title">Nuovo lead</h2>
       <input type="hidden" id="lead-id">
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
@@ -436,7 +928,7 @@ function leadsPage(leads, req) {
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
         <div class="form-group"><label>Fonte</label>
-          <select id="l-fonte"><option value="sito">Sito</option><option value="social">Social</option><option value="passaparola">Passaparola</option><option value="ebook">E-book</option><option value="calendly">Calendly</option><option value="altro">Altro</option></select></div>
+          <select id="l-fonte">${fonteOptions('altro')}</select></div>
         <div class="form-group"><label>Stato</label>
           <select id="l-stato"><option value="nuovo">Nuovo</option><option value="contattato">Contattato</option><option value="call_fissata">Call fissata</option><option value="perso">Perso</option></select></div>
       </div>
@@ -490,14 +982,80 @@ function leadsPage(leads, req) {
       if(!confirm('Convertire questo lead in cliente?')) return;
       const r = await fetch('/dashboard/leads/'+id+'/convert',{method:'POST',headers:{'Content-Type':'application/json'}});
       const d = await r.json();
-      if (d.ok) location.href='/dashboard';
+      if (d.ok) location.href='/dashboard/clients/'+d.clientId;
     }
     async function deleteLead(id) {
       if(!confirm('Eliminare questo lead?')) return;
       await fetch('/dashboard/leads/'+id,{method:'DELETE'}); location.reload();
     }
+    document.getElementById('modal-lead').addEventListener('click',e=>{ if(e.target===document.getElementById('modal-lead')) closeLeadModal(); });
   </script>
   </body></html>`;
+}
+
+// ═══════════════════════════════════════════════════════
+// RENDER DATI STRUMENTI (sola lettura)
+// ═══════════════════════════════════════════════════════
+
+function renderSessionData(tool, jsonStr) {
+  let d;
+  try { d = JSON.parse(jsonStr); } catch(e) { return '<em style="color:#aaa">Dati non leggibili</em>'; }
+
+  switch(tool) {
+    case 'valori': {
+      const top5 = (d.top5 || []).filter(Boolean);
+      const zone = (d.zone || []).map(z => z.value).filter(Boolean);
+      const altri = zone.filter(v => !top5.includes(v));
+      return `<div style="margin-bottom:8px"><span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#9AA0AA">Top 5</span><br>
+        ${top5.length ? top5.map((v,i) => `<span style="display:inline-block;margin:3px 4px 3px 0;padding:3px 10px;border-radius:14px;background:#1A5280;color:#fff;font-size:12px;font-weight:600">${i+1}. ${esc(v)}</span>`).join('') : '<span style="color:#aaa;font-size:12px">—</span>'}</div>
+        ${altri.length ? `<div><span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#9AA0AA">Altri valori selezionati</span><br>${altri.map(v => `<span style="display:inline-block;margin:3px 4px 3px 0;padding:3px 10px;border-radius:14px;background:#eef1f5;color:#4a5568;font-size:12px">${esc(v)}</span>`).join('')}</div>` : ''}`;
+    }
+    case 'abilita': {
+      const abilita = (d.zone || []).map(z => z.value).filter(Boolean);
+      return `<span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#9AA0AA">Abilità selezionate</span><br>
+        ${abilita.length ? abilita.map(v => `<span style="display:inline-block;margin:3px 4px 3px 0;padding:3px 10px;border-radius:14px;background:#eef1f5;color:#4a5568;font-size:12px">${esc(v)}</span>`).join('') : '<span style="color:#aaa;font-size:12px">—</span>'}`;
+    }
+    case 'ruotavita': {
+      const aree = (d.areas || []).filter(a => a.value !== null && a.value !== undefined);
+      return `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px">
+        ${aree.map(a => {
+          const pct = Math.round((a.value / 10) * 100);
+          const col = a.value >= 7 ? '#4F8B73' : a.value >= 4 ? '#D8AE2E' : '#C0392B';
+          return `<div style="background:#f8f9fb;border-radius:8px;padding:8px 10px">
+            <div style="font-size:11px;font-weight:700;color:#6B7280;margin-bottom:4px">${esc(a.name)}</div>
+            <div style="display:flex;align-items:center;gap:6px">
+              <div style="flex:1;height:6px;background:#e6e9ee;border-radius:3px"><div style="width:${pct}%;height:100%;background:${col};border-radius:3px"></div></div>
+              <span style="font-size:13px;font-weight:800;color:${col}">${a.value}</span>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>`;
+    }
+    case 'lineavita': {
+      const eventi = (d.events || []).slice().sort((a,b) => a.year - b.year);
+      return eventi.length ? `<div style="display:flex;flex-direction:column;gap:6px">
+        ${eventi.map(e => `<div style="display:flex;gap:10px;align-items:baseline">
+          <span style="font-size:12px;font-weight:800;color:#1A5280;min-width:38px">${e.year}</span>
+          <span style="font-size:11px;color:${e.type==='negative'?'#C0392B':'#4F8B73'}">${e.type==='negative'?'↓':'↑'}</span>
+          <span style="font-size:12px;color:#2C3E50">${esc(e.desc)}</span>
+        </div>`).join('')}
+      </div>` : '<span style="color:#aaa;font-size:12px">Nessun evento</span>';
+    }
+    case 'brainstorming': {
+      const esplorate = (d.exploreCards || []).map(c => c.text).filter(Boolean);
+      const selezionate = (d.selectCards || []).map(c => c.text).filter(Boolean);
+      return `${esplorate.length ? `<div style="margin-bottom:8px"><span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#9AA0AA">Idee esplorate</span><br>${esplorate.map(t => `<span style="display:inline-block;margin:3px 4px 3px 0;padding:3px 10px;border-radius:14px;background:#eef1f5;color:#4a5568;font-size:12px">${esc(t)}</span>`).join('')}</div>` : ''}
+        ${selezionate.length ? `<div><span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#9AA0AA">Idee selezionate</span><br>${selezionate.map(t => `<span style="display:inline-block;margin:3px 4px 3px 0;padding:3px 10px;border-radius:14px;background:#1A5280;color:#fff;font-size:12px">${esc(t)}</span>`).join('')}</div>` : ''}
+        ${!esplorate.length && !selezionate.length ? '<span style="color:#aaa;font-size:12px">—</span>' : ''}`;
+    }
+    case 'genogramma': {
+      const persone = (d.persons || []).filter(p => p.name);
+      return `<span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#9AA0AA">Persone</span><br>
+        ${persone.length ? persone.map(p => `<span style="display:inline-block;margin:3px 4px 3px 0;padding:3px 10px;border-radius:14px;background:#eef1f5;color:#4a5568;font-size:12px">${esc(p.name)}${p.role ? ` <em style="color:#9AA0AA">${esc(p.role)}</em>` : ''}</span>`).join('') : '<span style="color:#aaa;font-size:12px">—</span>'}`;
+    }
+    default:
+      return '<span style="color:#aaa;font-size:12px">Anteprima non disponibile</span>';
+  }
 }
 
 // ═══════════════════════════════════════════════════════
@@ -514,4 +1072,9 @@ function esc(str) {
   return String(str || '')
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
     .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// Per valori dentro attributi HTML e stringhe JS inline (apici singoli/doppi).
+function attr(str) {
+  return esc(str).replace(/&#39;/g, '&#39;');
 }

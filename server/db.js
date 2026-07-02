@@ -1,5 +1,9 @@
-const { Pool } = require('pg');
+const { Pool, types } = require('pg');
 const bcrypt = require('bcryptjs');
+
+// Le colonne DATE (OID 1082) vanno restituite come stringa 'AAAA-MM-GG', non come
+// oggetto Date (che verrebbe formattato male, es. "Thu Jul 02").
+types.setTypeParser(1082, v => v);
 
 // SSL: la rete privata di Railway (*.railway.internal) non usa SSL; le connessioni
 // pubbliche/proxy sì. Rileviamo dall'URL così funziona in entrambi i casi.
@@ -60,6 +64,21 @@ async function init() {
   await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS tipo_percorso TEXT DEFAULT 'Individuale'`);
   await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS note_preliminari TEXT`);
   await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS stato_percorso TEXT DEFAULT 'attivo'`);
+
+  // Espansione anagrafica cliente (A2.4)
+  await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS data_nascita DATE`);
+  await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS citta TEXT`);
+  await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS professione TEXT`);
+  await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS altro_recapito TEXT`);
+  await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS area TEXT DEFAULT 'Personal'`);
+  await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS fonte TEXT DEFAULT 'altro'`);
+  await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS obiettivo TEXT`);
+  await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS stato_cliente TEXT DEFAULT 'attivo'`);
+  await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS prossima_azione TEXT`);
+  await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS prossima_azione_data DATE`);
+  await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS drive_url TEXT`);
+  await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS consenso_privacy BOOLEAN DEFAULT FALSE`);
+  await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS consenso_data DATE`);
 
   await query(`
     CREATE TABLE IF NOT EXISTS leads (
