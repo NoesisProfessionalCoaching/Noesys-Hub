@@ -184,14 +184,16 @@ router.delete('/dashboard/clients/:id', requireCoach, async (req, res) => {
 // ═══════════════════════════════════════════════════════
 
 router.post('/dashboard/clients/:id/percorsi', requireCoach, express.json(), async (req, res) => {
-  const { tipo, n_sessioni_previste, prezzo, promo, sconto_note, data_inizio } = req.body;
+  const { tipo, n_sessioni_previste, n_sessioni_fatte, prezzo, promo, sconto_note,
+          data_inizio, data_fine, modalita, ore_fatte, stato } = req.body;
   try {
     const pid = uuidv4();
     await db.query(
-      `INSERT INTO percorsi (id,client_id,tipo,n_sessioni_previste,prezzo,promo,sconto_note,data_inizio)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-      [pid, req.params.id, tipo||'Individuale', n_sessioni_previste||8,
-       prezzo||null, promo||false, sconto_note||'', data_inizio||null]
+      `INSERT INTO percorsi (id,client_id,tipo,n_sessioni_previste,n_sessioni_fatte,prezzo,promo,sconto_note,data_inizio,data_fine,modalita,ore_fatte,stato)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+      [pid, req.params.id, tipo||'Individuale', n_sessioni_previste||8, n_sessioni_fatte||0,
+       prezzo||null, promo||false, sconto_note||'', data_inizio||null, data_fine||null,
+       modalita||'Standard', ore_fatte||0, stato||'attivo']
     );
     res.json({ ok: true, id: pid });
   } catch (err) {
@@ -215,7 +217,7 @@ router.post('/dashboard/clients/:id/percorsi/:pid/sessione', requireCoach, expre
 
 router.post('/dashboard/clients/:id/percorsi/:pid/chiudi', requireCoach, async (req, res) => {
   try {
-    await db.query("UPDATE percorsi SET stato='concluso' WHERE id=$1", [req.params.pid]);
+    await db.query("UPDATE percorsi SET stato='concluso', data_fine=COALESCE(data_fine, CURRENT_DATE) WHERE id=$1", [req.params.pid]);
     res.json({ ok: true });
   } catch (err) {
     console.error(err);
@@ -599,19 +601,21 @@ function clientDetailPage(client, sessions, percorsi, payments, req) {
       </div>
       ${percorsi.length === 0 ? `<div class="empty">Nessun percorso registrato.</div>` : `
       <table>
-        <thead><tr><th>Tipo</th><th>Sessioni</th><th>Prezzo</th><th>Promo/Sconto</th><th>Inizio</th><th>Stato</th><th></th></tr></thead>
+        <thead><tr><th>Tipo</th><th>Sessioni</th><th>Ore</th><th>Modalità</th><th>Prezzo</th><th>Periodo</th><th>Stato</th><th></th></tr></thead>
         <tbody>
           ${percorsi.map(p => `<tr>
             <td><strong>${esc(p.tipo)}</strong></td>
             <td>
               <span style="font-size:13px;font-weight:700;color:var(--blue)">${p.n_sessioni_fatte}</span>
               <span style="color:#aaa"> / ${p.n_sessioni_previste}</span>
+              ${p.stato==='attivo' ? `
               <button onclick="addSessione('${p.id}',1)" class="btn btn-neutral btn-sm" style="margin-left:6px" title="Aggiungi sessione">+1</button>
-              ${p.n_sessioni_fatte > 0 ? `<button onclick="addSessione('${p.id}',-1)" class="btn btn-neutral btn-sm" title="Rimuovi sessione">-1</button>` : ''}
+              ${p.n_sessioni_fatte > 0 ? `<button onclick="addSessione('${p.id}',-1)" class="btn btn-neutral btn-sm" title="Rimuovi sessione">-1</button>` : ''}` : ''}
             </td>
-            <td>${p.prezzo ? `€ ${Number(p.prezzo).toLocaleString('it-IT',{minimumFractionDigits:2})}` : '<span style="color:#aaa">—</span>'}</td>
-            <td>${p.promo ? `<span class="badge badge-pausa">Promo</span>${p.sconto_note ? ` <span style="font-size:11px;color:#aaa">${esc(p.sconto_note)}</span>` : ''}` : '<span style="color:#aaa;font-size:12px">—</span>'}</td>
-            <td style="font-size:12px;color:#aaa">${p.data_inizio ? itDate(p.data_inizio) : '—'}</td>
+            <td><span style="font-weight:700;color:var(--green)">${Number(p.ore_fatte||0) % 1 === 0 ? Number(p.ore_fatte||0) : Number(p.ore_fatte||0).toFixed(1)}</span> <span style="font-size:11px;color:#aaa">h</span></td>
+            <td>${p.modalita==='Scambio servizi' ? `<span class="badge" style="background:#e8f4fd;color:#1A5280">Scambio servizi</span>` : p.modalita==='Pro bono' ? `<span class="badge badge-pausa">Pro bono</span>` : `<span style="font-size:12px;color:#4a5568">Standard</span>`}</td>
+            <td>${p.prezzo ? `€ ${Number(p.prezzo).toLocaleString('it-IT',{minimumFractionDigits:2})}` : '<span style="color:#aaa">—</span>'}${p.promo ? `<br><span class="badge badge-pausa">Promo</span>${p.sconto_note ? ` <span style="font-size:11px;color:#aaa">${esc(p.sconto_note)}</span>` : ''}` : ''}</td>
+            <td style="font-size:12px;color:#aaa">${p.data_inizio ? itDate(p.data_inizio) : '—'}${p.data_fine ? `<br>→ ${itDate(p.data_fine)}` : ''}</td>
             <td><span class="badge ${p.stato==='attivo'?'badge-active':'badge-inactive'}">${p.stato==='attivo'?'Attivo':'Concluso'}</span></td>
             <td>${p.stato==='attivo' ? `<button onclick="chiudiPercorso('${p.id}')" class="btn btn-neutral btn-sm">Chiudi</button>` : ''}</td>
           </tr>`).join('')}
@@ -782,8 +786,12 @@ function clientDetailPage(client, sessions, percorsi, payments, req) {
   <div id="modal-percorso" class="modal-overlay">
     <div class="modal-box" style="width:420px">
       <h2 style="margin-bottom:16px">Nuovo percorso</h2>
-      <div class="form-group"><label>Tipo</label>
-        <select id="p-tipo"><option>Individuale</option><option>Business</option><option>Young</option><option>Team</option><option>Group</option></select></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group"><label>Tipo</label>
+          <select id="p-tipo"><option>Individuale</option><option>Business</option><option>Young</option><option>Team</option><option>Group</option></select></div>
+        <div class="form-group"><label>Modalità</label>
+          <select id="p-modalita"><option value="Scambio servizi" selected>Scambio servizi</option><option value="Standard">Pagamento standard</option><option value="Pro bono">Pro bono</option></select></div>
+      </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
         <div class="form-group"><label>Sessioni previste</label><input id="p-sess" type="number" value="8" min="1"></div>
         <div class="form-group"><label>Prezzo (€)</label><input id="p-prezzo" type="number" step="0.01" placeholder="es. 900"></div>
@@ -808,7 +816,7 @@ function clientDetailPage(client, sessions, percorsi, payments, req) {
       <div class="form-group"><label>Importo (€) *</label><input id="pay-importo" type="number" step="0.01" placeholder="es. 450.00"></div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
         <div class="form-group"><label>Tipo</label>
-          <select id="pay-tipo"><option value="acconto">Acconto</option><option value="saldo">Saldo</option><option value="sessione">Sessione singola</option><option value="altro">Altro</option></select></div>
+          <select id="pay-tipo"><option value="acconto">Acconto</option><option value="saldo">Saldo</option><option value="sessione">Sessione singola</option><option value="scambio servizi">Scambio servizi</option><option value="altro">Altro</option></select></div>
         <div class="form-group"><label>Stato</label>
           <select id="pay-stato"><option value="atteso">In attesa</option><option value="ricevuto">Ricevuto</option></select></div>
       </div>
@@ -856,6 +864,7 @@ function clientDetailPage(client, sessions, percorsi, payments, req) {
     async function savePercorso() {
       await fetch('/dashboard/clients/'+CID+'/percorsi',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
         tipo: document.getElementById('p-tipo').value,
+        modalita: document.getElementById('p-modalita').value,
         n_sessioni_previste: document.getElementById('p-sess').value,
         prezzo: document.getElementById('p-prezzo').value || null,
         promo: document.getElementById('p-promo').checked,

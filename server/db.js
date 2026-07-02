@@ -117,6 +117,12 @@ async function init() {
     )
   `);
 
+  // Espansione percorsi (2026-07-02): modalità di pagamento (Scambio servizi conta
+  // come pagato per ICF), ore svolte (requisito certificazione ICF), data fine.
+  await query(`ALTER TABLE percorsi ADD COLUMN IF NOT EXISTS modalita TEXT DEFAULT 'Standard'`);
+  await query(`ALTER TABLE percorsi ADD COLUMN IF NOT EXISTS ore_fatte NUMERIC(6,1) DEFAULT 0`);
+  await query(`ALTER TABLE percorsi ADD COLUMN IF NOT EXISTS data_fine DATE`);
+
   await query(`
     CREATE TABLE IF NOT EXISTS payments (
       id             TEXT PRIMARY KEY,
