@@ -700,7 +700,7 @@ function clientDetailPage(client, sessions, percorsi, payments, req) {
             <td><strong>${esc(p.tipo)}</strong></td>
             <td>
               <span style="font-size:13px;font-weight:700;color:var(--blue)">${p.n_sessioni_fatte}</span>
-              <span style="color:#aaa"> / ${p.n_sessioni_previste}</span>
+              <span style="font-size:11px;color:#aaa"> ${p.n_sessioni_fatte === 1 ? 'sessione' : 'sessioni'}</span>
               ${p.stato==='attivo' ? `
               <button onclick="addSessione('${p.id}',1)" class="btn btn-neutral btn-sm" style="margin-left:6px" title="Aggiungi sessione">+1</button>
               ${p.n_sessioni_fatte > 0 ? `<button onclick="addSessione('${p.id}',-1)" class="btn btn-neutral btn-sm" title="Rimuovi sessione">-1</button>` : ''}` : ''}
@@ -886,7 +886,7 @@ function clientDetailPage(client, sessions, percorsi, payments, req) {
           <select id="p-modalita"><option value="Scambio servizi" selected>Scambio servizi</option><option value="Standard">Pagamento standard</option><option value="Pro bono">Pro bono</option></select></div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div class="form-group"><label>Sessioni previste</label><input id="p-sess" type="number" value="8" min="1"></div>
+        <div class="form-group"><label>Ore svolte</label><input id="p-ore" type="number" step="0.5" min="0" value="0"></div>
         <div class="form-group"><label>Prezzo (€)</label><input id="p-prezzo" type="number" step="0.01" placeholder="es. 900"></div>
       </div>
       <div class="form-group"><label>Data inizio</label><input id="p-data" type="date"></div>
@@ -958,7 +958,7 @@ function clientDetailPage(client, sessions, percorsi, payments, req) {
       await fetch('/dashboard/clients/'+CID+'/percorsi',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
         tipo: document.getElementById('p-tipo').value,
         modalita: document.getElementById('p-modalita').value,
-        n_sessioni_previste: document.getElementById('p-sess').value,
+        ore_fatte: document.getElementById('p-ore').value || 0,
         prezzo: document.getElementById('p-prezzo').value || null,
         promo: document.getElementById('p-promo').checked,
         sconto_note: document.getElementById('p-sconto').value,
