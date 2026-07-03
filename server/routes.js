@@ -239,6 +239,19 @@ router.delete('/dashboard/clients/:id/percorsi/:pid', requireCoach, async (req, 
   }
 });
 
+router.post('/dashboard/clients/:id/percorsi/:pid/ore', requireCoach, express.json(), async (req, res) => {
+  const ore = parseFloat(req.body.ore_fatte);
+  if (isNaN(ore) || ore < 0) return res.status(400).json({ error: 'Ore non valide' });
+  try {
+    await db.query('UPDATE percorsi SET ore_fatte=$1 WHERE id=$2 AND client_id=$3',
+      [ore, req.params.pid, req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Errore' });
+  }
+});
+
 // ═══════════════════════════════════════════════════════
 // PAGAMENTI
 // ═══════════════════════════════════════════════════════
@@ -705,7 +718,8 @@ function clientDetailPage(client, sessions, percorsi, payments, req) {
               <button onclick="addSessione('${p.id}',1)" class="btn btn-neutral btn-sm" style="margin-left:6px" title="Aggiungi sessione">+1</button>
               ${p.n_sessioni_fatte > 0 ? `<button onclick="addSessione('${p.id}',-1)" class="btn btn-neutral btn-sm" title="Rimuovi sessione">-1</button>` : ''}` : ''}
             </td>
-            <td><span style="font-weight:700;color:var(--green)">${Number(p.ore_fatte||0) % 1 === 0 ? Number(p.ore_fatte||0) : Number(p.ore_fatte||0).toFixed(1)}</span> <span style="font-size:11px;color:#aaa">h</span></td>
+            <td style="white-space:nowrap"><span style="font-weight:700;color:var(--green)">${fmtOre(p.ore_fatte)}</span> <span style="font-size:11px;color:#aaa">h</span>
+              <button onclick="editOre('${p.id}', ${Number(p.ore_fatte||0)})" class="btn btn-neutral btn-sm" style="margin-left:4px" title="Correggi ore">✎</button></td>
             <td>${p.modalita==='Scambio servizi' ? `<span class="badge" style="background:#e8f4fd;color:#1A5280">Scambio servizi</span>` : p.modalita==='Pro bono' ? `<span class="badge badge-pausa">Pro bono</span>` : `<span style="font-size:12px;color:#4a5568">Standard</span>`}</td>
             <td>${p.prezzo ? `€ ${Number(p.prezzo).toLocaleString('it-IT',{minimumFractionDigits:2})}` : '<span style="color:#aaa">—</span>'}${p.promo ? `<br><span class="badge badge-pausa">Promo</span>${p.sconto_note ? ` <span style="font-size:11px;color:#aaa">${esc(p.sconto_note)}</span>` : ''}` : ''}</td>
             <td style="font-size:12px;color:#aaa">${p.data_inizio ? itDate(p.data_inizio) : '—'}${p.data_fine ? `<br>→ ${itDate(p.data_fine)}` : ''}</td>
@@ -973,6 +987,13 @@ function clientDetailPage(client, sessions, percorsi, payments, req) {
     async function chiudiPercorso(pid) {
       if(!confirm('Chiudere questo percorso?')) return;
       await fetch('/dashboard/clients/'+CID+'/percorsi/'+pid+'/chiudi',{method:'POST'}); location.reload();
+    }
+    async function editOre(pid, cur) {
+      const v = prompt('Ore svolte del percorso (es. 14 oppure 1,5):', cur);
+      if (v === null) return;
+      const n = parseFloat(String(v).replace(',', '.'));
+      if (isNaN(n) || n < 0) { alert('Inserisci un numero valido, es. 14 oppure 1,5'); return; }
+      await fetch('/dashboard/clients/'+CID+'/percorsi/'+pid+'/ore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ore_fatte:n})}); location.reload();
     }
     async function delPercorso(pid) {
       if(!confirm('Eliminare questo percorso? Le sue ore spariscono dall\\'estratto ICF. Operazione irreversibile.')) return;
