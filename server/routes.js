@@ -65,8 +65,9 @@ router.get('/dashboard', requireCoach, async (req, res) => {
       SELECT c.*,
         (SELECT COUNT(*) FROM sessions s WHERE s.client_id = c.id) AS tool_count,
         (SELECT p.tipo || ' · ' || p.n_sessioni_fatte || '/' || p.n_sessioni_previste
-           FROM percorsi p WHERE p.client_id = c.id AND p.stato = 'attivo'
-           ORDER BY p.created_at DESC LIMIT 1) AS percorso_attivo
+                || CASE WHEN p.stato <> 'attivo' THEN ' · concluso' ELSE '' END
+           FROM percorsi p WHERE p.client_id = c.id
+           ORDER BY (p.stato = 'attivo') DESC, p.created_at DESC LIMIT 1) AS percorso_attivo
       FROM clients c ORDER BY c.created_at DESC
     `);
     res.send(dashboardPage(result.rows, req));
