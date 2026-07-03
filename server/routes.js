@@ -347,6 +347,80 @@ router.delete('/dashboard/leads/:id', requireCoach, async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════
+// ESTRATTO ICF — log ore per la certificazione
+// Un percorso = una riga. Le ore contano come "pagate" salvo modalità Pro bono
+// (lo Scambio servizi vale come pagato per l'ICF). Vista + download CSV.
+// ═══════════════════════════════════════════════════════
+
+// Carica i percorsi con il cliente e calcola ore pagate/pro bono per ognuno,
+// più i totali di riepilogo. Condiviso tra la pagina e l'export CSV.
+async function loadIcf() {
+  const result = await db.query(`
+    SELECT p.*, c.name AS client_name, c.email, c.telefono
+    FROM percorsi p
+    JOIN clients c ON c.id = p.client_id
+    ORDER BY c.name, p.data_inizio NULLS LAST, p.created_at
+  `);
+  const rows = result.rows.map(p => {
+    const ore = Number(p.ore_fatte) || 0;
+    const proBono = (p.modalita === 'Pro bono') ? ore : 0;   // Standard + Scambio servizi = pagate
+    const pagate  = ore - proBono;
+    const gruppo  = (p.tipo || 'Individuale') !== 'Individuale';
+    return { ...p, ore, pagate, proBono, gruppo };
+  });
+  const clientiUnici = new Set(rows.map(r => r.client_id)).size;
+  const tot = rows.reduce((a, r) => {
+    a.ore += r.ore; a.pagate += r.pagate; a.proBono += r.proBono;
+    if (r.gruppo) { a.gruppoN++; a.gruppoOre += r.ore; }
+    else          { a.indivN++;  a.indivOre  += r.ore; }
+    return a;
+  }, { ore:0, pagate:0, proBono:0, indivN:0, indivOre:0, gruppoN:0, gruppoOre:0 });
+  return { rows, tot, clientiUnici };
+}
+
+router.get('/dashboard/icf', requireCoach, async (req, res) => {
+  try {
+    const { rows, tot, clientiUnici } = await loadIcf();
+    res.send(icfPage(rows, tot, clientiUnici, req));
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('Errore nel caricamento estratto ICF');
+  }
+});
+
+router.get('/dashboard/icf/export.csv', requireCoach, async (req, res) => {
+  try {
+    const { rows, tot, clientiUnici } = await loadIcf();
+    const cell = v => {
+      const s = String(v == null ? '' : v);
+      return /[",;\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const line = arr => arr.map(cell).join(';');   // ';' → Excel IT apre in colonne
+    const out = [];
+    out.push(line(['Cliente', 'Contatto', 'Tipo', 'Modalità', 'Data inizio', 'Data fine', 'Ore pagate', 'Ore pro bono', 'Ore totali']));
+    for (const r of rows) {
+      out.push(line([
+        r.client_name, r.email || r.telefono || '',
+        r.tipo || 'Individuale', r.modalita || 'Standard',
+        itDate(r.data_inizio), itDate(r.data_fine),
+        fmtOre(r.pagate), fmtOre(r.proBono), fmtOre(r.ore),
+      ]));
+    }
+    out.push('');
+    out.push(line(['TOTALI', `${clientiUnici} clienti · ${rows.length} percorsi`, '', '', '', '', fmtOre(tot.pagate), fmtOre(tot.proBono), fmtOre(tot.ore)]));
+    out.push(line(['Individuali', `${tot.indivN}`, '', '', '', '', '', '', fmtOre(tot.indivOre)]));
+    out.push(line(['Gruppo', `${tot.gruppoN}`, '', '', '', '', '', '', fmtOre(tot.gruppoOre)]));
+    const csv = '﻿' + out.join('\r\n');   // BOM → accenti corretti in Excel
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="estratto-ICF-${new Date().toISOString().slice(0,10)}.csv"`);
+    res.send(csv);
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('Errore export CSV');
+  }
+});
+
 module.exports = router;
 
 // ═══════════════════════════════════════════════════════
@@ -483,7 +557,7 @@ function dashboardPage(clients, req) {
     }).join('');
 
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Clienti</title>${baseStyle()}</head><body>
-  ${appBar({ home: '/dashboard', right: `<a href="/dashboard/leads" class="btn btn-neutral btn-sm">Lead</a><a href="/logout" class="btn btn-neutral btn-sm">Esci</a>` })}
+  ${appBar({ home: '/dashboard', right: `<a href="/dashboard/leads" class="btn btn-neutral btn-sm">Lead</a><a href="/dashboard/icf" class="btn btn-neutral btn-sm">Estratto ICF</a><a href="/logout" class="btn btn-neutral btn-sm">Esci</a>` })}
   <div class="container" style="max-width:980px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px">
       <div><h1>Clienti</h1><p style="color:#aaa;font-size:13px">${clients.length} clienti registrati</p></div>
@@ -1142,4 +1216,67 @@ function esc(str) {
 // Per valori dentro attributi HTML e stringhe JS inline (apici singoli/doppi).
 function attr(str) {
   return esc(str).replace(/&#39;/g, '&#39;');
+}
+
+// Ore con al più un decimale, senza ".0" inutile: 25 → "25", 1.5 → "1,5" (virgola IT).
+function fmtOre(n) {
+  const v = Math.round((Number(n) || 0) * 10) / 10;
+  return (Number.isInteger(v) ? String(v) : v.toFixed(1)).replace('.', ',');
+}
+
+// ── Estratto ICF: tabella percorsi + riepilogo, con download CSV. ──
+function icfPage(rows, tot, clientiUnici, req) {
+  const body = rows.length === 0
+    ? `<tr><td colspan="9" class="empty">Nessun percorso registrato. I percorsi si aggiungono dalla scheda cliente.</td></tr>`
+    : rows.map(r => `<tr>
+        <td><strong>${esc(r.client_name)}</strong></td>
+        <td style="font-size:12px;color:#aaa">${esc(r.email || r.telefono || '—')}</td>
+        <td style="font-size:12px">${esc(r.tipo || 'Individuale')}</td>
+        <td style="font-size:12px">${esc(r.modalita || 'Standard')}</td>
+        <td style="font-size:12px">${r.data_inizio ? itDate(r.data_inizio) : '<span style="color:#ccc">—</span>'}</td>
+        <td style="font-size:12px">${r.data_fine ? itDate(r.data_fine) : '<span style="color:#ccc">in corso</span>'}</td>
+        <td style="text-align:right">${fmtOre(r.pagate)}</td>
+        <td style="text-align:right;color:#7a5c00">${r.proBono ? fmtOre(r.proBono) : '<span style="color:#ccc">—</span>'}</td>
+        <td style="text-align:right"><strong>${fmtOre(r.ore)}</strong></td>
+      </tr>`).join('');
+
+  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Estratto ICF</title>${baseStyle()}</head><body>
+  ${appBar({ home:'/dashboard', right:`<a href="/dashboard" class="btn btn-neutral btn-sm">← Clienti</a><a href="/dashboard/leads" class="btn btn-neutral btn-sm">Lead</a><a href="/logout" class="btn btn-neutral btn-sm">Esci</a>` })}
+  <div class="container" style="max-width:980px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:12px">
+      <div><h1>Estratto ICF</h1><p style="color:#aaa;font-size:13px">Log ore di coaching per la certificazione</p></div>
+      <a href="/dashboard/icf/export.csv" class="btn btn-gold">⬇ Scarica CSV (Excel)</a>
+    </div>
+    <p style="color:var(--muted);font-size:12px;margin-bottom:18px;line-height:1.5">
+      Le ore contano come <strong>pagate</strong> salvo la modalità <strong>Pro bono</strong>. Lo <em>Scambio servizi</em> vale come pagato ai fini ICF.
+      Le ore si aggiornano dalla scheda di ogni cliente (campo “ore svolte” del percorso).
+    </p>
+
+    <div class="card" style="padding:0;overflow:hidden">
+      <table>
+        <thead><tr>
+          <th>Cliente</th><th>Contatto</th><th>Tipo</th><th>Modalità</th>
+          <th>Inizio</th><th>Fine</th>
+          <th style="text-align:right">Pagate</th><th style="text-align:right">Pro bono</th><th style="text-align:right">Totale</th>
+        </tr></thead>
+        <tbody>${body}</tbody>
+        ${rows.length ? `<tfoot><tr style="background:#f7f9fb;font-weight:700">
+          <td colspan="6" style="border-top:2px solid var(--line)">Totale</td>
+          <td style="text-align:right;border-top:2px solid var(--line)">${fmtOre(tot.pagate)}</td>
+          <td style="text-align:right;border-top:2px solid var(--line)">${fmtOre(tot.proBono)}</td>
+          <td style="text-align:right;border-top:2px solid var(--line)">${fmtOre(tot.ore)}</td>
+        </tr></tfoot>` : ''}
+      </table>
+    </div>
+
+    ${rows.length ? `<div class="card" style="display:flex;gap:26px;flex-wrap:wrap">
+      <div><div class="field-label">Clienti</div><div style="font-family:Fraunces,serif;font-size:26px;color:var(--blue)">${clientiUnici}</div></div>
+      <div><div class="field-label">Percorsi</div><div style="font-family:Fraunces,serif;font-size:26px;color:var(--blue)">${rows.length}</div></div>
+      <div><div class="field-label">Ore totali</div><div style="font-family:Fraunces,serif;font-size:26px;color:var(--blue)">${fmtOre(tot.ore)}</div></div>
+      <div><div class="field-label">Individuali</div><div style="font-family:Fraunces,serif;font-size:26px;color:var(--green)">${fmtOre(tot.indivOre)}<span style="font-size:13px;color:#aaa"> · ${tot.indivN}</span></div></div>
+      <div><div class="field-label">Gruppo</div><div style="font-family:Fraunces,serif;font-size:26px;color:var(--green)">${fmtOre(tot.gruppoOre)}<span style="font-size:13px;color:#aaa"> · ${tot.gruppoN}</span></div></div>
+      <div><div class="field-label">Pagate / Pro bono</div><div style="font-family:Fraunces,serif;font-size:26px;color:var(--blue)">${fmtOre(tot.pagate)}<span style="font-size:15px;color:#aaa"> / ${fmtOre(tot.proBono)}</span></div></div>
+    </div>` : ''}
+  </div>
+  </body></html>`;
 }
