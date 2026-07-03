@@ -225,6 +225,16 @@ router.post('/dashboard/clients/:id/percorsi/:pid/chiudi', requireCoach, async (
   }
 });
 
+router.delete('/dashboard/clients/:id/percorsi/:pid', requireCoach, async (req, res) => {
+  try {
+    await db.query('DELETE FROM percorsi WHERE id=$1 AND client_id=$2', [req.params.pid, req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Errore' });
+  }
+});
+
 // ═══════════════════════════════════════════════════════
 // PAGAMENTI
 // ═══════════════════════════════════════════════════════
@@ -691,7 +701,7 @@ function clientDetailPage(client, sessions, percorsi, payments, req) {
             <td>${p.prezzo ? `€ ${Number(p.prezzo).toLocaleString('it-IT',{minimumFractionDigits:2})}` : '<span style="color:#aaa">—</span>'}${p.promo ? `<br><span class="badge badge-pausa">Promo</span>${p.sconto_note ? ` <span style="font-size:11px;color:#aaa">${esc(p.sconto_note)}</span>` : ''}` : ''}</td>
             <td style="font-size:12px;color:#aaa">${p.data_inizio ? itDate(p.data_inizio) : '—'}${p.data_fine ? `<br>→ ${itDate(p.data_fine)}` : ''}</td>
             <td><span class="badge ${p.stato==='attivo'?'badge-active':'badge-inactive'}">${p.stato==='attivo'?'Attivo':'Concluso'}</span></td>
-            <td>${p.stato==='attivo' ? `<button onclick="chiudiPercorso('${p.id}')" class="btn btn-neutral btn-sm">Chiudi</button>` : ''}</td>
+            <td style="white-space:nowrap">${p.stato==='attivo' ? `<button onclick="chiudiPercorso('${p.id}')" class="btn btn-neutral btn-sm">Chiudi</button> ` : ''}<button onclick="delPercorso('${p.id}')" class="btn btn-danger btn-sm" title="Elimina percorso">🗑</button></td>
           </tr>`).join('')}
         </tbody>
       </table>`}
@@ -954,6 +964,10 @@ function clientDetailPage(client, sessions, percorsi, payments, req) {
     async function chiudiPercorso(pid) {
       if(!confirm('Chiudere questo percorso?')) return;
       await fetch('/dashboard/clients/'+CID+'/percorsi/'+pid+'/chiudi',{method:'POST'}); location.reload();
+    }
+    async function delPercorso(pid) {
+      if(!confirm('Eliminare questo percorso? Le sue ore spariscono dall\\'estratto ICF. Operazione irreversibile.')) return;
+      await fetch('/dashboard/clients/'+CID+'/percorsi/'+pid,{method:'DELETE'}); location.reload();
     }
     function openPayment() { document.getElementById('modal-payment').style.display='flex'; }
     async function savePayment() {
