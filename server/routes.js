@@ -64,11 +64,14 @@ router.get('/dashboard', requireCoach, async (req, res) => {
     const result = await db.query(`
       SELECT c.*,
         (SELECT COUNT(*) FROM sessions s WHERE s.client_id = c.id) AS tool_count,
-        (SELECT p.tipo || ' · ' || p.n_sessioni_fatte || '/' || p.n_sessioni_previste
-                || CASE WHEN p.stato <> 'attivo' THEN ' · concluso' ELSE '' END
-           FROM percorsi p WHERE p.client_id = c.id
-           ORDER BY (p.stato = 'attivo') DESC, p.created_at DESC LIMIT 1) AS percorso_attivo
-      FROM clients c ORDER BY c.created_at DESC
+        pp.tipo AS p_tipo, pp.n_sessioni_fatte AS p_sess, pp.ore_fatte AS p_ore, pp.stato AS p_stato
+      FROM clients c
+      LEFT JOIN LATERAL (
+        SELECT p.tipo, p.n_sessioni_fatte, p.ore_fatte, p.stato
+        FROM percorsi p WHERE p.client_id = c.id
+        ORDER BY (p.stato = 'attivo') DESC, p.created_at DESC LIMIT 1
+      ) pp ON true
+      ORDER BY c.created_at DESC
     `);
     res.send(dashboardPage(result.rows, req));
   } catch (err) {
@@ -554,11 +557,16 @@ function dashboardPage(clients, req) {
       const recall = c.prossima_azione
         ? `${esc(c.prossima_azione)}${c.prossima_azione_data ? `<br><span style="font-size:11px;color:#aaa">${itDate(c.prossima_azione_data)}</span>` : ''}`
         : '<span style="color:#ccc">—</span>';
+      const sess = Number(c.p_sess) || 0;
+      const ore  = Number(c.p_ore) || 0;
+      const percorso = c.p_tipo
+        ? `${esc(c.p_tipo)} · ${sess} ${sess === 1 ? 'sessione' : 'sessioni'}${ore > 0 ? ` · ${fmtOre(ore)} h` : ''}${c.p_stato !== 'attivo' ? ` · <span style="color:#999">concluso</span>` : ''}`
+        : '<span style="color:#ccc">—</span>';
       return `<tr onclick="location.href='/dashboard/clients/${c.id}'" style="cursor:pointer">
         <td><strong>${esc(c.name)}</strong>${c.email ? `<br><span style="color:#aaa;font-size:11px">${esc(c.email)}</span>` : ''}</td>
         <td><span class="badge" style="background:${ac}18;color:${ac}">${area}</span></td>
         <td><span class="badge ${st.cls}">${st.label}</span></td>
-        <td style="font-size:12px">${c.percorso_attivo ? esc(c.percorso_attivo) : '<span style="color:#ccc">—</span>'}</td>
+        <td style="font-size:12px">${percorso}</td>
         <td style="font-size:12px">${recall}</td>
         <td style="white-space:nowrap" onclick="event.stopPropagation()">
           <a href="/dashboard/clients/${c.id}" class="btn btn-neutral btn-sm">Dettaglio</a>
