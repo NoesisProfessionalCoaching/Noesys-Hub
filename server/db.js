@@ -60,6 +60,10 @@ async function init() {
     )
   `);
 
+  // Versioni multiple per strumento (gestite dalla piattaforma): ogni riga è una
+  // versione datata. Idempotente qui così l'ordine di deploy non conta.
+  await query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW()`);
+
   await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS telefono TEXT`);
   await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS tipo_percorso TEXT DEFAULT 'Individuale'`);
   await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS note_preliminari TEXT`);

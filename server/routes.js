@@ -63,7 +63,7 @@ router.get('/dashboard', requireCoach, async (req, res) => {
   try {
     const result = await db.query(`
       SELECT c.*,
-        (SELECT COUNT(*) FROM sessions s WHERE s.client_id = c.id) AS tool_count,
+        (SELECT COUNT(DISTINCT s.tool) FROM sessions s WHERE s.client_id = c.id) AS tool_count,
         pp.tipo AS p_tipo, pp.n_sessioni_fatte AS p_sess, pp.ore_fatte AS p_ore, pp.stato AS p_stato
       FROM clients c
       LEFT JOIN LATERAL (
@@ -105,7 +105,7 @@ router.get('/dashboard/clients/:id', requireCoach, async (req, res) => {
     const client = cr.rows[0];
     if (!client) return res.redirect('/dashboard');
     const [sr, pr, payr] = await Promise.all([
-      db.query('SELECT * FROM sessions WHERE client_id=$1 ORDER BY updated_at DESC', [req.params.id]),
+      db.query('SELECT * FROM sessions WHERE client_id=$1 ORDER BY tool, created_at DESC', [req.params.id]),
       db.query('SELECT * FROM percorsi WHERE client_id=$1 ORDER BY created_at ASC', [req.params.id]),
       db.query('SELECT * FROM payments WHERE client_id=$1 ORDER BY created_at DESC', [req.params.id]),
     ]);
@@ -770,7 +770,7 @@ function clientDetailPage(client, sessions, percorsi, payments, req) {
     : sessions.map(s => `
       <div class="card" style="margin-bottom:12px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
-          <div style="font-size:15px;font-weight:700;color:var(--ink)">${TOOL_LABEL[s.tool] || esc(s.tool)}</div>
+          <div style="font-size:15px;font-weight:700;color:var(--ink)">${TOOL_LABEL[s.tool] || esc(s.tool)} <span style="font-size:12px;font-weight:600;color:#aaa">· ${itDate(s.created_at)}</span></div>
           <span style="font-size:11px;color:#aaa">Aggiornato: ${fmtDate(s.updated_at)}</span>
         </div>
         <div style="font-size:13px;line-height:1.7">${renderSessionData(s.tool, s.data)}</div>
