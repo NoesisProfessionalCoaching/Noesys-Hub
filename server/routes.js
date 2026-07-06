@@ -764,7 +764,7 @@ function clientDetailPage(client, sessions, percorsi, payments, req) {
     </div>`;
 
   // ── Strumenti ────────────────────────────────────────
-  const TOOL_LABEL = {valori:'💎 Valori',abilita:'⭐ Abilità',lineavita:'📈 Linea della Vita',genogramma:'🔗 Genogramma',ruotavita:'🎯 Ruota della Vita',brainstorming:'💡 Brainstorming'};
+  const TOOL_LABEL = {valori:'💎 Valori',abilita:'⭐ Abilità',lineavita:'📈 Linea della Vita',genogramma:'🔗 Genogramma',ruotavita:'🎯 Ruota della Vita',brainstorming:'💡 Brainstorming','logica-cartesiana':'🧭 Logica Cartesiana'};
   const sessionCards = sessions.length === 0
     ? `<div class="empty">Nessuno strumento compilato dal cliente.</div>`
     : sessions.map(s => `
@@ -1227,6 +1227,24 @@ function renderSessionData(tool, jsonStr) {
       const persone = (d.persons || []).filter(p => p.name);
       return `<span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#9AA0AA">Persone</span><br>
         ${persone.length ? persone.map(p => `<span style="display:inline-block;margin:3px 4px 3px 0;padding:3px 10px;border-radius:14px;background:#eef1f5;color:#4a5568;font-size:12px">${esc(p.name)}${p.role ? ` <em style="color:#9AA0AA">${esc(p.role)}</em>` : ''}</span>`).join('') : '<span style="color:#aaa;font-size:12px">—</span>'}`;
+    }
+    case 'logica-cartesiana': {
+      const quads = [
+        { n:1, key:'accade_faccio',       q:'Cosa accade se lo faccio?' },
+        { n:2, key:'accade_nonfaccio',    q:'Cosa accade se non lo faccio?' },
+        { n:3, key:'nonaccade_faccio',    q:'Cosa non accade se lo faccio?' },
+        { n:4, key:'nonaccade_nonfaccio', q:'Cosa non accade se non lo faccio?' }
+      ];
+      const chip = t => `<span style="display:inline-block;margin:3px 4px 3px 0;padding:3px 10px;border-radius:14px;background:#eef1f5;color:#4a5568;font-size:12px">${esc(t)}</span>`;
+      const blocks = quads.map(qd => {
+        const items = (d[qd.key] || []).map(c => c && c.text).filter(Boolean);
+        return `<div style="margin-bottom:8px">
+          <span style="font-size:11px;font-weight:700;color:#6B7280;display:inline-flex;align-items:center">
+            <span style="display:inline-block;width:16px;height:16px;line-height:16px;text-align:center;border-radius:50%;background:#223B6E;color:#fff;font-size:10px;font-weight:700;margin-right:6px">${qd.n}</span>${qd.q}</span><br>
+          ${items.length ? items.map(chip).join('') : '<span style="color:#aaa;font-size:12px">—</span>'}
+        </div>`;
+      }).join('');
+      return `${d.decisione ? `<div style="margin-bottom:10px"><span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#9AA0AA">Decisione</span><br><span style="font-size:14px;font-weight:700;color:#223B6E">${esc(d.decisione)}</span></div>` : ''}${blocks}`;
     }
     default:
       return '<span style="color:#aaa;font-size:12px">Anteprima non disponibile</span>';
