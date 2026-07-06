@@ -1230,17 +1230,17 @@ function renderSessionData(tool, jsonStr) {
     }
     case 'logica-cartesiana': {
       const quads = [
-        { n:1, key:'accade_faccio',       q:'Cosa accade se lo faccio?' },
-        { n:2, key:'accade_nonfaccio',    q:'Cosa accade se non lo faccio?' },
-        { n:3, key:'nonaccade_faccio',    q:'Cosa non accade se lo faccio?' },
-        { n:4, key:'nonaccade_nonfaccio', q:'Cosa non accade se non lo faccio?' }
+        { r:'I',   key:'accade_faccio',       q:'Cosa accade se lo faccio?' },
+        { r:'II',  key:'accade_nonfaccio',    q:'Cosa accade se non lo faccio?' },
+        { r:'III', key:'nonaccade_faccio',    q:'Cosa non accade se lo faccio?' },
+        { r:'IV',  key:'nonaccade_nonfaccio', q:'Cosa non accade se non lo faccio?' }
       ];
       const chip = t => `<span style="display:inline-block;margin:3px 4px 3px 0;padding:3px 10px;border-radius:14px;background:#eef1f5;color:#4a5568;font-size:12px">${esc(t)}</span>`;
       const blocks = quads.map(qd => {
         const items = (d[qd.key] || []).map(c => c && c.text).filter(Boolean);
         return `<div style="margin-bottom:8px">
           <span style="font-size:11px;font-weight:700;color:#6B7280;display:inline-flex;align-items:center">
-            <span style="display:inline-block;width:16px;height:16px;line-height:16px;text-align:center;border-radius:50%;background:#223B6E;color:#fff;font-size:10px;font-weight:700;margin-right:6px">${qd.n}</span>${qd.q}</span><br>
+            <span style="display:inline-block;min-width:18px;height:16px;line-height:16px;text-align:center;padding:0 4px;border-radius:8px;background:#223B6E;color:#fff;font-size:10px;font-weight:700;margin-right:6px">${qd.r}</span>${qd.q}</span><br>
           ${items.length ? items.map(chip).join('') : '<span style="color:#aaa;font-size:12px">—</span>'}
         </div>`;
       }).join('');
