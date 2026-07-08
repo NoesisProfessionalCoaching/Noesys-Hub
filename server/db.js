@@ -127,6 +127,23 @@ async function init() {
   await query(`ALTER TABLE percorsi ADD COLUMN IF NOT EXISTS ore_fatte NUMERIC(6,1) DEFAULT 0`);
   await query(`ALTER TABLE percorsi ADD COLUMN IF NOT EXISTS data_fine DATE`);
 
+  // Diario sessioni di coaching (A8): una riga per seduta (Intake/Ongoing/Final),
+  // con ore e "scheda" (riepilogo dei punti salienti, testo unico Markdown).
+  // Distinta da `sessions` (che sono gli strumenti compilati dal cliente).
+  // Quando un percorso ha sedute, ore_fatte/n_sessioni_fatte si ricalcolano da qui.
+  await query(`
+    CREATE TABLE IF NOT EXISTS sedute (
+      id          TEXT PRIMARY KEY,
+      percorso_id TEXT NOT NULL REFERENCES percorsi(id) ON DELETE CASCADE,
+      client_id   TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+      tipo        TEXT NOT NULL DEFAULT 'Ongoing',
+      data        DATE,
+      ore         NUMERIC(4,1) DEFAULT 0,
+      scheda      TEXT DEFAULT '',
+      created_at  TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
   await query(`
     CREATE TABLE IF NOT EXISTS payments (
       id             TEXT PRIMARY KEY,

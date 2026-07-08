@@ -104,12 +104,13 @@ router.get('/dashboard/clients/:id', requireCoach, async (req, res) => {
     const cr = await db.query('SELECT * FROM clients WHERE id = $1', [req.params.id]);
     const client = cr.rows[0];
     if (!client) return res.redirect('/dashboard');
-    const [sr, pr, payr] = await Promise.all([
+    const [sr, pr, payr, sedr] = await Promise.all([
       db.query('SELECT * FROM sessions WHERE client_id=$1 ORDER BY tool, created_at DESC', [req.params.id]),
       db.query('SELECT * FROM percorsi WHERE client_id=$1 ORDER BY created_at ASC', [req.params.id]),
       db.query('SELECT * FROM payments WHERE client_id=$1 ORDER BY created_at DESC', [req.params.id]),
+      db.query('SELECT * FROM sedute WHERE client_id=$1 ORDER BY data ASC NULLS LAST, created_at ASC', [req.params.id]),
     ]);
-    res.send(clientDetailPage(client, sr.rows, pr.rows, payr.rows, req));
+    res.send(clientDetailPage(client, sr.rows, pr.rows, payr.rows, sedr.rows, req));
   } catch (err) {
     console.error(err);
     res.redirect('/dashboard');
@@ -250,6 +251,86 @@ router.post('/dashboard/clients/:id/percorsi/:pid/ore', requireCoach, express.js
     console.error(err);
     res.status(500).json({ error: 'Errore' });
   }
+});
+
+// ═══════════════════════════════════════════════════════
+// SEDUTE (diario sessioni di coaching)
+// La scheda = riepilogo salienti (testo unico Markdown). Ore automatiche per tipo
+// (Intake 2h · Ongoing 1h · Final = inserita a mano). Quando un percorso ha sedute,
+// ore_fatte e n_sessioni_fatte si ricalcolano dalla somma/conteggio delle sedute.
+// ═══════════════════════════════════════════════════════
+
+const ORE_TIPO = { Intake: 2, Ongoing: 1, Final: null };
+function normTipo(t) { return ['Intake', 'Ongoing', 'Final'].includes(t) ? t : 'Ongoing'; }
+function oreForTipo(tipo, ore) {
+  const auto = ORE_TIPO[tipo];
+  if (auto != null) return auto;                            // Intake/Ongoing: ore fisse
+  const n = parseFloat(String(ore).replace(',', '.'));      // Final: dal valore passato
+  return (isNaN(n) || n < 0) ? 0 : n;
+}
+async function recomputePercorso(pid) {
+  await db.query(
+    `UPDATE percorsi SET
+       n_sessioni_fatte = (SELECT COUNT(*)             FROM sedute WHERE percorso_id = $1),
+       ore_fatte        = (SELECT COALESCE(SUM(ore),0) FROM sedute WHERE percorso_id = $1)
+     WHERE id = $1`, [pid]);
+}
+
+// Crea una seduta
+router.post('/dashboard/clients/:id/percorsi/:pid/sedute', requireCoach, express.json(), async (req, res) => {
+  try {
+    const t = normTipo(req.body.tipo);
+    const sid = uuidv4();
+    await db.query(
+      `INSERT INTO sedute (id, percorso_id, client_id, tipo, data, ore, scheda)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [sid, req.params.pid, req.params.id, t, req.body.data || null, oreForTipo(t, req.body.ore), (req.body.scheda || '').trim()]
+    );
+    await recomputePercorso(req.params.pid);
+    res.json({ ok: true, id: sid });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Errore' }); }
+});
+
+// Modifica una seduta
+router.post('/dashboard/clients/:id/percorsi/:pid/sedute/:sid', requireCoach, express.json(), async (req, res) => {
+  try {
+    const t = normTipo(req.body.tipo);
+    await db.query(
+      `UPDATE sedute SET tipo=$1, data=$2, ore=$3, scheda=$4 WHERE id=$5 AND percorso_id=$6`,
+      [t, req.body.data || null, oreForTipo(t, req.body.ore), (req.body.scheda || '').trim(), req.params.sid, req.params.pid]
+    );
+    await recomputePercorso(req.params.pid);
+    res.json({ ok: true });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Errore' }); }
+});
+
+// Elimina una seduta
+router.delete('/dashboard/clients/:id/percorsi/:pid/sedute/:sid', requireCoach, async (req, res) => {
+  try {
+    await db.query('DELETE FROM sedute WHERE id=$1 AND percorso_id=$2', [req.params.sid, req.params.pid]);
+    await recomputePercorso(req.params.pid);
+    res.json({ ok: true });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Errore' }); }
+});
+
+// Gancio per l'automazione (report → scheda). Disattivo finché AUTOMATION_SECRET
+// non è configurato: è il canale che userà il flusso automatico (Parte 2 / OAuth).
+router.post('/api/sedute', express.json(), async (req, res) => {
+  try {
+    const secret = process.env.AUTOMATION_SECRET;
+    if (!secret || req.body.secret !== secret) return res.status(401).json({ error: 'non autorizzato' });
+    const { percorso_id, client_id } = req.body;
+    if (!percorso_id || !client_id) return res.status(400).json({ error: 'percorso_id e client_id obbligatori' });
+    const t = normTipo(req.body.tipo);
+    const sid = uuidv4();
+    await db.query(
+      `INSERT INTO sedute (id, percorso_id, client_id, tipo, data, ore, scheda)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [sid, percorso_id, client_id, t, req.body.data || null, oreForTipo(t, req.body.ore), (req.body.scheda || '').trim()]
+    );
+    await recomputePercorso(percorso_id);
+    res.json({ ok: true, id: sid });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Errore' }); }
 });
 
 // ═══════════════════════════════════════════════════════
@@ -691,8 +772,50 @@ function dashboardPage(clients, req) {
   </body></html>`;
 }
 
-function clientDetailPage(client, sessions, percorsi, payments, req) {
+// Mini-Markdown → HTML sicuro per la scheda seduta (grassetto, corsivo, titoli,
+// elenchi, citazioni, righello). Prima si esce l'HTML, poi si applicano i pochi stili.
+function mdLite(md) {
+  const inline = t => esc(t)
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/(^|[^*])\*(?!\s)([^*]+?)\*(?!\*)/g, '$1<em>$2</em>');
+  const lines = String(md || '').split('\n');
+  let out = '', inList = false;
+  const closeList = () => { if (inList) { out += '</ul>'; inList = false; } };
+  for (const raw of lines) {
+    const line = raw.replace(/\s+$/, '');
+    if (/^#{1,6}\s+/.test(line)) { closeList(); out += `<div style="font-weight:700;color:var(--ink);margin:10px 0 4px">${inline(line.replace(/^#{1,6}\s+/, ''))}</div>`; }
+    else if (/^---+$/.test(line.trim())) { closeList(); out += '<hr style="border:none;border-top:1px solid var(--line);margin:8px 0">'; }
+    else if (/^[-*]\s+/.test(line)) { if (!inList) { out += '<ul style="margin:4px 0 4px 18px;padding:0">'; inList = true; } out += `<li style="margin:2px 0">${inline(line.replace(/^[-*]\s+/, ''))}</li>`; }
+    else if (line.trim() === '') { closeList(); out += '<div style="height:6px"></div>'; }
+    else if (/^>\s?/.test(line)) { closeList(); out += `<div style="color:#6B7280;font-style:italic">${inline(line.replace(/^>\s?/, ''))}</div>`; }
+    else { closeList(); out += `<div>${inline(line)}</div>`; }
+  }
+  closeList();
+  return out;
+}
+
+function renderSeduta(s) {
+  const T = { Intake: { bg: '#e8f4fd', c: '#1A5280' }, Ongoing: { bg: '#eafaf1', c: '#4F8B73' }, Final: { bg: '#fff8ec', c: '#8a6d1e' } }[s.tipo] || { bg: '#eee', c: '#555' };
+  return `
+    <div class="card" style="margin-bottom:10px;box-shadow:none;border:1px solid var(--line)">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px">
+        <div>
+          <span class="badge" style="background:${T.bg};color:${T.c}">${esc(s.tipo)}</span>
+          <span style="font-size:13px;font-weight:700;color:var(--ink);margin-left:6px">${s.data ? itDate(s.data) : '—'}</span>
+          <span style="font-size:12px;color:#aaa">· ${fmtOre(s.ore)} h</span>
+        </div>
+        <div style="white-space:nowrap">
+          <button onclick="editSeduta('${s.id}')" class="btn btn-neutral btn-sm" title="Modifica">✎</button>
+          <button onclick="delSeduta('${s.id}','${s.percorso_id}')" class="btn btn-danger btn-sm" title="Elimina">🗑</button>
+        </div>
+      </div>
+      ${s.scheda && s.scheda.trim() ? `<div style="font-size:13px;line-height:1.6">${mdLite(s.scheda)}</div>` : `<div class="empty" style="padding:8px">— nessuna scheda —</div>`}
+    </div>`;
+}
+
+function clientDetailPage(client, sessions, percorsi, payments, sedute, req) {
   const link = PLATFORM_URL + '/c/' + client.token;
+  sedute = sedute || [];
   const area = client.area || 'Personal';
   const ac = AREA_COLOR[area] || '#1A5280';
   const st = STATO_CLIENTE[client.stato_cliente] || STATO_CLIENTE.attivo;
@@ -728,6 +851,20 @@ function clientDetailPage(client, sessions, percorsi, payments, req) {
           </tr>`).join('')}
         </tbody>
       </table>`}
+    </div>`;
+
+  // ── Sessioni (diario / scheda cliente) ───────────────
+  const seduteHtml = `
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+        <h2 style="margin:0">Sessioni <span style="font-weight:400;font-size:13px;color:#aaa">· diario / scheda cliente</span></h2>
+        ${percorsi.length ? `<button onclick="openSeduta()" class="btn btn-primary btn-sm">+ Aggiungi sessione</button>` : ''}
+      </div>
+      ${percorsi.length === 0
+        ? `<div class="empty">Crea prima un percorso per registrare le sessioni.</div>`
+        : sedute.length === 0
+          ? `<div class="empty">Nessuna sessione nel diario. Usa "Aggiungi sessione" (Intake 2h · Ongoing 1h · Final a mano).</div>`
+          : sedute.map(s => renderSeduta(s)).join('')}
     </div>`;
 
   // ── Pagamenti ────────────────────────────────────────
@@ -830,6 +967,7 @@ function clientDetailPage(client, sessions, percorsi, payments, req) {
     </div>
 
     ${percorsiHtml}
+    ${seduteHtml}
     ${paymentsHtml}
 
     <h2 style="margin:20px 0 12px">Strumenti compilati dal cliente <span style="font-weight:400;font-size:13px;color:#aaa">(${sessions.length})</span></h2>
@@ -916,6 +1054,30 @@ function clientDetailPage(client, sessions, percorsi, payments, req) {
     </div>
   </div>
 
+  <!-- MODAL SEDUTA (diario sessioni) -->
+  <div id="modal-seduta" class="modal-overlay">
+    <div class="modal-box" style="width:600px;max-width:94vw">
+      <h2 id="seduta-title" style="margin-bottom:16px">Aggiungi sessione</h2>
+      <input id="s-id" type="hidden">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group"><label>Percorso</label>
+          <select id="s-percorso">${percorsi.map(p => `<option value="${p.id}">${esc(p.tipo)}${p.data_inizio ? ` · dal ${itDate(p.data_inizio)}` : ''}${p.stato !== 'attivo' ? ' (concluso)' : ''}</option>`).join('')}</select></div>
+        <div class="form-group"><label>Tipo</label>
+          <select id="s-tipo" onchange="oreAuto()"><option value="Intake">Intake</option><option value="Ongoing" selected>Ongoing</option><option value="Final">Final</option></select></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group"><label>Data</label><input id="s-data" type="date"></div>
+        <div class="form-group"><label>Ore <span id="s-ore-hint" style="font-size:11px;color:#aaa;text-transform:none;letter-spacing:0"></span></label><input id="s-ore" type="number" step="0.5" min="0"></div>
+      </div>
+      <div class="form-group"><label>Scheda — riepilogo dei punti salienti (Markdown)</label>
+        <textarea id="s-scheda" style="min-height:300px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.5" placeholder="## Sessione…&#10;**Obiettivo:** …&#10;- …"></textarea></div>
+      <div style="display:flex;gap:8px;margin-top:4px">
+        <button onclick="document.getElementById('modal-seduta').style.display='none'" class="btn btn-neutral" style="flex:1">Annulla</button>
+        <button onclick="saveSeduta()" class="btn btn-primary" style="flex:1">Salva</button>
+      </div>
+    </div>
+  </div>
+
   <!-- MODAL NUOVO PAGAMENTO -->
   <div id="modal-payment" class="modal-overlay">
     <div class="modal-box" style="width:380px">
@@ -939,6 +1101,50 @@ function clientDetailPage(client, sessions, percorsi, payments, req) {
   <div id="toast" style="display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--navy);color:#fff;padding:10px 20px;border-radius:20px;font-size:13px;font-weight:600;z-index:200">Fatto!</div>
   <script>
     const CID = '${client.id}';
+    const SEDUTE = ${JSON.stringify(Object.fromEntries(sedute.map(s => [s.id, { id: s.id, percorso_id: s.percorso_id, tipo: s.tipo, data: s.data, ore: Number(s.ore), scheda: s.scheda || '' }]))).replace(/</g, '\\u003c')};
+    const ORE_TIPO = { Intake: 2, Ongoing: 1, Final: null };
+    function oreAuto() {
+      const t = document.getElementById('s-tipo').value;
+      const auto = ORE_TIPO[t];
+      const ore = document.getElementById('s-ore'), hint = document.getElementById('s-ore-hint');
+      if (auto != null) { ore.value = auto; ore.readOnly = true; hint.textContent = '(automatiche · ' + t + ')'; }
+      else { ore.readOnly = false; hint.textContent = '(Final: a mano)'; }
+    }
+    function openSeduta() {
+      document.getElementById('seduta-title').textContent = 'Aggiungi sessione';
+      document.getElementById('s-id').value = '';
+      const ps = document.getElementById('s-percorso'); if (ps.options.length) ps.selectedIndex = 0;
+      document.getElementById('s-tipo').value = 'Ongoing';
+      document.getElementById('s-data').value = new Date().toISOString().slice(0, 10);
+      document.getElementById('s-scheda').value = '';
+      oreAuto();
+      document.getElementById('modal-seduta').style.display = 'flex';
+    }
+    function editSeduta(sid) {
+      const s = SEDUTE[sid]; if (!s) return;
+      document.getElementById('seduta-title').textContent = 'Modifica sessione';
+      document.getElementById('s-id').value = s.id;
+      document.getElementById('s-percorso').value = s.percorso_id;
+      document.getElementById('s-tipo').value = s.tipo;
+      document.getElementById('s-data').value = s.data ? String(s.data).slice(0, 10) : '';
+      document.getElementById('s-scheda').value = s.scheda || '';
+      oreAuto();
+      document.getElementById('s-ore').value = s.ore;
+      document.getElementById('modal-seduta').style.display = 'flex';
+    }
+    async function saveSeduta() {
+      const pid = document.getElementById('s-percorso').value;
+      if (!pid) { alert('Serve un percorso'); return; }
+      const sid = document.getElementById('s-id').value;
+      const body = { tipo: document.getElementById('s-tipo').value, data: document.getElementById('s-data').value || null, ore: document.getElementById('s-ore').value || 0, scheda: document.getElementById('s-scheda').value };
+      const url = '/dashboard/clients/' + CID + '/percorsi/' + pid + '/sedute' + (sid ? ('/' + sid) : '');
+      await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      location.reload();
+    }
+    async function delSeduta(sid, pid) {
+      if (!confirm('Eliminare questa sessione dal diario? Le ore si ricalcolano.')) return;
+      await fetch('/dashboard/clients/' + CID + '/percorsi/' + pid + '/sedute/' + sid, { method: 'DELETE' }); location.reload();
+    }
     function copyLink(url) { navigator.clipboard.writeText(url).then(() => { const t=document.getElementById('toast'); t.textContent='Link copiato!'; t.style.display='block'; setTimeout(()=>t.style.display='none',2000); }); }
     function openEdit() { document.getElementById('modal-edit').style.display='flex'; }
     async function saveClient() {
@@ -1018,7 +1224,7 @@ function clientDetailPage(client, sessions, percorsi, payments, req) {
       if(!confirm('Eliminare questo pagamento?')) return;
       await fetch('/dashboard/clients/'+CID+'/payments/'+pid,{method:'DELETE'}); location.reload();
     }
-    [document.getElementById('modal-edit'),document.getElementById('modal-percorso'),document.getElementById('modal-payment')].forEach(m=>{
+    [document.getElementById('modal-edit'),document.getElementById('modal-percorso'),document.getElementById('modal-payment'),document.getElementById('modal-seduta')].forEach(m=>{
       m.addEventListener('click',e=>{ if(e.target===m) m.style.display='none'; });
     });
   </script>
