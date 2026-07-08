@@ -889,7 +889,7 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, req) {
   const paymentsHtml = `
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
-        <h2 style="margin:0">Pagamenti
+        <h2 style="margin:0">Amministrazione
           <span style="font-size:12px;font-weight:400;color:#aaa;margin-left:10px">
             Ricevuto: <strong style="color:#4F8B73">€ ${totRicevuto.toLocaleString('it-IT',{minimumFractionDigits:2})}</strong>
             ${totAtteso > 0 ? ` · In attesa: <strong style="color:#D8AE2E">€ ${totAtteso.toLocaleString('it-IT',{minimumFractionDigits:2})}</strong>` : ''}
