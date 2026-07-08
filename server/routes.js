@@ -263,10 +263,14 @@ router.post('/dashboard/clients/:id/percorsi/:pid/ore', requireCoach, express.js
 const ORE_TIPO = { Intake: 2, Ongoing: 1, Final: null };
 function normTipo(t) { return ['Intake', 'Ongoing', 'Final'].includes(t) ? t : 'Ongoing'; }
 function oreForTipo(tipo, ore) {
+  // Il valore esplicito (coach o automazione) ha SEMPRE la priorità: le ore per
+  // tipo sono solo un default (es. Intake interrotto = 2h+1h, durata anomala…).
+  if (ore !== undefined && ore !== null && String(ore).trim() !== '') {
+    const n = parseFloat(String(ore).replace(',', '.'));
+    if (!isNaN(n) && n >= 0) return n;
+  }
   const auto = ORE_TIPO[tipo];
-  if (auto != null) return auto;                            // Intake/Ongoing: ore fisse
-  const n = parseFloat(String(ore).replace(',', '.'));      // Final: dal valore passato
-  return (isNaN(n) || n < 0) ? 0 : n;
+  return auto != null ? auto : 0;
 }
 async function recomputePercorso(pid) {
   await db.query(
@@ -1107,8 +1111,9 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, req) {
       const t = document.getElementById('s-tipo').value;
       const auto = ORE_TIPO[t];
       const ore = document.getElementById('s-ore'), hint = document.getElementById('s-ore-hint');
-      if (auto != null) { ore.value = auto; ore.readOnly = true; hint.textContent = '(automatiche · ' + t + ')'; }
-      else { ore.readOnly = false; hint.textContent = '(Final: a mano)'; }
+      ore.readOnly = false;
+      if (auto != null) { ore.value = auto; hint.textContent = '(preimpostate per ' + t + ', modificabili)'; }
+      else { hint.textContent = '(Final: a mano)'; }
     }
     function openSeduta() {
       document.getElementById('seduta-title').textContent = 'Aggiungi sessione';
