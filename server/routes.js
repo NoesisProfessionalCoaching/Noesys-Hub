@@ -594,6 +594,15 @@ function baseStyle() {
       .modal-box { background:#fff; border-radius:12px; padding:26px; width:520px; max-width:100%; box-shadow:0 8px 32px rgba(0,0,0,0.18); max-height:90vh; overflow-y:auto; }
       .field-label { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:0.06em; font-weight:600; margin-bottom:3px; }
       .field-value { font-size:13px; color:var(--ink); }
+      /* Accordion — report sessioni / strumenti */
+      details > summary { list-style: none; }
+      details > summary::-webkit-details-marker { display: none; }
+      .sec-caret { display:inline-block; color: var(--hint); font-size: 11px; transition: transform 0.15s; flex:0 0 auto; }
+      details[open] > summary .sec-caret { transform: rotate(90deg); }
+      details.acc { border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px; background:#fff; }
+      details.acc > summary { display:flex; align-items:center; gap:8px; cursor: pointer; padding: 11px 14px; font-size:13px; user-select:none; }
+      details.acc > summary:hover { background: #f8f9fb; border-radius: 10px; }
+      .acc-body { padding: 4px 14px 14px 14px; border-top: 1px solid var(--line); font-size:13px; line-height:1.6; }
     </style>
   `;
 }
@@ -801,20 +810,19 @@ function mdLite(md) {
 function renderSeduta(s) {
   const T = { Intake: { bg: '#e8f4fd', c: '#1A5280' }, Ongoing: { bg: '#eafaf1', c: '#4F8B73' }, Final: { bg: '#fff8ec', c: '#8a6d1e' } }[s.tipo] || { bg: '#eee', c: '#555' };
   return `
-    <div class="card" style="margin-bottom:10px;box-shadow:none;border:1px solid var(--line)">
-      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px">
-        <div>
-          <span class="badge" style="background:${T.bg};color:${T.c}">${esc(s.tipo)}</span>
-          <span style="font-size:13px;font-weight:700;color:var(--ink);margin-left:6px">${s.data ? itDate(s.data) : '—'}</span>
-          <span style="font-size:12px;color:#aaa">· ${fmtOre(s.ore)} h</span>
-        </div>
-        <div style="white-space:nowrap">
-          <button onclick="editSeduta('${s.id}')" class="btn btn-neutral btn-sm" title="Modifica">✎</button>
-          <button onclick="delSeduta('${s.id}','${s.percorso_id}')" class="btn btn-danger btn-sm" title="Elimina">🗑</button>
-        </div>
-      </div>
-      ${s.scheda && s.scheda.trim() ? `<div style="font-size:13px;line-height:1.6">${mdLite(s.scheda)}</div>` : `<div class="empty" style="padding:8px">— nessuna scheda —</div>`}
-    </div>`;
+    <details class="acc">
+      <summary>
+        <span class="sec-caret">▸</span>
+        <span class="badge" style="background:${T.bg};color:${T.c}">${esc(s.tipo)}</span>
+        <span style="font-weight:700;color:var(--ink)">${s.data ? itDate(s.data) : '—'}</span>
+        <span style="color:#aaa;font-size:12px">· ${fmtOre(s.ore)} h</span>
+        <span style="margin-left:auto;white-space:nowrap">
+          <button onclick="event.stopPropagation();editSeduta('${s.id}')" class="btn btn-neutral btn-sm" title="Modifica">✎</button>
+          <button onclick="event.stopPropagation();delSeduta('${s.id}','${s.percorso_id}')" class="btn btn-danger btn-sm" title="Elimina">🗑</button>
+        </span>
+      </summary>
+      <div class="acc-body">${s.scheda && s.scheda.trim() ? mdLite(s.scheda) : '<span style="color:#aaa">— nessuna scheda —</span>'}</div>
+    </details>`;
 }
 
 function clientDetailPage(client, sessions, percorsi, payments, sedute, req) {
@@ -857,18 +865,22 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, req) {
       </table>`}
     </div>`;
 
-  // ── Sessioni (diario / scheda cliente) ───────────────
+  // ── Report sessioni (diario / scheda cliente) — sezione a fisarmonica ──
   const seduteHtml = `
     <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
-        <h2 style="margin:0">Sessioni <span style="font-weight:400;font-size:13px;color:#aaa">· diario / scheda cliente</span></h2>
-        ${percorsi.length ? `<button onclick="openSeduta()" class="btn btn-primary btn-sm">+ Aggiungi sessione</button>` : ''}
-      </div>
-      ${percorsi.length === 0
-        ? `<div class="empty">Crea prima un percorso per registrare le sessioni.</div>`
-        : sedute.length === 0
-          ? `<div class="empty">Nessuna sessione nel diario. Usa "Aggiungi sessione" (Intake 2h · Ongoing 1h · Final a mano).</div>`
-          : sedute.map(s => renderSeduta(s)).join('')}
+      <details class="sec" open>
+        <summary style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;cursor:pointer">
+          <span style="display:flex;align-items:center;gap:8px"><span class="sec-caret">▸</span><h2 style="margin:0">Report sessioni <span style="font-weight:400;font-size:13px;color:#aaa">(${sedute.length})</span></h2></span>
+          ${percorsi.length ? `<button onclick="event.stopPropagation();openSeduta()" class="btn btn-primary btn-sm">+ Aggiungi sessione</button>` : ''}
+        </summary>
+        <div style="margin-top:14px">
+          ${percorsi.length === 0
+            ? `<div class="empty">Crea prima un percorso per registrare le sessioni.</div>`
+            : sedute.length === 0
+              ? `<div class="empty">Nessuna sessione nel diario. Usa "Aggiungi sessione" (Intake 2h · Ongoing 1h · Final a mano).</div>`
+              : sedute.map(s => renderSeduta(s)).join('')}
+        </div>
+      </details>
     </div>`;
 
   // ── Pagamenti ────────────────────────────────────────
@@ -904,18 +916,29 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, req) {
       </table>`}
     </div>`;
 
-  // ── Strumenti ────────────────────────────────────────
+  // ── Strumenti utilizzati — sezione a fisarmonica ─────
   const TOOL_LABEL = {valori:'💎 Valori',abilita:'⭐ Abilità',lineavita:'📈 Linea della Vita',genogramma:'🔗 Genogramma',ruotavita:'🎯 Ruota della Vita',brainstorming:'💡 Brainstorming','logica-cartesiana':'🧭 Logica Cartesiana'};
-  const sessionCards = sessions.length === 0
+  const strumentiItems = sessions.length === 0
     ? `<div class="empty">Nessuno strumento compilato dal cliente.</div>`
     : sessions.map(s => `
-      <div class="card" style="margin-bottom:12px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
-          <div style="font-size:15px;font-weight:700;color:var(--ink)">${TOOL_LABEL[s.tool] || esc(s.tool)} <span style="font-size:12px;font-weight:600;color:#aaa">· ${itDate(s.created_at)}</span></div>
-          <span style="font-size:11px;color:#aaa">Aggiornato: ${fmtDate(s.updated_at)}</span>
-        </div>
-        <div style="font-size:13px;line-height:1.7">${renderSessionData(s.tool, s.data)}</div>
-      </div>`).join('');
+      <details class="acc">
+        <summary>
+          <span class="sec-caret">▸</span>
+          <span style="font-weight:700;color:var(--ink)">${TOOL_LABEL[s.tool] || esc(s.tool)}</span>
+          <span style="color:#aaa;font-size:12px">· ${itDate(s.created_at)}</span>
+          <span style="margin-left:auto;font-size:11px;color:#aaa">agg. ${fmtDate(s.updated_at)}</span>
+        </summary>
+        <div class="acc-body" style="line-height:1.7">${renderSessionData(s.tool, s.data)}</div>
+      </details>`).join('');
+  const strumentiHtml = `
+    <div class="card">
+      <details class="sec">
+        <summary style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <span class="sec-caret">▸</span><h2 style="margin:0">Strumenti utilizzati <span style="font-weight:400;font-size:13px;color:#aaa">(${sessions.length})</span></h2>
+        </summary>
+        <div style="margin-top:14px">${strumentiItems}</div>
+      </details>
+    </div>`;
 
   // ── Recall / prossima azione (evidenziata se presente) ──
   const recallHtml = client.prossima_azione ? `
@@ -971,11 +994,9 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, req) {
     </div>
 
     ${percorsiHtml}
-    ${seduteHtml}
     ${paymentsHtml}
-
-    <h2 style="margin:20px 0 12px">Strumenti compilati dal cliente <span style="font-weight:400;font-size:13px;color:#aaa">(${sessions.length})</span></h2>
-    ${sessionCards}
+    ${seduteHtml}
+    ${strumentiHtml}
   </div>
 
   <!-- MODAL MODIFICA CLIENTE -->
