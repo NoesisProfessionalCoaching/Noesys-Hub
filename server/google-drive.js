@@ -89,6 +89,30 @@ async function findNoesysRoot() {
 
 const isFolder = f => f.mimeType === 'application/vnd.google-apps.folder';
 
+// Scarica i BYTE grezzi di un file (es. un .docx) per estrarne poi il testo.
+async function downloadFileBuffer(fileId) {
+  const token = await getAccessToken();
+  const res = await fetch(DRIVE_API + '/files/' + fileId + '?alt=media', {
+    headers: { Authorization: 'Bearer ' + token },
+  });
+  if (!res.ok) {
+    const t = await res.text().catch(() => '');
+    throw new Error('Download Drive ' + res.status + ': ' + t.slice(0, 200));
+  }
+  return Buffer.from(await res.arrayBuffer());
+}
+
+// Estrae l'id-cartella da un link Drive incollato nell'Hub (campo drive_url).
+// Accetta ".../folders/<id>", "?id=<id>" o direttamente un id nudo.
+function folderIdFromUrl(url) {
+  if (!url) return null;
+  const s = String(url).trim();
+  let m = s.match(/\/folders\/([A-Za-z0-9_-]+)/) || s.match(/[?&]id=([A-Za-z0-9_-]+)/);
+  if (m) return m[1];
+  if (/^[A-Za-z0-9_-]{20,}$/.test(s)) return s; // id nudo
+  return null;
+}
+
 module.exports = {
   NOESYS_ROOT_ID,
   missingEnv,
@@ -97,4 +121,6 @@ module.exports = {
   listChildren,
   findNoesysRoot,
   isFolder,
+  downloadFileBuffer,
+  folderIdFromUrl,
 };

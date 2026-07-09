@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const { Client } = require('pg');
 
-const TABELLE = ['coach', 'clients', 'sessions', 'leads', 'percorsi', 'payments'];
+const TABELLE = ['coach', 'clients', 'sessions', 'leads', 'percorsi', 'sedute', 'payments'];
 
 async function main() {
   const url = process.argv[2];

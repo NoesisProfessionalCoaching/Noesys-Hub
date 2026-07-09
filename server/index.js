@@ -17,8 +17,10 @@ if (fs.existsSync(envPath)) {
 const express      = require('express');
 const cookieParser = require('cookie-parser');
 
+const cron   = require('node-cron');
 const db     = require('./db');
 const routes = require('./routes');
+const scan   = require('./scan');
 
 const app  = express();
 const PORT = process.env.PORT || 3100;
@@ -46,6 +48,19 @@ db.init().then(() => {
     console.log(`   http://localhost:${PORT}`);
     console.log(`   Ambiente: ${process.env.NODE_ENV || 'development'}\n`);
   });
+
+  // Automazione report→scheda: controllo dei report Drive ogni 8h (ora italiana).
+  // Crea sedute in BOZZA che il coach approva; salta i file già lavorati.
+  cron.schedule('0 7,15,23 * * *', async () => {
+    try {
+      const out = await scan.scanClientReports();
+      console.log(`[scan] ${new Date().toISOString()} — bozze:${out.processed.length} saltati:${out.skipped} clienti:${out.clients} errori:${out.errors.length}`);
+      if (out.errors.length) console.log('[scan] dettaglio errori:', JSON.stringify(out.errors));
+    } catch (e) {
+      console.error('[scan] passata non eseguita:', e.message);
+    }
+  }, { timezone: 'Europe/Rome' });
+  console.log('   ⏱  Report Drive → bozza: 07:00 / 15:00 / 23:00 (Europe/Rome)\n');
 }).catch(err => {
   console.error('❌ Errore inizializzazione DB:', err);
   process.exit(1);

@@ -144,6 +144,14 @@ async function init() {
     )
   `);
 
+  // Automazione report→scheda (Fase 3): una seduta creata dall'automazione nasce
+  // come BOZZA e non conta le ore ICF finché il coach non la approva (stato→confermata).
+  // source_file_id = impronta del file Drive di origine (idempotenza: no doppioni +
+  // tracciabilità). Le sedute preesistenti diventano 'confermata' (DEFAULT sotto).
+  await query(`ALTER TABLE sedute ADD COLUMN IF NOT EXISTS stato          TEXT DEFAULT 'confermata'`);
+  await query(`ALTER TABLE sedute ADD COLUMN IF NOT EXISTS origine        TEXT DEFAULT 'manuale'`);
+  await query(`ALTER TABLE sedute ADD COLUMN IF NOT EXISTS source_file_id TEXT`);
+
   await query(`
     CREATE TABLE IF NOT EXISTS payments (
       id             TEXT PRIMARY KEY,

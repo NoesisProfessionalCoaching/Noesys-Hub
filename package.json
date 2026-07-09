@@ -6,10 +6,13 @@
     "start": "node server/index.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.110.0",
     "bcryptjs": "^2.4.3",
     "cookie-parser": "^1.4.6",
     "express": "^4.18.2",
     "jsonwebtoken": "^9.0.2",
+    "mammoth": "^1.12.0",
+    "node-cron": "^4.6.0",
     "pg": "^8.11.3",
     "uuid": "^9.0.0"
   }

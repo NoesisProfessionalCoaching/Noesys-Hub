@@ -5,6 +5,7 @@ const db      = require('./db');
 const { signToken, requireCoach, COOKIE_NAME } = require('./auth');
 const { logoCompact } = require('./logo');
 const drive = require('./google-drive');
+const scan = require('./scan');
 
 const router = express.Router();
 
@@ -304,10 +305,11 @@ function oreForTipo(tipo, ore) {
   return auto != null ? auto : 0;
 }
 async function recomputePercorso(pid) {
+  // Le BOZZE (report automatici non ancora approvati) NON contano le ore/sessioni ICF.
   await db.query(
     `UPDATE percorsi SET
-       n_sessioni_fatte = (SELECT COUNT(*)             FROM sedute WHERE percorso_id = $1),
-       ore_fatte        = (SELECT COALESCE(SUM(ore),0) FROM sedute WHERE percorso_id = $1)
+       n_sessioni_fatte = (SELECT COUNT(*)             FROM sedute WHERE percorso_id = $1 AND stato <> 'bozza'),
+       ore_fatte        = (SELECT COALESCE(SUM(ore),0) FROM sedute WHERE percorso_id = $1 AND stato <> 'bozza')
      WHERE id = $1`, [pid]);
 }
 
@@ -346,6 +348,26 @@ router.delete('/dashboard/clients/:id/percorsi/:pid/sedute/:sid', requireCoach, 
     await recomputePercorso(req.params.pid);
     res.json({ ok: true });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Errore' }); }
+});
+
+// Approva una BOZZA (report automatico rivisto dal coach): diventa 'confermata' e
+// solo ora le ore/sessioni entrano nel conteggio ICF.
+router.post('/dashboard/clients/:id/percorsi/:pid/sedute/:sid/approva', requireCoach, async (req, res) => {
+  try {
+    await db.query("UPDATE sedute SET stato='confermata' WHERE id=$1 AND percorso_id=$2",
+      [req.params.sid, req.params.pid]);
+    await recomputePercorso(req.params.pid);
+    res.json({ ok: true });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Errore' }); }
+});
+
+// Lancio MANUALE dell'automazione report→scheda (oltre al controllo automatico ogni
+// 8h). Coach-only: legge i report nuovi da Drive e crea le bozze. client_id opzionale.
+router.post('/dashboard/scan-drive', requireCoach, express.json(), async (req, res) => {
+  try {
+    const out = await scan.scanClientReports({ onlyClientId: (req.body && req.body.client_id) || undefined });
+    res.json({ ok: true, ...out });
+  } catch (err) { console.error('[scan-drive]', err); res.status(500).json({ error: err.message }); }
 });
 
 // Gancio per l'automazione (report → scheda). Disattivo finché AUTOMATION_SECRET
@@ -883,16 +905,23 @@ function mdLite(md) {
 
 function renderSeduta(s) {
   const T = { Intake: { bg: '#e8f4fd', c: '#1A5280' }, Ongoing: { bg: '#eafaf1', c: '#4F8B73' }, Final: { bg: '#fff8ec', c: '#8a6d1e' } }[s.tipo] || { bg: '#eee', c: '#555' };
+  const isBozza = s.stato === 'bozza';
+  const bozzaPill = isBozza
+    ? `<span class="badge" style="background:#fdf6e3;color:#8a6d1e;border:1px solid #efdfa8">bozza · da approvare</span>` : '';
+  const approvaBtn = isBozza
+    ? `<button onclick="event.stopPropagation();approvaSeduta('${s.id}','${s.percorso_id}')" class="btn btn-sm" style="background:#e7f1ec;color:#2e6b52" title="Approva">✓ Approva</button>` : '';
   return `
-    <details class="acc">
+    <details class="acc"${isBozza ? ' open style="border-color:#e6c86b;box-shadow:0 0 0 2px #f6e9c0"' : ''}>
       <summary>
         <span class="sec-caret">▸</span>
         <span class="badge" style="background:${T.bg};color:${T.c}">${esc(s.tipo)}</span>
+        ${bozzaPill}
         <span style="font-weight:700;color:var(--ink)">${s.data ? itDate(s.data) : '—'}</span>
-        <span style="color:#aaa;font-size:12px">· ${fmtOre(s.ore)} h</span>
-        <span style="margin-left:auto;white-space:nowrap">
+        <span style="color:#aaa;font-size:12px">· ${fmtOre(s.ore)} h${isBozza ? ' · non conta finché non approvi' : ''}</span>
+        <span style="margin-left:auto;white-space:nowrap;display:inline-flex;gap:6px;align-items:center">
+          ${approvaBtn}
           <button onclick="event.stopPropagation();editSeduta('${s.id}')" class="btn btn-neutral btn-sm" title="Modifica">✎</button>
-          <button onclick="event.stopPropagation();delSeduta('${s.id}','${s.percorso_id}')" class="btn btn-danger btn-sm" title="Elimina">🗑</button>
+          <button onclick="event.stopPropagation();delSeduta('${s.id}','${s.percorso_id}')" class="btn btn-danger btn-sm" title="${isBozza ? 'Scarta bozza' : 'Elimina'}">🗑</button>
         </span>
       </summary>
       <div class="acc-body">${s.scheda && s.scheda.trim() ? mdLite(s.scheda) : '<span style="color:#aaa">— nessuna scheda —</span>'}</div>
@@ -945,7 +974,10 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, req) {
       <details class="sec" open>
         <summary style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;cursor:pointer">
           <span style="display:flex;align-items:center;gap:8px"><span class="sec-caret">▸</span><h2 style="margin:0">Report sessioni <span style="font-weight:400;font-size:13px;color:#aaa">(${sedute.length})</span></h2></span>
-          ${percorsi.length ? `<button onclick="event.stopPropagation();openSeduta()" class="btn btn-primary btn-sm">+ Aggiungi sessione</button>` : ''}
+          <span style="display:inline-flex;gap:8px;align-items:center">
+            ${client.drive_url ? `<button id="scan-btn" onclick="event.stopPropagation();scanDrive()" class="btn btn-neutral btn-sm" title="Legge i report Word nuovi dalla cartella Drive e ne crea la bozza">⟳ Cerca nuovi report</button>` : ''}
+            ${percorsi.length ? `<button onclick="event.stopPropagation();openSeduta()" class="btn btn-primary btn-sm">+ Aggiungi sessione</button>` : ''}
+          </span>
         </summary>
         <div style="margin-top:14px">
           ${percorsi.length === 0
@@ -1244,6 +1276,28 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, req) {
     async function delSeduta(sid, pid) {
       if (!confirm('Eliminare questa sessione dal diario? Le ore si ricalcolano.')) return;
       await fetch('/dashboard/clients/' + CID + '/percorsi/' + pid + '/sedute/' + sid, { method: 'DELETE' }); location.reload();
+    }
+    async function approvaSeduta(sid, pid) {
+      if (!confirm('Approvare questa scheda? Da bozza diventa una sessione confermata e le ore entrano nel conteggio ICF.')) return;
+      await fetch('/dashboard/clients/' + CID + '/percorsi/' + pid + '/sedute/' + sid + '/approva', { method: 'POST' }); location.reload();
+    }
+    async function scanDrive() {
+      const btn = document.getElementById('scan-btn');
+      if (btn) { btn.disabled = true; btn.textContent = '⟳ Cerco… (può volerci qualche secondo)'; }
+      const reset = () => { if (btn) { btn.disabled = false; btn.textContent = '⟳ Cerca nuovi report'; } };
+      try {
+        const r = await fetch('/dashboard/scan-drive', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ client_id: CID }) });
+        const d = await r.json();
+        if (!r.ok || d.error) { alert('Errore: ' + (d.error || r.status)); reset(); return; }
+        const n = (d.processed || []).length;
+        if (n === 0) {
+          const errs = (d.errors || []).map(e => e.err).join('; ');
+          alert('Nessun nuovo report da lavorare' + (errs ? ('.\nNota: ' + errs) : ' (già lavorati, o cartella Ongoing/Intake/Final vuota).'));
+          reset(); return;
+        }
+        alert(n + (n === 1 ? ' bozza creata' : ' bozze create') + '. La trovi qui sotto, evidenziata, da approvare.');
+        location.reload();
+      } catch (e) { alert('Errore di rete: ' + e.message); reset(); }
     }
     function copyLink(url) { navigator.clipboard.writeText(url).then(() => { const t=document.getElementById('toast'); t.textContent='Link copiato!'; t.style.display='block'; setTimeout(()=>t.style.display='none',2000); }); }
     function openEdit() { document.getElementById('modal-edit').style.display='flex'; }
