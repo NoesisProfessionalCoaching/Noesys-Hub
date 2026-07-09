@@ -671,9 +671,17 @@ function baseStyle() {
       details.acc > summary:hover { background: #f8f9fb; border-radius: 10px; }
       .acc-body { padding: 4px 14px 14px 14px; border-top: 1px solid var(--line); font-size:13px; line-height:1.6; }
       /* Scheda Cliente — tabella una-riga-per-sessione */
-      .scheda-cliente td { vertical-align: top; font-size: 12px; line-height: 1.45; min-width: 88px; padding: 11px 12px; }
+      .scheda-cliente td { vertical-align: top; font-size: 12px; line-height: 1.45; padding: 11px 12px; }
       .scheda-cliente th { white-space: nowrap; font-size: 10.5px; }
-      .scheda-cliente td:nth-child(3), .scheda-cliente td:nth-child(4), .scheda-cliente td:nth-child(5), .scheda-cliente td:nth-child(8) { min-width: 150px; }
+      .scheda-cliente td:nth-child(1) { width: 76px; white-space: nowrap; color: var(--muted); }
+      .scheda-cliente td:nth-child(2) { white-space: nowrap; }
+      .scheda-cliente td:nth-child(3) { min-width: 155px; }
+      .scheda-cliente td:nth-child(4) { min-width: 180px; }
+      .scheda-cliente td:nth-child(5) { min-width: 175px; }
+      .scheda-cliente td:nth-child(6) { width: 92px; white-space: nowrap; }
+      .scheda-cliente td:nth-child(7) { width: 42px; }
+      .scheda-cliente td:nth-child(8) { min-width: 260px; }
+      .scheda-cliente ul { margin: 0; padding-left: 16px; }
     </style>
   `;
 }
@@ -921,6 +929,34 @@ function mdLite(md) {
   return out;
 }
 
+// Formattatori celle della Scheda Cliente.
+function boldify(t) { return esc(t).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>'); }
+function cellText(v) {
+  if (!v || !String(v).trim() || String(v).trim() === '—') return '<span style="color:#ccc">—</span>';
+  return String(v).trim().split(/\r?\n/).map(l => boldify(l)).join('<br>');
+}
+function cellList(v) {
+  if (!v || !String(v).trim() || String(v).trim() === '—') return '<span style="color:#ccc">—</span>';
+  const s = String(v).trim();
+  let items = s.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const bullety = items.filter(l => /^[-•*]\s+/.test(l)).length >= Math.ceil(items.length / 2);
+  if (items.length > 1 && bullety) items = items.map(l => l.replace(/^[-•*]\s+/, ''));
+  else if (items.length === 1 && (s.match(/;/g) || []).length >= 1) items = s.split(/;\s*/).map(x => x.trim()).filter(Boolean);
+  if (items.length <= 1) return cellText(v);
+  return '<ul style="margin:0;padding-left:16px">' + items.map(x => '<li style="margin-bottom:3px">' + boldify(x) + '</li>').join('') + '</ul>';
+}
+function cellDate(v) {
+  const s = v ? String(v).trim() : '';
+  if (!s || s === '—') return '<span style="color:#ccc">—</span>';
+  return /^\d{4}-\d{2}-\d{2}/.test(s) ? itDate(s) : esc(s);
+}
+function cellEseg(v) {
+  const s = v ? String(v).trim() : '';
+  if (s === '✓') return '<span style="color:#2e6b52;font-weight:700;font-size:15px">✓</span>';
+  if (s === '✗' || /^x$/i.test(s)) return '<span style="color:#c0392b;font-weight:700;font-size:15px">✗</span>';
+  return '<span style="color:#ccc">—</span>';
+}
+
 // Una riga della Scheda Cliente (una per sessione).
 function renderSedutaRow(s) {
   const T = { Intake: { bg: '#e8f4fd', c: '#1A5280' }, Ongoing: { bg: '#eafaf1', c: '#4F8B73' }, Final: { bg: '#fff8ec', c: '#8a6d1e' } }[s.tipo] || { bg: '#eee', c: '#555' };
@@ -932,12 +968,12 @@ function renderSedutaRow(s) {
   return `<tr style="${isBozza ? 'background:#fffdf3' : ''}">
     <td style="white-space:nowrap">${s.data ? itDate(s.data) : '—'}</td>
     <td style="white-space:nowrap"><span class="badge" style="background:${T.bg};color:${T.c}">${esc(s.tipo)}</span>${isBozza ? '<div style="margin-top:5px"><span class="badge" style="background:#fdf6e3;color:#8a6d1e;border:1px solid #efdfa8">bozza</span></div>' : ''}</td>
-    <td>${cell(s.obiettivo)}</td>
-    <td>${cell(s.argomenti)}</td>
-    <td>${cell(s.attivita)}</td>
-    <td>${cell(s.scadenza)}</td>
-    <td style="white-space:nowrap">${cell(s.eseguita)}</td>
-    <td>${cell(noteVal)}</td>
+    <td>${cellText(s.obiettivo)}</td>
+    <td>${cellList(s.argomenti)}</td>
+    <td>${cellList(s.attivita)}</td>
+    <td style="white-space:nowrap">${cellDate(s.scadenza)}</td>
+    <td style="text-align:center">${cellEseg(s.eseguita)}</td>
+    <td>${cellText(noteVal)}</td>
     <td style="white-space:nowrap">${approvaBtn}<button onclick="editSeduta('${s.id}')" class="btn btn-neutral btn-sm" title="Modifica">✎</button> <button onclick="delSeduta('${s.id}','${s.percorso_id}')" class="btn btn-danger btn-sm" title="${isBozza ? 'Scarta' : 'Elimina'}">🗑</button></td>
   </tr>`;
 }
@@ -1218,14 +1254,14 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, req) {
         <div class="form-group"><label>Data</label><input id="s-data" type="date"></div>
         <div class="form-group"><label>Ore <span id="s-ore-hint" style="font-size:11px;color:#aaa;text-transform:none;letter-spacing:0"></span></label><input id="s-ore" type="number" step="0.5" min="0"></div>
       </div>
-      <div class="form-group"><label>Obiettivo</label><textarea id="s-obiettivo" style="min-height:54px"></textarea></div>
-      <div class="form-group"><label>Argomenti trattati</label><textarea id="s-argomenti" style="min-height:62px"></textarea></div>
-      <div class="form-group"><label>Attività concordate</label><textarea id="s-attivita" style="min-height:54px"></textarea></div>
+      <div class="form-group"><label>Obiettivo <span style="font-size:11px;color:#aaa;text-transform:none;letter-spacing:0">(una frase)</span></label><textarea id="s-obiettivo" style="min-height:54px"></textarea></div>
+      <div class="form-group"><label>Argomenti trattati <span style="font-size:11px;color:#aaa;text-transform:none;letter-spacing:0">(un punto per riga, inizia con -)</span></label><textarea id="s-argomenti" style="min-height:72px" placeholder="- primo argomento&#10;- secondo argomento"></textarea></div>
+      <div class="form-group"><label>Attività concordate <span style="font-size:11px;color:#aaa;text-transform:none;letter-spacing:0">(un punto per riga, inizia con -)</span></label><textarea id="s-attivita" style="min-height:60px" placeholder="- prima attività&#10;- **Cliente:** seconda attività"></textarea></div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div class="form-group"><label>Scadenza</label><input id="s-scadenza" type="text" placeholder="es. entro la prossima sessione"></div>
-        <div class="form-group"><label>Eseguita</label><select id="s-eseguita"><option value="">—</option><option>Sì</option><option>No</option><option>In parte</option></select></div>
+        <div class="form-group"><label>Scadenza <span style="font-size:11px;color:#aaa;text-transform:none;letter-spacing:0">(data)</span></label><input id="s-scadenza" type="date"></div>
+        <div class="form-group"><label>Eseguita</label><select id="s-eseguita"><option value="">—</option><option value="✓">✓ fatta</option><option value="✗">✗ non fatta</option></select></div>
       </div>
-      <div class="form-group"><label>Note</label><textarea id="s-note" style="min-height:54px"></textarea></div>
+      <div class="form-group"><label>Note</label><textarea id="s-note" style="min-height:60px"></textarea></div>
       <div style="display:flex;gap:8px;margin-top:4px">
         <button onclick="document.getElementById('modal-seduta').style.display='none'" class="btn btn-neutral" style="flex:1">Annulla</button>
         <button onclick="saveSeduta()" class="btn btn-primary" style="flex:1">Salva</button>

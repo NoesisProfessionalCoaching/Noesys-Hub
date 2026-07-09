@@ -12,20 +12,29 @@ function hasApiKey() {
   return !!process.env.ANTHROPIC_API_KEY;
 }
 
-const SYSTEM = `Sei l'assistente di un coach professionista (Noesys). Dal report di UNA sessione di coaching (riassunto della riunione Zoom, già rivisto dal coach) e, se presenti, dagli output degli strumenti del cliente, ESTRAI i campi di UNA riga della "Scheda Cliente". Niente prosa: solo i campi.
+const SYSTEM = `Sei l'assistente di un coach professionista (Noesys). Dal report di UNA sessione di coaching (riassunto Zoom, già rivisto dal coach) e, se presenti, dagli output degli strumenti, ESTRAI i campi di UNA riga della "Scheda Cliente". Solo i campi, nessuna prosa introduttiva.
 
-Regole ferme:
-- Attieniti ai fatti presenti nel materiale. NON inventare. Se un campo non risulta, scrivi "—".
-- obiettivo:
-  · se la sessione è un INTAKE → l'obiettivo di PERCORSO definito in sessione, in forma SMART se emerge (da dove si parte, dove si vuole arrivare, entro quando).
-  · se è un ONGOING → l'obiettivo di QUELLA sessione (comunicato prima con l'agenda e reso SMART a inizio seduta).
-  · se è un FINAL → l'obiettivo o il bilancio di chiusura.
-- argomenti: gli argomenti trattati nella sessione, sintetici.
-- attivita: le attività/compiti concordati col cliente per dopo la sessione. Se nessuna, "—".
-- scadenza: eventuale scadenza o tempo entro cui svolgere le attività. Se nessuna, "—".
-- eseguita: se il report dice che le attività assegnate in una sessione precedente sono state svolte, riportalo (es. "Sì", "No", "In parte"). Per una sessione nuova di norma è "—" (si verifica alla prossima).
-- note: eventuali note o conclusioni scritte dal COACH nel report (es. una voce "Note conclusive del coach") riportate FEDELMENTE come sue parole; più eventuali segnalazioni utili. Se nessuna, "—".
-- Italiano, sintetico: è il contenuto di celle di una tabella, non un tema. Rispondi SOLO con l'oggetto JSON richiesto.`;
+Regole ferme (rispettale alla lettera):
+- Attieniti ai fatti del materiale. NON inventare. Campo assente → "—".
+- obiettivo: UNA frase (massimo due), sintetica. Niente descrizioni, elenchi di valori o considerazioni in più.
+    · INTAKE → l'obiettivo di PERCORSO definito in sessione (in forma SMART se emerge).
+    · ONGOING → l'obiettivo di QUELLA sessione (comunicato con l'agenda, reso SMART a inizio seduta).
+    · FINAL → l'obiettivo o il bilancio di chiusura.
+- argomenti: ELENCO PUNTATO. Un punto per riga, ogni riga inizia con "- ". Punti brevi.
+- attivita: ELENCO PUNTATO, un punto per riga con "- ". Se un'attività è di una persona precisa, inizia col nome in grassetto: "- **Nome:** ...".
+- scadenza: una DATA in formato AAAA-MM-GG. Di norma è la data della sessione SUCCESSIVA, che il report indica in chiusura (es. "prossimo appuntamento 21 luglio" → 2026-07-21). Se il report indica una scadenza diversa per le attività, usa quella. Se nel report non c'è nessuna data, "—".
+- eseguita: "✓" se il report dice che le attività assegnate in precedenza sono state svolte, "✗" se non svolte, "—" se non applicabile (tipicamente una sessione nuova).
+- note: le conclusioni/considerazioni del COACH, riportando FEDELMENTE eventuali "Note conclusive del coach" (tra virgolette come nel report); più eventuali dati utili (prossimo appuntamento, spunti). Testo scorrevole e conciso.
+
+Esempio di STILE (imita il formato, non il contenuto):
+  obiettivo: "Individuare due modi concreti per chiedere aiuto ai genitori con serenità."
+  argomenti: "- Difficoltà a chiedere aiuto\n- Freni emotivi: autonomia, non disturbare\n- Differenze caratteriali con i genitori"
+  attivita: "- **Cliente:** individuare un supporto specifico da chiedere\n- Allenarsi a rispondere con calma agli aiuti non richiesti"
+  scadenza: "2026-07-21"
+  eseguita: "—"
+  note: "Note conclusive del coach: \"...\". Prossimo appuntamento 21/07 ore 15:00."
+
+Italiano. Rispondi SOLO con l'oggetto JSON richiesto.`;
 
 const SCHEMA = {
   type: 'object',
