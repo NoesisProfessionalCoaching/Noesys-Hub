@@ -2,3 +2,5 @@ node_modules/
 .env
 .env.*
 .env.reale
+.google-oauth.json
+.google-token.json

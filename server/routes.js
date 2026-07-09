@@ -4,6 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const db      = require('./db');
 const { signToken, requireCoach, COOKIE_NAME } = require('./auth');
 const { logoCompact } = require('./logo');
+const drive = require('./google-drive');
 
 const router = express.Router();
 
@@ -78,6 +79,36 @@ router.get('/dashboard', requireCoach, async (req, res) => {
     console.error(err);
     res.status(500).send('Errore nel caricamento dashboard');
   }
+});
+
+// ── Diagnosi Google Drive (Fase 3a) ────────────────────────────────
+// Pagina protetta che prova, dall'Hub ONLINE, a raggiungere il Drive con le
+// chiavi impostate su Railway. Solo LETTURA: non tocca database né schede.
+// Serve come prova che la Fase 1 (chiavi in produzione) è davvero a posto.
+router.get('/dashboard/diag/drive', requireCoach, async (req, res) => {
+  const steps = [];
+  let root = null, children = [];
+  try {
+    const missing = drive.missingEnv();
+    if (missing.length) {
+      steps.push({ ok: false, txt: 'Variabili mancanti su Railway: ' + missing.join(', ') });
+    } else {
+      steps.push({ ok: true, txt: 'Le tre variabili Google sono presenti.' });
+      await drive.getAccessToken();
+      steps.push({ ok: true, txt: 'Rinnovo del token riuscito: le chiavi sono valide.' });
+      root = await drive.findNoesysRoot();
+      if (root) {
+        steps.push({ ok: true, txt: 'Trovata la cartella «Noesys» (id ' + root.id + ').' });
+        children = await drive.listChildren(root.id);
+        steps.push({ ok: true, txt: 'Letto il contenuto: ' + children.length + ' elementi in cima.' });
+      } else {
+        steps.push({ ok: false, txt: 'Chiavi valide, ma la cartella «Noesys» non è stata trovata.' });
+      }
+    }
+  } catch (err) {
+    steps.push({ ok: false, txt: err.message });
+  }
+  res.send(driveDiagPage(steps, root, children, req));
 });
 
 router.post('/dashboard/clients', requireCoach, express.json(), async (req, res) => {
@@ -782,6 +813,49 @@ function dashboardPage(clients, req) {
       if (e.target === document.getElementById('modal-overlay')) closeModal();
     });
   </script>
+  </body></html>`;
+}
+
+// Pagina di verifica del collegamento a Google Drive (Fase 3a). Solo lettura.
+function driveDiagPage(steps, root, children, req) {
+  const allOk = steps.length > 0 && steps.every(s => s.ok);
+  const stepRows = steps.map(s => `
+    <div style="display:flex;align-items:flex-start;gap:10px;padding:9px 0;border-bottom:1px solid #f1f3f6">
+      <span style="font-size:15px;line-height:1.4;color:${s.ok ? '#2e6b52' : '#c0392b'}">${s.ok ? '✓' : '✕'}</span>
+      <span style="font-size:13px;line-height:1.5">${esc(s.txt)}</span>
+    </div>`).join('');
+
+  const childRows = (children || []).length
+    ? children.map(f => `
+        <div style="display:flex;align-items:center;gap:9px;padding:7px 0;font-size:13px">
+          <span>${drive.isFolder(f) ? '📁' : '📄'}</span>
+          <span>${esc(f.name)}</span>
+        </div>`).join('')
+    : '<div class="empty" style="padding:18px">Nessun elemento in cima alla cartella.</div>';
+
+  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Verifica Drive</title>${baseStyle()}</head><body>
+  ${appBar({ home: '/dashboard', right: `<a href="/dashboard" class="btn btn-neutral btn-sm">← Dashboard</a>` })}
+  <div class="container" style="max-width:640px">
+    <h1>Verifica collegamento a Google Drive</h1>
+    <p style="color:var(--muted);font-size:13px;margin-bottom:18px">Controllo di sola lettura: l'Hub prova a leggere il tuo Drive con le chiavi impostate su Railway. Non tocca né il database né le schede.</p>
+
+    <div class="card" style="border-color:${allOk ? '#bfe0cf' : '#f3c9c4'};background:${allOk ? '#f2f9f5' : '#fdf5f4'}">
+      <div style="font-weight:700;color:${allOk ? '#2e6b52' : '#c0392b'};margin-bottom:6px">
+        ${allOk ? '✓ Collegamento riuscito' : '✕ Qualcosa non torna'}
+      </div>
+      ${stepRows}
+    </div>
+
+    ${root && (children || []).length ? `
+    <div class="card">
+      <h2>Cosa vede dentro «Noesys»</h2>
+      ${childRows}
+    </div>` : ''}
+
+    ${allOk ? `
+    <p style="color:var(--muted);font-size:13px">Tutto a posto: la Fase 1 è confermata. Il prossimo passo è la chiave Claude (Fase 2).</p>`
+    : `<p style="color:var(--muted);font-size:13px">Segnalami cosa vedi qui sopra: dal messaggio d'errore capisco se è un valore incollato male su Railway (e quale) o altro.</p>`}
+  </div>
   </body></html>`;
 }
 
