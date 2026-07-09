@@ -152,6 +152,15 @@ async function init() {
   await query(`ALTER TABLE sedute ADD COLUMN IF NOT EXISTS origine        TEXT DEFAULT 'manuale'`);
   await query(`ALTER TABLE sedute ADD COLUMN IF NOT EXISTS source_file_id TEXT`);
 
+  // Campi della Scheda Cliente (una riga per sessione: la tabella storica di Cowork).
+  // data + tipo esistono già (= colonne DATA e SESSIONE). Questi sono i 6 restanti.
+  await query(`ALTER TABLE sedute ADD COLUMN IF NOT EXISTS obiettivo  TEXT`);
+  await query(`ALTER TABLE sedute ADD COLUMN IF NOT EXISTS argomenti  TEXT`);
+  await query(`ALTER TABLE sedute ADD COLUMN IF NOT EXISTS attivita   TEXT`);
+  await query(`ALTER TABLE sedute ADD COLUMN IF NOT EXISTS scadenza   TEXT`);
+  await query(`ALTER TABLE sedute ADD COLUMN IF NOT EXISTS eseguita   TEXT`);
+  await query(`ALTER TABLE sedute ADD COLUMN IF NOT EXISTS note       TEXT`);
+
   await query(`
     CREATE TABLE IF NOT EXISTS payments (
       id             TEXT PRIMARY KEY,

@@ -1,9 +1,9 @@
-// Generazione della "scheda di sessione" a partire dal report Zoom (+ output degli
-// strumenti). È il cuore del sostituto di Cowork: legge il materiale e ne estrae il
-// riepilogo strutturato che il coach poi APPROVA. Formato approvato con Germano
-// (memoria noesys-scheda-sessione-standard): fonte = report + strumenti; densità media.
+// Estrazione di UNA riga della "Scheda Cliente" dal report di sessione (+ strumenti).
+// La Scheda Cliente è una tabella con una riga per sessione (modello storico Cowork):
+// data · sessione · OBIETTIVO · ARGOMENTI · ATTIVITÀ · SCADENZA · ESEGUITA · NOTE.
+// Qui estraiamo i 6 campi di contenuto; data e tipo li mette lo scanner.
 //
-// Modello: Opus 4.8 (il più capace) — poche schede a settimana, costo trascurabile.
+// Modello: Opus 4.8, output strutturato (JSON), niente thinking (estrazione: veloce ed economica).
 const Anthropic = require('@anthropic-ai/sdk');
 
 const MODEL = 'claude-opus-4-8';
@@ -12,36 +12,44 @@ function hasApiKey() {
   return !!process.env.ANTHROPIC_API_KEY;
 }
 
-const SYSTEM = `Sei l'assistente di un coach professionista (Noesys). A partire dal report di una sessione di coaching (riassunto della riunione Zoom, già rivisto dal coach) e, se presenti, dagli output degli strumenti compilati dal cliente, redigi la "scheda di sessione": un riepilogo strutturato a uso interno del coach.
+const SYSTEM = `Sei l'assistente di un coach professionista (Noesys). Dal report di UNA sessione di coaching (riassunto della riunione Zoom, già rivisto dal coach) e, se presenti, dagli output degli strumenti del cliente, ESTRAI i campi di UNA riga della "Scheda Cliente". Niente prosa: solo i campi.
 
 Regole ferme:
-- Attieniti ai fatti presenti nel materiale. NON inventare nulla sul cliente: né obiettivi, né attività, né date che non risultino dal report o dagli strumenti. Se un'informazione non c'è, ometti la sezione o scrivi "non emerso".
-- Questa è una BOZZA che il coach revisiona: sii fedele alla fonte, non interpretare oltre il dovuto.
-- Registro professionale, italiano, chiaro e non direttivo (il coaching è una partnership, non si impartiscono lezioni). Niente enfasi pubblicitaria.
-- "Nelle sue parole": riporta 1–3 citazioni testuali del CLIENTE solo se presenti nel report (tra virgolette). Se non ce ne sono, ometti la sezione.
-- "Note del coach": se il report contiene note o conclusioni scritte dal COACH (es. una voce "Note conclusive del coach"), sono fatti SUOI da riportare FEDELMENTE come sue parole nella sezione "Note del coach" — non rielaborarle, non riassumerle in modo distorto e non spacciarle per tue. Ometti la sezione solo se non ce ne sono.
-- "Spunti dell'assistente (proposte)": qui e solo qui puoi proporre spunti tuoi (pattern, ipotesi, possibili direzioni). Marcali chiaramente come PROPOSTE da validare, non fatti.
-- Densità media: sintetico ma completo. Solo Markdown, nessun preambolo tipo "Ecco la scheda".`;
+- Attieniti ai fatti presenti nel materiale. NON inventare. Se un campo non risulta, scrivi "—".
+- obiettivo:
+  · se la sessione è un INTAKE → l'obiettivo di PERCORSO definito in sessione, in forma SMART se emerge (da dove si parte, dove si vuole arrivare, entro quando).
+  · se è un ONGOING → l'obiettivo di QUELLA sessione (comunicato prima con l'agenda e reso SMART a inizio seduta).
+  · se è un FINAL → l'obiettivo o il bilancio di chiusura.
+- argomenti: gli argomenti trattati nella sessione, sintetici.
+- attivita: le attività/compiti concordati col cliente per dopo la sessione. Se nessuna, "—".
+- scadenza: eventuale scadenza o tempo entro cui svolgere le attività. Se nessuna, "—".
+- eseguita: se il report dice che le attività assegnate in una sessione precedente sono state svolte, riportalo (es. "Sì", "No", "In parte"). Per una sessione nuova di norma è "—" (si verifica alla prossima).
+- note: eventuali note o conclusioni scritte dal COACH nel report (es. una voce "Note conclusive del coach") riportate FEDELMENTE come sue parole; più eventuali segnalazioni utili. Se nessuna, "—".
+- Italiano, sintetico: è il contenuto di celle di una tabella, non un tema. Rispondi SOLO con l'oggetto JSON richiesto.`;
 
-function sezioniPerTipo(tipo) {
-  const base = [
-    tipo === 'Intake'
-      ? '## Ritratto\nSintesi del cliente e del suo momento, come emerge dall\'Intake.'
-      : null,
-    '## Obiettivo\nL\'obiettivo di lavoro; se emerge in forma SMART, rendilo esplicito.',
-    '## Argomenti per strumento\nPer OGNI strumento effettivamente usato, un sotto-punto con cosa è emerso. Se non ci sono strumenti, riporta i temi trattati nella sessione.',
-    '## Attività\nCompiti/azioni concordati con il cliente (se presenti).',
-    '## Scadenza\nEventuale data o impegno temporale (se presente).',
-    '## Nelle sue parole\nCitazioni testuali del cliente (solo se presenti).',
-    '## Note del coach\nNote o conclusioni scritte dal coach nel report (es. una voce "Note conclusive del coach"): riportale FEDELMENTE come sue parole. Ometti se non presenti.',
-    '## Spunti dell\'assistente (proposte)\nSpunti tuoi, marcati come proposte da validare (non fatti).',
-  ].filter(Boolean);
-  return base.join('\n\n');
+const SCHEMA = {
+  type: 'object',
+  properties: {
+    obiettivo: { type: 'string' },
+    argomenti: { type: 'string' },
+    attivita:  { type: 'string' },
+    scadenza:  { type: 'string' },
+    eseguita:  { type: 'string' },
+    note:      { type: 'string' },
+  },
+  required: ['obiettivo', 'argomenti', 'attivita', 'scadenza', 'eseguita', 'note'],
+  additionalProperties: false,
+};
+
+function parseJsonLoose(txt) {
+  const s = txt.indexOf('{'), e = txt.lastIndexOf('}');
+  if (s >= 0 && e > s) { try { return JSON.parse(txt.slice(s, e + 1)); } catch (_) {} }
+  return null;
 }
 
-async function generaScheda({ tipo, cliente, reportText, strumentiText }) {
+async function generaRiga({ tipo, cliente, reportText, strumentiText }) {
   if (!hasApiKey()) throw new Error('ANTHROPIC_API_KEY non configurata su Railway');
-  const client = new Anthropic(); // legge ANTHROPIC_API_KEY dall'ambiente
+  const client = new Anthropic();
 
   const c = cliente || {};
   const intestazione = [
@@ -58,31 +66,35 @@ async function generaScheda({ tipo, cliente, reportText, strumentiText }) {
 ${(reportText || '').trim() || '(report vuoto)'}
 
 === OUTPUT DEGLI STRUMENTI (contesto, in formato dati) ===
-${(strumentiText || '').trim() || '(nessuno strumento disponibile per questo cliente)'}
+${(strumentiText || '').trim() || '(nessuno strumento disponibile)'}
 
-=== COSA PRODURRE ===
-Redigi la scheda in Markdown con queste sezioni (ometti quelle senza contenuto reale):
-
-${sezioniPerTipo(tipo)}`;
+Estrai i 6 campi della riga (obiettivo, argomenti, attivita, scadenza, eseguita, note) secondo le regole. Rispondi SOLO con l'oggetto JSON.`;
 
   const resp = await client.messages.create({
     model: MODEL,
-    max_tokens: 12000,
-    thinking: { type: 'adaptive' },
+    max_tokens: 4000,
+    output_config: { format: { type: 'json_schema', schema: SCHEMA } },
     system: SYSTEM,
     messages: [{ role: 'user', content: user }],
   });
 
   if (resp.stop_reason === 'refusal') {
-    throw new Error('Richiesta rifiutata dal classificatore di sicurezza (scheda non generata)');
+    throw new Error('Richiesta rifiutata dal classificatore di sicurezza (riga non generata)');
   }
-  const text = (resp.content || [])
-    .filter(b => b.type === 'text')
-    .map(b => b.text)
-    .join('\n')
-    .trim();
-  if (!text) throw new Error('Scheda vuota (stop_reason: ' + resp.stop_reason + ')');
-  return text;
+  const txt = (resp.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
+  const data = parseJsonLoose(txt);
+  if (!data) throw new Error('Risposta non in formato atteso (stop_reason: ' + resp.stop_reason + '): ' + txt.slice(0, 160));
+
+  // Normalizza: stringhe, default "—".
+  const pick = k => { const v = data[k]; return (v == null || String(v).trim() === '') ? '—' : String(v).trim(); };
+  return {
+    obiettivo: pick('obiettivo'),
+    argomenti: pick('argomenti'),
+    attivita:  pick('attivita'),
+    scadenza:  pick('scadenza'),
+    eseguita:  pick('eseguita'),
+    note:      pick('note'),
+  };
 }
 
-module.exports = { MODEL, hasApiKey, generaScheda };
+module.exports = { MODEL, hasApiKey, generaRiga };

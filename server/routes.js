@@ -313,15 +313,26 @@ async function recomputePercorso(pid) {
      WHERE id = $1`, [pid]);
 }
 
-// Crea una seduta
+function sedutaFields(b) {
+  b = b || {};
+  const val = k => { const v = b[k]; return (v == null || String(v).trim() === '') ? null : String(v).trim(); };
+  return {
+    obiettivo: val('obiettivo'), argomenti: val('argomenti'), attivita: val('attivita'),
+    scadenza: val('scadenza'), eseguita: val('eseguita'), note: val('note'),
+  };
+}
+
+// Crea una seduta (riga della Scheda Cliente)
 router.post('/dashboard/clients/:id/percorsi/:pid/sedute', requireCoach, express.json(), async (req, res) => {
   try {
     const t = normTipo(req.body.tipo);
+    const f = sedutaFields(req.body);
     const sid = uuidv4();
     await db.query(
-      `INSERT INTO sedute (id, percorso_id, client_id, tipo, data, ore, scheda)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-      [sid, req.params.pid, req.params.id, t, req.body.data || null, oreForTipo(t, req.body.ore), (req.body.scheda || '').trim()]
+      `INSERT INTO sedute (id, percorso_id, client_id, tipo, data, ore, obiettivo, argomenti, attivita, scadenza, eseguita, note)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      [sid, req.params.pid, req.params.id, t, req.body.data || null, oreForTipo(t, req.body.ore),
+       f.obiettivo, f.argomenti, f.attivita, f.scadenza, f.eseguita, f.note]
     );
     await recomputePercorso(req.params.pid);
     res.json({ ok: true, id: sid });
@@ -332,9 +343,12 @@ router.post('/dashboard/clients/:id/percorsi/:pid/sedute', requireCoach, express
 router.post('/dashboard/clients/:id/percorsi/:pid/sedute/:sid', requireCoach, express.json(), async (req, res) => {
   try {
     const t = normTipo(req.body.tipo);
+    const f = sedutaFields(req.body);
     await db.query(
-      `UPDATE sedute SET tipo=$1, data=$2, ore=$3, scheda=$4 WHERE id=$5 AND percorso_id=$6`,
-      [t, req.body.data || null, oreForTipo(t, req.body.ore), (req.body.scheda || '').trim(), req.params.sid, req.params.pid]
+      `UPDATE sedute SET tipo=$1, data=$2, ore=$3, obiettivo=$4, argomenti=$5, attivita=$6, scadenza=$7, eseguita=$8, note=$9
+       WHERE id=$10 AND percorso_id=$11`,
+      [t, req.body.data || null, oreForTipo(t, req.body.ore),
+       f.obiettivo, f.argomenti, f.attivita, f.scadenza, f.eseguita, f.note, req.params.sid, req.params.pid]
     );
     await recomputePercorso(req.params.pid);
     res.json({ ok: true });
@@ -656,6 +670,10 @@ function baseStyle() {
       details.acc > summary { display:flex; align-items:center; gap:8px; cursor: pointer; padding: 11px 14px; font-size:13px; user-select:none; }
       details.acc > summary:hover { background: #f8f9fb; border-radius: 10px; }
       .acc-body { padding: 4px 14px 14px 14px; border-top: 1px solid var(--line); font-size:13px; line-height:1.6; }
+      /* Scheda Cliente — tabella una-riga-per-sessione */
+      .scheda-cliente td { vertical-align: top; font-size: 12px; line-height: 1.45; min-width: 88px; padding: 11px 12px; }
+      .scheda-cliente th { white-space: nowrap; font-size: 10.5px; }
+      .scheda-cliente td:nth-child(3), .scheda-cliente td:nth-child(4), .scheda-cliente td:nth-child(5), .scheda-cliente td:nth-child(8) { min-width: 150px; }
     </style>
   `;
 }
@@ -903,29 +921,25 @@ function mdLite(md) {
   return out;
 }
 
-function renderSeduta(s) {
+// Una riga della Scheda Cliente (una per sessione).
+function renderSedutaRow(s) {
   const T = { Intake: { bg: '#e8f4fd', c: '#1A5280' }, Ongoing: { bg: '#eafaf1', c: '#4F8B73' }, Final: { bg: '#fff8ec', c: '#8a6d1e' } }[s.tipo] || { bg: '#eee', c: '#555' };
   const isBozza = s.stato === 'bozza';
-  const bozzaPill = isBozza
-    ? `<span class="badge" style="background:#fdf6e3;color:#8a6d1e;border:1px solid #efdfa8">bozza · da approvare</span>` : '';
+  const cell = v => (v && String(v).trim() && String(v).trim() !== '—') ? esc(String(v)) : '<span style="color:#ccc">—</span>';
+  const noteVal = (s.note && s.note.trim()) ? s.note : (s.scheda || ''); // recupera il vecchio formato
   const approvaBtn = isBozza
-    ? `<button onclick="event.stopPropagation();approvaSeduta('${s.id}','${s.percorso_id}')" class="btn btn-sm" style="background:#e7f1ec;color:#2e6b52" title="Approva">✓ Approva</button>` : '';
-  return `
-    <details class="acc"${isBozza ? ' open style="border-color:#e6c86b;box-shadow:0 0 0 2px #f6e9c0"' : ''}>
-      <summary>
-        <span class="sec-caret">▸</span>
-        <span class="badge" style="background:${T.bg};color:${T.c}">${esc(s.tipo)}</span>
-        ${bozzaPill}
-        <span style="font-weight:700;color:var(--ink)">${s.data ? itDate(s.data) : '—'}</span>
-        <span style="color:#aaa;font-size:12px">· ${fmtOre(s.ore)} h${isBozza ? ' · non conta finché non approvi' : ''}</span>
-        <span style="margin-left:auto;white-space:nowrap;display:inline-flex;gap:6px;align-items:center">
-          ${approvaBtn}
-          <button onclick="event.stopPropagation();editSeduta('${s.id}')" class="btn btn-neutral btn-sm" title="Modifica">✎</button>
-          <button onclick="event.stopPropagation();delSeduta('${s.id}','${s.percorso_id}')" class="btn btn-danger btn-sm" title="${isBozza ? 'Scarta bozza' : 'Elimina'}">🗑</button>
-        </span>
-      </summary>
-      <div class="acc-body">${s.scheda && s.scheda.trim() ? mdLite(s.scheda) : '<span style="color:#aaa">— nessuna scheda —</span>'}</div>
-    </details>`;
+    ? `<button onclick="approvaSeduta('${s.id}','${s.percorso_id}')" class="btn btn-sm" style="background:#e7f1ec;color:#2e6b52;display:block;margin-bottom:5px" title="Approva">✓ Approva</button>` : '';
+  return `<tr style="${isBozza ? 'background:#fffdf3' : ''}">
+    <td style="white-space:nowrap">${s.data ? itDate(s.data) : '—'}</td>
+    <td style="white-space:nowrap"><span class="badge" style="background:${T.bg};color:${T.c}">${esc(s.tipo)}</span>${isBozza ? '<div style="margin-top:5px"><span class="badge" style="background:#fdf6e3;color:#8a6d1e;border:1px solid #efdfa8">bozza</span></div>' : ''}</td>
+    <td>${cell(s.obiettivo)}</td>
+    <td>${cell(s.argomenti)}</td>
+    <td>${cell(s.attivita)}</td>
+    <td>${cell(s.scadenza)}</td>
+    <td style="white-space:nowrap">${cell(s.eseguita)}</td>
+    <td>${cell(noteVal)}</td>
+    <td style="white-space:nowrap">${approvaBtn}<button onclick="editSeduta('${s.id}')" class="btn btn-neutral btn-sm" title="Modifica">✎</button> <button onclick="delSeduta('${s.id}','${s.percorso_id}')" class="btn btn-danger btn-sm" title="${isBozza ? 'Scarta' : 'Elimina'}">🗑</button></td>
+  </tr>`;
 }
 
 function clientDetailPage(client, sessions, percorsi, payments, sedute, req) {
@@ -968,24 +982,28 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, req) {
       </table>`}
     </div>`;
 
-  // ── Report sessioni (diario / scheda cliente) — sezione a fisarmonica ──
+  // ── Scheda Cliente (una riga per sessione: la tabella storica di Cowork) ──
+  const seduteBody = percorsi.length === 0
+    ? `<div class="empty">Crea prima un percorso per registrare le sessioni.</div>`
+    : sedute.length === 0
+      ? `<div class="empty">Nessuna sessione. Usa "+ Aggiungi sessione", oppure "⟳ Cerca nuovi report" se hai messo un report su Drive.</div>`
+      : `<div style="overflow-x:auto">
+          <table class="scheda-cliente">
+            <thead><tr><th>Data</th><th>Sessione</th><th>Obiettivo</th><th>Argomenti trattati</th><th>Attività concordate</th><th>Scadenza</th><th>Eseg.</th><th>Note</th><th></th></tr></thead>
+            <tbody>${sedute.map(renderSedutaRow).join('')}</tbody>
+          </table>
+        </div>`;
   const seduteHtml = `
     <div class="card">
       <details class="sec" open>
         <summary style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;cursor:pointer">
-          <span style="display:flex;align-items:center;gap:8px"><span class="sec-caret">▸</span><h2 style="margin:0">Report sessioni <span style="font-weight:400;font-size:13px;color:#aaa">(${sedute.length})</span></h2></span>
+          <span style="display:flex;align-items:center;gap:8px"><span class="sec-caret">▸</span><h2 style="margin:0">Scheda Cliente <span style="font-weight:400;font-size:13px;color:#aaa">(${sedute.length} ${sedute.length === 1 ? 'sessione' : 'sessioni'})</span></h2></span>
           <span style="display:inline-flex;gap:8px;align-items:center">
-            ${client.drive_url ? `<button id="scan-btn" onclick="event.stopPropagation();scanDrive()" class="btn btn-neutral btn-sm" title="Legge i report Word nuovi dalla cartella Drive e ne crea la bozza">⟳ Cerca nuovi report</button>` : ''}
+            ${client.drive_url ? `<button id="scan-btn" onclick="event.stopPropagation();scanDrive()" class="btn btn-neutral btn-sm" title="Legge i report Word nuovi dalla cartella Drive e ne aggiunge la riga in bozza">⟳ Cerca nuovi report</button>` : ''}
             ${percorsi.length ? `<button onclick="event.stopPropagation();openSeduta()" class="btn btn-primary btn-sm">+ Aggiungi sessione</button>` : ''}
           </span>
         </summary>
-        <div style="margin-top:14px">
-          ${percorsi.length === 0
-            ? `<div class="empty">Crea prima un percorso per registrare le sessioni.</div>`
-            : sedute.length === 0
-              ? `<div class="empty">Nessuna sessione nel diario. Usa "Aggiungi sessione" (Intake 2h · Ongoing 1h · Final a mano).</div>`
-              : sedute.map(s => renderSeduta(s)).join('')}
-        </div>
+        <div style="margin-top:14px">${seduteBody}</div>
       </details>
     </div>`;
 
@@ -1200,8 +1218,14 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, req) {
         <div class="form-group"><label>Data</label><input id="s-data" type="date"></div>
         <div class="form-group"><label>Ore <span id="s-ore-hint" style="font-size:11px;color:#aaa;text-transform:none;letter-spacing:0"></span></label><input id="s-ore" type="number" step="0.5" min="0"></div>
       </div>
-      <div class="form-group"><label>Scheda — riepilogo dei punti salienti (Markdown)</label>
-        <textarea id="s-scheda" style="min-height:300px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.5" placeholder="## Sessione…&#10;**Obiettivo:** …&#10;- …"></textarea></div>
+      <div class="form-group"><label>Obiettivo</label><textarea id="s-obiettivo" style="min-height:54px"></textarea></div>
+      <div class="form-group"><label>Argomenti trattati</label><textarea id="s-argomenti" style="min-height:62px"></textarea></div>
+      <div class="form-group"><label>Attività concordate</label><textarea id="s-attivita" style="min-height:54px"></textarea></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group"><label>Scadenza</label><input id="s-scadenza" type="text" placeholder="es. entro la prossima sessione"></div>
+        <div class="form-group"><label>Eseguita</label><select id="s-eseguita"><option value="">—</option><option>Sì</option><option>No</option><option>In parte</option></select></div>
+      </div>
+      <div class="form-group"><label>Note</label><textarea id="s-note" style="min-height:54px"></textarea></div>
       <div style="display:flex;gap:8px;margin-top:4px">
         <button onclick="document.getElementById('modal-seduta').style.display='none'" class="btn btn-neutral" style="flex:1">Annulla</button>
         <button onclick="saveSeduta()" class="btn btn-primary" style="flex:1">Salva</button>
@@ -1232,7 +1256,7 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, req) {
   <div id="toast" style="display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--navy);color:#fff;padding:10px 20px;border-radius:20px;font-size:13px;font-weight:600;z-index:200">Fatto!</div>
   <script>
     const CID = '${client.id}';
-    const SEDUTE = ${JSON.stringify(Object.fromEntries(sedute.map(s => [s.id, { id: s.id, percorso_id: s.percorso_id, tipo: s.tipo, data: s.data, ore: Number(s.ore), scheda: s.scheda || '' }]))).replace(/</g, '\\u003c')};
+    const SEDUTE = ${JSON.stringify(Object.fromEntries(sedute.map(s => [s.id, { id: s.id, percorso_id: s.percorso_id, tipo: s.tipo, data: s.data, ore: Number(s.ore), obiettivo: s.obiettivo || '', argomenti: s.argomenti || '', attivita: s.attivita || '', scadenza: s.scadenza || '', eseguita: s.eseguita || '', note: s.note || '' }]))).replace(/</g, '\\u003c')};
     const ORE_TIPO = { Intake: 2, Ongoing: 1, Final: null };
     function oreAuto() {
       const t = document.getElementById('s-tipo').value;
@@ -1248,7 +1272,7 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, req) {
       const ps = document.getElementById('s-percorso'); if (ps.options.length) ps.selectedIndex = 0;
       document.getElementById('s-tipo').value = 'Ongoing';
       document.getElementById('s-data').value = new Date().toISOString().slice(0, 10);
-      document.getElementById('s-scheda').value = '';
+      ['s-obiettivo','s-argomenti','s-attivita','s-scadenza','s-eseguita','s-note'].forEach(id => document.getElementById(id).value = '');
       oreAuto();
       document.getElementById('modal-seduta').style.display = 'flex';
     }
@@ -1259,7 +1283,12 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, req) {
       document.getElementById('s-percorso').value = s.percorso_id;
       document.getElementById('s-tipo').value = s.tipo;
       document.getElementById('s-data').value = s.data ? String(s.data).slice(0, 10) : '';
-      document.getElementById('s-scheda').value = s.scheda || '';
+      document.getElementById('s-obiettivo').value = s.obiettivo || '';
+      document.getElementById('s-argomenti').value = s.argomenti || '';
+      document.getElementById('s-attivita').value = s.attivita || '';
+      document.getElementById('s-scadenza').value = s.scadenza || '';
+      document.getElementById('s-eseguita').value = s.eseguita || '';
+      document.getElementById('s-note').value = s.note || '';
       oreAuto();
       document.getElementById('s-ore').value = s.ore;
       document.getElementById('modal-seduta').style.display = 'flex';
@@ -1268,7 +1297,8 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, req) {
       const pid = document.getElementById('s-percorso').value;
       if (!pid) { alert('Serve un percorso'); return; }
       const sid = document.getElementById('s-id').value;
-      const body = { tipo: document.getElementById('s-tipo').value, data: document.getElementById('s-data').value || null, ore: document.getElementById('s-ore').value || 0, scheda: document.getElementById('s-scheda').value };
+      const g = id => document.getElementById(id).value;
+      const body = { tipo: g('s-tipo'), data: g('s-data') || null, ore: g('s-ore') || 0, obiettivo: g('s-obiettivo'), argomenti: g('s-argomenti'), attivita: g('s-attivita'), scadenza: g('s-scadenza'), eseguita: g('s-eseguita'), note: g('s-note') };
       const url = '/dashboard/clients/' + CID + '/percorsi/' + pid + '/sedute' + (sid ? ('/' + sid) : '');
       await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       location.reload();
