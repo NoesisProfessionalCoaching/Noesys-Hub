@@ -19,7 +19,8 @@ Regole ferme:
 - Questa è una BOZZA che il coach revisiona: sii fedele alla fonte, non interpretare oltre il dovuto.
 - Registro professionale, italiano, chiaro e non direttivo (il coaching è una partnership, non si impartiscono lezioni). Niente enfasi pubblicitaria.
 - "Nelle sue parole": riporta 1–3 citazioni testuali del CLIENTE solo se presenti nel report (tra virgolette). Se non ce ne sono, ometti la sezione.
-- "Osservazioni del coach": qui e solo qui puoi proporre spunti tuoi (pattern, ipotesi, possibili direzioni). Marca chiaramente che sono PROPOSTE da validare, non fatti.
+- "Note del coach": se il report contiene note o conclusioni scritte dal COACH (es. una voce "Note conclusive del coach"), sono fatti SUOI da riportare FEDELMENTE come sue parole nella sezione "Note del coach" — non rielaborarle, non riassumerle in modo distorto e non spacciarle per tue. Ometti la sezione solo se non ce ne sono.
+- "Spunti dell'assistente (proposte)": qui e solo qui puoi proporre spunti tuoi (pattern, ipotesi, possibili direzioni). Marcali chiaramente come PROPOSTE da validare, non fatti.
 - Densità media: sintetico ma completo. Solo Markdown, nessun preambolo tipo "Ecco la scheda".`;
 
 function sezioniPerTipo(tipo) {
@@ -32,7 +33,8 @@ function sezioniPerTipo(tipo) {
     '## Attività\nCompiti/azioni concordati con il cliente (se presenti).',
     '## Scadenza\nEventuale data o impegno temporale (se presente).',
     '## Nelle sue parole\nCitazioni testuali del cliente (solo se presenti).',
-    '## Osservazioni del coach (proposte)\nSpunti dell\'assistente, marcati come proposte da validare.',
+    '## Note del coach\nNote o conclusioni scritte dal coach nel report (es. una voce "Note conclusive del coach"): riportale FEDELMENTE come sue parole. Ometti se non presenti.',
+    '## Spunti dell\'assistente (proposte)\nSpunti tuoi, marcati come proposte da validare (non fatti).',
   ].filter(Boolean);
   return base.join('\n\n');
 }
