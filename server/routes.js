@@ -1135,7 +1135,6 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, req) {
             <div><div class="field-label">Come ci ha conosciuto</div><div class="field-value">${FONTE_LABEL[client.fonte]||val(client.fonte)}</div></div>
             <div><div class="field-label">Consenso privacy</div><div class="field-value">${client.consenso_privacy ? `Sì${client.consenso_data ? ` (${itDate(client.consenso_data)})` : ''}` : '<span style="color:#ccc">No</span>'}</div></div>
           </div>
-          ${client.obiettivo ? `<div style="margin-top:14px"><div class="field-label">Obiettivo / motivo</div><div style="font-size:13px;background:#f8f9fb;padding:10px 12px;border-radius:8px;border-left:3px solid var(--blue)">${esc(client.obiettivo)}</div></div>` : ''}
           ${client.note_preliminari ? `<div style="margin-top:10px"><div class="field-label">Note CRM</div><div style="font-size:13px;color:#6B7280">${esc(client.note_preliminari)}</div></div>` : ''}
           ${client.drive_url ? `<div style="margin-top:10px"><div class="field-label">Cartella Drive</div><a href="${esc(client.drive_url)}" target="_blank" style="font-size:13px;word-break:break-all">${esc(client.drive_url)}</a></div>` : ''}
           ${recallHtml}
