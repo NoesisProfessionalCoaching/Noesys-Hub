@@ -1292,7 +1292,7 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, req) {
         const n = (d.processed || []).length;
         if (n === 0) {
           const errs = (d.errors || []).map(e => e.err).join('; ');
-          alert('Nessun nuovo report da lavorare' + (errs ? ('.\nNota: ' + errs) : ' (già lavorati, o cartella Ongoing/Intake/Final vuota).'));
+          alert('Nessun nuovo report da lavorare' + (errs ? ('. Nota: ' + errs) : ' (già lavorati, o cartella Ongoing/Intake/Final vuota).'));
           reset(); return;
         }
         alert(n + (n === 1 ? ' bozza creata' : ' bozze create') + '. La trovi qui sotto, evidenziata, da approvare.');
