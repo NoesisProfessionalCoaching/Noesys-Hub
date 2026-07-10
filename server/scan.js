@@ -13,19 +13,24 @@ const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingm
 const TIPI = ['Intake', 'Ongoing', 'Final'];
 const MAX_PER_RUN = 20; // rete di sicurezza contro backfill accidentali
 
-// Nomi che NON sono report di sessione (stanno nelle stesse cartelle su Drive).
-const NON_REPORT = /agenda|contratt|lettera|benvenut|consenso|privacy|anagrafica|profilo cliente|obiettivo|\bcard\b/i;
+// Whitelist per i report di sessione: il file deve iniziare con "Report" (case-insensitive).
+// Convenzione con Germano: ogni report va nominato "Report ..." (es. "Report Intake",
+// "Report 12 giugno '26.docx"). Tutto il resto (agende, contratti, appunti, PNG, ecc.)
+// viene ignorato automaticamente.
+const IS_REPORT = /^report\b/i;
 
 function isDocxReport(f) {
   const isDocx = f.mimeType === DOCX_MIME || /\.docx$/i.test(f.name || '');
-  return isDocx && !NON_REPORT.test(f.name || '');
+  return isDocx && IS_REPORT.test(f.name || '');
 }
 
-async function collectDocx(folderId, tipo, out) {
+// `folderName` è il nome della cartella diretta che contiene il file — serve a estrarre
+// la data della seduta quando le cartelle-data sono nominate `YYYY-MM-DD`.
+async function collectDocx(folderId, tipo, out, folderName) {
   const items = await drive.listChildren(folderId);
   for (const it of items) {
-    if (drive.isFolder(it)) await collectDocx(it.id, tipo, out);
-    else if (isDocxReport(it)) out.push({ id: it.id, name: it.name, tipo, modifiedTime: it.modifiedTime });
+    if (drive.isFolder(it)) await collectDocx(it.id, tipo, out, it.name);
+    else if (isDocxReport(it)) out.push({ id: it.id, name: it.name, tipo, modifiedTime: it.modifiedTime, folderName });
   }
 }
 
@@ -35,7 +40,7 @@ async function findReportsInPercorso(percorsoFolderId, out) {
   for (const s of subs) {
     if (!drive.isFolder(s)) continue;
     const tipo = TIPI.find(t => t.toLowerCase() === s.name.toLowerCase());
-    if (tipo) await collectDocx(s.id, tipo, out);
+    if (tipo) await collectDocx(s.id, tipo, out, s.name);
   }
 }
 
@@ -54,9 +59,32 @@ async function reportsForClient(folderId) {
 }
 
 function oreDefault(tipo) { return tipo === 'Intake' ? 2 : tipo === 'Ongoing' ? 1 : 0; }
+
+// Data della seduta con questa priorità:
+// 1. Data italiana estratta dal nome del file (es. "Report 12 giugno '26.docx" → 2026-06-12)
+// 2. Nome della cartella diretta se è già in ISO (es. Ongoing/2026-05-04/Report.docx → 2026-05-04)
+// 3. Fallback: modifiedTime del file (data ultima modifica su Drive)
+// Fix del 2026-07-10: la vecchia versione usava sempre modifiedTime, sballando
+// le date perché il coach rivede i report giorni dopo la sessione reale.
+const MESI_IT = { gennaio:1, febbraio:2, marzo:3, aprile:4, maggio:5, giugno:6, luglio:7, agosto:8, settembre:9, ottobre:10, novembre:11, dicembre:12 };
+function dataDalNome(name) {
+  if (!name) return null;
+  // "12 giugno '26" · "12 giugno 2026" · "6 luglio '26"
+  const m = name.match(/(\d{1,2})\s+(gennaio|febbraio|marzo|aprile|maggio|giugno|luglio|agosto|settembre|ottobre|novembre|dicembre)\s+['’]?(\d{4}|\d{2})/i);
+  if (!m) return null;
+  const giorno = parseInt(m[1], 10);
+  const mese = MESI_IT[m[2].toLowerCase()];
+  let anno = parseInt(m[3], 10);
+  if (anno < 100) anno += 2000;
+  if (!giorno || !mese || !anno || giorno < 1 || giorno > 31) return null;
+  return `${anno}-${String(mese).padStart(2,'0')}-${String(giorno).padStart(2,'0')}`;
+}
 function dataDaReport(rep) {
-  if (!rep.modifiedTime) return null;
-  return String(rep.modifiedTime).slice(0, 10); // YYYY-MM-DD
+  const dNome = dataDalNome(rep.name);
+  if (dNome) return dNome;
+  if (rep.folderName && /^\d{4}-\d{2}-\d{2}$/.test(rep.folderName)) return rep.folderName;
+  if (rep.modifiedTime) return String(rep.modifiedTime).slice(0, 10);
+  return null;
 }
 
 // Contesto: gli strumenti compilati dal cliente, in formato dati (Claude legge il JSON).
