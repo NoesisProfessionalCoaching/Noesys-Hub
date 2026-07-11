@@ -590,7 +590,18 @@ router.post('/dashboard/leads/:id/convert', requireCoach, express.json(), async 
       [clientId, name, nome, cognome, lead.email||'', lead.telefono||'', area, lead.fonte||'altro', lead.note||'', token]
     );
     await db.query("UPDATE leads SET stato='convertito',updated_at=NOW() WHERE id=$1", [lead.id]);
-    res.json({ ok: true, clientId, token });
+    // Cartelle Drive subito, nello stesso momento della conversione (chiude il doppio
+    // passaggio). Stesso schema della creazione cliente: se Drive è giù il cliente resta
+    // creato con drive_url vuoto e il coach può riprovare col pulsante nella scheda.
+    let driveOk = false;
+    try {
+      const f = await drive.createClientFolders({ area, cognome, nome });
+      await db.query('UPDATE clients SET drive_url=$1 WHERE id=$2', [f.url, clientId]);
+      driveOk = true;
+    } catch (e) {
+      console.error('[drive] cartelle cliente da conversione fallite:', e.message);
+    }
+    res.json({ ok: true, clientId, token, driveOk });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Errore conversione' });
