@@ -112,6 +112,26 @@ router.get('/dashboard/diag/drive', requireCoach, async (req, res) => {
   res.send(driveDiagPage(steps, root, children, req));
 });
 
+// Diagnosi SCRITTURA: crea (idempotente) una cartella di prova sotto «Noesys».
+// Serve solo a verificare che le credenziali possano scrivere; poi la si cancella a mano.
+router.get('/dashboard/diag/drive/test-create', requireCoach, async (req, res) => {
+  const steps = [];
+  try {
+    const missing = drive.missingEnv();
+    if (missing.length) {
+      steps.push({ ok: false, txt: 'Variabili mancanti su Railway: ' + missing.join(', ') });
+    } else {
+      const folder = await drive.findOrCreateFolder(drive.NOESYS_ROOT_ID, 'Test-Automazione');
+      steps.push({ ok: true, txt: 'Cartella di prova pronta: «' + folder.name + '» (id ' + folder.id + ').' });
+      steps.push({ ok: true, txt: 'Aprila e controlla su Drive: ' + drive.folderUrl(folder.id) });
+      steps.push({ ok: true, txt: 'Se la vedi, la scrittura funziona. Ora cancella pure «Test-Automazione».' });
+    }
+  } catch (err) {
+    steps.push({ ok: false, txt: err.message });
+  }
+  res.send(driveDiagPage(steps, null, [], req));
+});
+
 router.post('/dashboard/clients', requireCoach, express.json(), async (req, res) => {
   const { name, email, telefono, area, fonte, obiettivo } = req.body;
   if (!name) return res.status(400).json({ error: 'Nome obbligatorio' });

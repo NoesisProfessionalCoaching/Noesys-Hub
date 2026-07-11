@@ -63,6 +63,24 @@ async function driveFetch(endpoint) {
   return data;
 }
 
+// Come driveFetch ma in POST con corpo JSON (per creare cartelle: SCRITTURA).
+async function driveFetchPost(endpoint, body) {
+  const token = await getAccessToken();
+  const res = await fetch(DRIVE_API + endpoint, {
+    method: 'POST',
+    headers: {
+      Authorization: 'Bearer ' + token,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error('Drive API ' + res.status + ': ' + (data.error?.message || 'errore'));
+  }
+  return data;
+}
+
 // Elenca i file/cartelle DENTRO una cartella (per id). Ordinati: prima le cartelle.
 async function listChildren(folderId) {
   const q = `'${folderId}' in parents and trashed = false`;
@@ -88,6 +106,43 @@ async function findNoesysRoot() {
 }
 
 const isFolder = f => f.mimeType === 'application/vnd.google-apps.folder';
+const FOLDER_MIME = 'application/vnd.google-apps.folder';
+
+// Escapa apici e backslash per infilare un nome dentro una query Drive (q=...).
+function escapeQ(s) {
+  return String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+// Cerca UNA cartella con nome esatto dentro `parentId`. null se non c'è.
+async function findFolderByName(parentId, name) {
+  const q = `'${parentId}' in parents and name = '${escapeQ(name)}' `
+          + `and mimeType = '${FOLDER_MIME}' and trashed = false`;
+  const params = new URLSearchParams({ q, fields: 'files(id,name)', pageSize: '5' });
+  const data = await driveFetch('/files?' + params.toString());
+  return (data.files || [])[0] || null;
+}
+
+// Crea una cartella `name` dentro `parentId` e ne restituisce {id,name}. SCRITTURA.
+async function createFolder(parentId, name) {
+  return driveFetchPost('/files?fields=id,name', {
+    name,
+    mimeType: FOLDER_MIME,
+    parents: [parentId],
+  });
+}
+
+// Idempotente: se la cartella esiste già la riusa, altrimenti la crea.
+// Evita i doppioni (Drive permette due cartelle con lo stesso nome nello stesso posto).
+async function findOrCreateFolder(parentId, name) {
+  const found = await findFolderByName(parentId, name);
+  if (found) return found;
+  return createFolder(parentId, name);
+}
+
+// Link web di una cartella, dal suo id (da salvare nel campo drive_url).
+function folderUrl(id) {
+  return 'https://drive.google.com/drive/folders/' + id;
+}
 
 // Scarica i BYTE grezzi di un file (es. un .docx) per estrarne poi il testo.
 async function downloadFileBuffer(fileId) {
@@ -123,4 +178,8 @@ module.exports = {
   isFolder,
   downloadFileBuffer,
   folderIdFromUrl,
+  findFolderByName,
+  createFolder,
+  findOrCreateFolder,
+  folderUrl,
 };
