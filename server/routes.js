@@ -574,6 +574,10 @@ router.post('/dashboard/leads/:id/convert', requireCoach, express.json(), async 
     const lr = await db.query('SELECT * FROM leads WHERE id=$1', [req.params.id]);
     const lead = lr.rows[0];
     if (!lead) return res.status(404).json({ error: 'Lead non trovato' });
+    // L'area arriva dal menù di conversione. La conversione la riceve come "ingrediente"
+    // già pronto: oggi la sceglie il coach, domani la fonte può cambiare senza toccare qui.
+    const ALLOWED_AREE = ['Personal', 'Business', 'Young'];
+    const area = ALLOWED_AREE.includes(req.body.area) ? req.body.area : 'Personal';
     const clientId = uuidv4();
     const token    = uuidv4().replace(/-/g, '');
     const nome     = (lead.nome || '').trim();
@@ -581,9 +585,9 @@ router.post('/dashboard/leads/:id/convert', requireCoach, express.json(), async 
     const name     = [nome, cognome].filter(Boolean).join(' '); // display, tenuto in sync
     // Portiamo con noi nome/cognome + fonte e note del lead nel nuovo cliente.
     await db.query(
-      `INSERT INTO clients (id,name,nome,cognome,email,telefono,fonte,note_preliminari,token)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-      [clientId, name, nome, cognome, lead.email||'', lead.telefono||'', lead.fonte||'altro', lead.note||'', token]
+      `INSERT INTO clients (id,name,nome,cognome,email,telefono,area,fonte,note_preliminari,token)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      [clientId, name, nome, cognome, lead.email||'', lead.telefono||'', area, lead.fonte||'altro', lead.note||'', token]
     );
     await db.query("UPDATE leads SET stato='convertito',updated_at=NOW() WHERE id=$1", [lead.id]);
     res.json({ ok: true, clientId, token });
@@ -1646,6 +1650,19 @@ function leadsPage(leads, req) {
     </div>
   </div>
 
+  <div id="modal-area" class="modal-overlay">
+    <div class="modal-box" style="width:340px">
+      <h2 style="margin-bottom:6px">Converti in cliente</h2>
+      <p style="color:#aaa;font-size:13px;margin-bottom:16px">Scegli l'area del nuovo cliente:</p>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <button onclick="doConvert('Personal')" class="btn" style="background:#1A5280;color:#fff">Personal</button>
+        <button onclick="doConvert('Business')" class="btn" style="background:#4F8B73;color:#fff">Business</button>
+        <button onclick="doConvert('Young')" class="btn" style="background:#D8AE2E;color:#fff">Young</button>
+      </div>
+      <button onclick="closeAreaModal()" class="btn btn-neutral" style="width:100%;margin-top:14px">Annulla</button>
+    </div>
+  </div>
+
   <script>
     function filtra() {
       const q = document.getElementById('cerca').value.trim().toLowerCase();
@@ -1689,17 +1706,28 @@ function leadsPage(leads, req) {
       await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
       location.reload();
     }
-    async function convertLead(id) {
-      if(!confirm('Convertire questo lead in cliente?')) return;
-      const r = await fetch('/dashboard/leads/'+id+'/convert',{method:'POST',headers:{'Content-Type':'application/json'}});
+    let convertingLeadId = null;
+    function convertLead(id) {
+      convertingLeadId = id;
+      document.getElementById('modal-area').style.display='flex';
+    }
+    function closeAreaModal() {
+      document.getElementById('modal-area').style.display='none';
+      convertingLeadId = null;
+    }
+    async function doConvert(area) {
+      if (!convertingLeadId) return;
+      const r = await fetch('/dashboard/leads/'+convertingLeadId+'/convert',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({area})});
       const d = await r.json();
       if (d.ok) location.href='/dashboard/clients/'+d.clientId;
+      else { alert(d.error||'Errore conversione'); closeAreaModal(); }
     }
     async function deleteLead(id) {
       if(!confirm('Eliminare questo lead?')) return;
       await fetch('/dashboard/leads/'+id,{method:'DELETE'}); location.reload();
     }
     document.getElementById('modal-lead').addEventListener('click',e=>{ if(e.target===document.getElementById('modal-lead')) closeLeadModal(); });
+    document.getElementById('modal-area').addEventListener('click',e=>{ if(e.target===document.getElementById('modal-area')) closeAreaModal(); });
   </script>
   </body></html>`;
 }
