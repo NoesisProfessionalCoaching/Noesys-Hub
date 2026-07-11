@@ -288,7 +288,26 @@ router.post('/dashboard/clients/:id/percorsi', requireCoach, express.json(), asy
        prezzo||null, promo||false, sconto_note||'', data_inizio||null, data_fine||null,
        modalita||'Standard', ore_fatte||0, stato||'attivo']
     );
-    res.json({ ok: true, id: pid });
+    // Cartelle Drive del percorso: Percorsi/{gg-mm-aaaa}/{Intake,Ongoing,Final}.
+    // Servono: cartella cliente (drive_url) + data inizio. Se manca l'una o l'altra,
+    // o Drive fallisce, il percorso resta creato lo stesso e avvisiamo il coach.
+    let driveWarning = null;
+    try {
+      const cr = await db.query('SELECT drive_url FROM clients WHERE id=$1', [req.params.id]);
+      const clientFolderId = drive.folderIdFromUrl(cr.rows[0] && cr.rows[0].drive_url);
+      const folderName = itFolderDate(data_inizio);
+      if (!clientFolderId) {
+        driveWarning = 'Il cliente non ha ancora una cartella Drive: crea prima quella (pulsante «🔄 Crea cartelle Drive» nella scheda), poi ricrea il percorso.';
+      } else if (!folderName) {
+        driveWarning = 'Percorso creato, ma senza data d\'inizio non ho potuto creare le cartelle Intake/Ongoing/Final su Drive.';
+      } else {
+        await drive.createPercorsoFolders(clientFolderId, folderName);
+      }
+    } catch (e) {
+      console.error('[drive] cartelle percorso fallite:', e.message);
+      driveWarning = 'Percorso creato, ma le cartelle Drive non sono state create: ' + e.message;
+    }
+    res.json({ ok: true, id: pid, driveWarning });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Errore' });
@@ -1479,7 +1498,7 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, req) {
     }
     function openPercorso() { document.getElementById('modal-percorso').style.display='flex'; }
     async function savePercorso() {
-      await fetch('/dashboard/clients/'+CID+'/percorsi',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      const r = await fetch('/dashboard/clients/'+CID+'/percorsi',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
         tipo: document.getElementById('p-tipo').value,
         modalita: document.getElementById('p-modalita').value,
         ore_fatte: document.getElementById('p-ore').value || 0,
@@ -1488,6 +1507,8 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, req) {
         sconto_note: document.getElementById('p-sconto').value,
         data_inizio: document.getElementById('p-data').value || null,
       })});
+      const d = await r.json().catch(()=>({}));
+      if (d && d.driveWarning) alert(d.driveWarning);
       location.reload();
     }
     async function addSessione(pid,delta) {
@@ -1777,6 +1798,13 @@ function itDate(d) {
   const s = String(d).slice(0, 10);
   const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   return m ? `${m[3]}/${m[2]}/${m[1]}` : s;
+}
+
+// Data ISO (2026-07-11) → nome cartella Drive italiano con trattini (11-07-2026).
+// Trattini e non "/" perché lo slash non è ammesso nei nomi di cartella su Drive.
+function itFolderDate(d) {
+  const m = String(d || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
 }
 
 function esc(str) {

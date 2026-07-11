@@ -161,6 +161,19 @@ async function createClientFolders({ area, cognome, nome }) {
   return { id: clientF.id, url: folderUrl(clientF.id) };
 }
 
+// Crea (idempotente) le cartelle di UN percorso dentro la cartella del cliente:
+// Percorsi/{folderName}/{Intake,Ongoing,Final}. `clientFolderId` = id della cartella cliente
+// (dal suo drive_url). `folderName` = data inizio già formattata (es. "11-07-2026").
+async function createPercorsoFolders(clientFolderId, folderName) {
+  if (!folderName) throw new Error('Manca la data d\'inizio del percorso: impossibile nominare la cartella');
+  const percorsi = await findOrCreateFolder(clientFolderId, 'Percorsi');
+  const percF    = await findOrCreateFolder(percorsi.id, folderName);
+  await findOrCreateFolder(percF.id, 'Intake');
+  await findOrCreateFolder(percF.id, 'Ongoing');
+  await findOrCreateFolder(percF.id, 'Final');
+  return { id: percF.id, url: folderUrl(percF.id) };
+}
+
 // Scarica i BYTE grezzi di un file (es. un .docx) per estrarne poi il testo.
 async function downloadFileBuffer(fileId) {
   const token = await getAccessToken();
@@ -200,4 +213,5 @@ module.exports = {
   findOrCreateFolder,
   folderUrl,
   createClientFolders,
+  createPercorsoFolders,
 };
