@@ -147,10 +147,40 @@ router.post('/dashboard/clients', requireCoach, express.json(), async (req, res)
       [id, name, nome, cognome, (email||'').trim(), (telefono||'').trim(),
        area||'Personal', fonte||'altro', (obiettivo||'').trim(), token]
     );
-    res.json({ id, token });
+    // Cartelle Drive automatiche. Se Drive fallisce, il cliente resta creato lo stesso
+    // (drive_url vuoto): il coach potrà riprovare col pulsante nella scheda. (opzione B)
+    let driveOk = false;
+    try {
+      const f = await drive.createClientFolders({ area: area||'Personal', cognome, nome });
+      await db.query('UPDATE clients SET drive_url=$1 WHERE id=$2', [f.url, id]);
+      driveOk = true;
+    } catch (e) {
+      console.error('[drive] creazione cartelle cliente fallita:', e.message);
+    }
+    res.json({ id, token, driveOk });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Errore creazione cliente' });
+  }
+});
+
+// Crea (o ripristina) le cartelle Drive di un cliente esistente. Usato dal pulsante
+// nella scheda quando drive_url è vuoto (es. lead convertito, o creazione con Drive giù).
+// Non tocca chi ha già un link, per non fare doppioni delle cartelle dei 7 storici.
+router.post('/dashboard/clients/:id/drive-folders', requireCoach, async (req, res) => {
+  try {
+    const cr = await db.query('SELECT * FROM clients WHERE id=$1', [req.params.id]);
+    const c = cr.rows[0];
+    if (!c) return res.status(404).json({ error: 'Cliente non trovato' });
+    if (c.drive_url && c.drive_url.trim()) {
+      return res.status(400).json({ error: 'Questo cliente ha già una cartella Drive. Per rifarla, svuota prima il campo link in «Modifica dati».' });
+    }
+    const f = await drive.createClientFolders({ area: c.area, cognome: c.cognome, nome: c.nome });
+    await db.query('UPDATE clients SET drive_url=$1 WHERE id=$2', [f.url, c.id]);
+    res.json({ ok: true, drive_url: f.url });
+  } catch (e) {
+    console.error('[drive] cartelle cliente:', e.message);
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -881,6 +911,12 @@ function dashboardPage(clients, req) {
       document.getElementById('new-link').textContent = link;
       document.getElementById('new-result').style.display = 'block';
       document.getElementById('btn-create').style.display = 'none';
+      if (data.driveOk === false) {
+        const w = document.createElement('div');
+        w.style.cssText = 'margin-top:10px;color:#b45309;font-size:12px';
+        w.textContent = '⚠ Cliente creato, ma la cartella Drive non è stata creata. Aprilo e usa «🔄 Crea cartelle Drive».';
+        document.getElementById('new-result').appendChild(w);
+      }
     }
     function copyLink(url) { navigator.clipboard.writeText(url).then(showToast); }
     function copyLinkEl() { navigator.clipboard.writeText(document.getElementById('new-link').href).then(showToast); }
@@ -1168,7 +1204,9 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, req) {
             <div><div class="field-label">Consenso privacy</div><div class="field-value">${client.consenso_privacy ? `Sì${client.consenso_data ? ` (${itDate(client.consenso_data)})` : ''}` : '<span style="color:#ccc">No</span>'}</div></div>
           </div>
           ${client.note_preliminari ? `<div style="margin-top:10px"><div class="field-label">Note CRM</div><div style="font-size:13px;color:#6B7280">${esc(client.note_preliminari)}</div></div>` : ''}
-          ${client.drive_url ? `<div style="margin-top:10px"><div class="field-label">Cartella Drive</div><a href="${esc(client.drive_url)}" target="_blank" style="font-size:13px;word-break:break-all">${esc(client.drive_url)}</a></div>` : ''}
+          ${client.drive_url
+            ? `<div style="margin-top:10px"><div class="field-label">Cartella Drive</div><a href="${esc(client.drive_url)}" target="_blank" style="font-size:13px;word-break:break-all">${esc(client.drive_url)}</a></div>`
+            : `<div style="margin-top:10px"><div class="field-label">Cartella Drive</div><button id="drive-folders-btn" onclick="createDriveFolders()" class="btn btn-neutral btn-sm">🔄 Crea cartelle Drive</button><span id="drive-folders-msg" style="font-size:12px;color:#6B7280;margin-left:8px"></span></div>`}
           ${recallHtml}
         </div>
         <div style="text-align:right;min-width:210px">
@@ -1401,6 +1439,17 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, req) {
     }
     function copyLink(url) { navigator.clipboard.writeText(url).then(() => { const t=document.getElementById('toast'); t.textContent='Link copiato!'; t.style.display='block'; setTimeout(()=>t.style.display='none',2000); }); }
     function openEdit() { document.getElementById('modal-edit').style.display='flex'; }
+    async function createDriveFolders() {
+      const btn = document.getElementById('drive-folders-btn');
+      const msg = document.getElementById('drive-folders-msg');
+      btn.disabled = true; msg.style.color='#6B7280'; msg.textContent = 'Creazione in corso…';
+      try {
+        const r = await fetch('/dashboard/clients/'+CID+'/drive-folders', { method:'POST' });
+        const d = await r.json();
+        if (d.error) { msg.style.color='#b45309'; msg.textContent = d.error; btn.disabled = false; return; }
+        location.reload();
+      } catch(e) { msg.style.color='#b45309'; msg.textContent = 'Errore di rete, riprova'; btn.disabled = false; }
+    }
     async function saveClient() {
       const nome    = document.getElementById('e-nome').value.trim();
       const cognome = document.getElementById('e-cognome').value.trim();

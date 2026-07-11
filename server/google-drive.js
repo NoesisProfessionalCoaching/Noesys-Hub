@@ -144,6 +144,23 @@ function folderUrl(id) {
   return 'https://drive.google.com/drive/folders/' + id;
 }
 
+const AREE_VALIDE = ['Personal', 'Business', 'Young'];
+
+// Crea (idempotente) l'albero cartelle di un cliente e restituisce la SUA cartella {id,url}.
+// Struttura: Noesys/Clienti/{Area}/{Cognome Nome}/ con dentro Documentazione/ e Percorsi/.
+// Se le cartelle esistono già le riusa (nessun doppione).
+async function createClientFolders({ area, cognome, nome }) {
+  const areaSafe = AREE_VALIDE.includes(area) ? area : 'Personal';
+  const label = [cognome, nome].map(s => (s || '').trim()).filter(Boolean).join(' ');
+  if (!label) throw new Error('Manca il cognome del cliente: impossibile nominare la cartella');
+  const clienti = await findOrCreateFolder(NOESYS_ROOT_ID, 'Clienti');
+  const areaF   = await findOrCreateFolder(clienti.id, areaSafe);
+  const clientF = await findOrCreateFolder(areaF.id, label);
+  await findOrCreateFolder(clientF.id, 'Documentazione');
+  await findOrCreateFolder(clientF.id, 'Percorsi');
+  return { id: clientF.id, url: folderUrl(clientF.id) };
+}
+
 // Scarica i BYTE grezzi di un file (es. un .docx) per estrarne poi il testo.
 async function downloadFileBuffer(fileId) {
   const token = await getAccessToken();
@@ -182,4 +199,5 @@ module.exports = {
   createFolder,
   findOrCreateFolder,
   folderUrl,
+  createClientFolders,
 };
