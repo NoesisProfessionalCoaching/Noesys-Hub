@@ -133,7 +133,7 @@ router.get('/dashboard/diag/drive/test-create', requireCoach, async (req, res) =
 });
 
 router.post('/dashboard/clients', requireCoach, express.json(), async (req, res) => {
-  const { email, telefono, area, fonte, obiettivo } = req.body;
+  const { email, telefono, area, fonte, obiettivo, societa } = req.body;
   const cognome = (req.body.cognome || '').trim();
   const nome    = (req.body.nome || '').trim();
   if (!cognome) return res.status(400).json({ error: 'Cognome obbligatorio' });
@@ -142,10 +142,10 @@ router.post('/dashboard/clients', requireCoach, express.json(), async (req, res)
   const token = uuidv4().replace(/-/g, '');
   try {
     await db.query(
-      `INSERT INTO clients (id, name, nome, cognome, email, telefono, area, fonte, obiettivo, token)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      `INSERT INTO clients (id, name, nome, cognome, email, telefono, area, fonte, obiettivo, societa, token)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
       [id, name, nome, cognome, (email||'').trim(), (telefono||'').trim(),
-       area||'Personal', fonte||'altro', (obiettivo||'').trim(), token]
+       area||'Personal', fonte||'altro', (obiettivo||'').trim(), (societa||'').trim(), token]
     );
     // Cartelle Drive automatiche. Se Drive fallisce, il cliente resta creato lo stesso
     // (drive_url vuoto): il coach potrà riprovare col pulsante nella scheda. (opzione B)
@@ -214,7 +214,7 @@ router.post('/dashboard/clients/:id', requireCoach, express.json(), async (req, 
     const consenso = !!b.consenso_privacy;
     await db.query(
       `UPDATE clients SET
-        name=$1, nome=$22, cognome=$23, email=$2, telefono=$3, altro_recapito=$4, social_tipo=$5,
+        name=$1, nome=$22, cognome=$23, societa=$24, email=$2, telefono=$3, altro_recapito=$4, social_tipo=$5,
         via=$6, cap=$7, citta=$8, provincia=$9, data_nascita=$10,
         professione=$11, area=$12, fonte=$13, obiettivo=$14, stato_cliente=$15,
         prossima_azione=$16, prossima_azione_data=$17, drive_url=$18, note_preliminari=$19,
@@ -227,7 +227,7 @@ router.post('/dashboard/clients/:id', requireCoach, express.json(), async (req, 
        (b.provincia||'').trim(), b.data_nascita||null, (b.professione||'').trim(),
        b.area||'Personal', b.fonte||'altro', (b.obiettivo||'').trim(), b.stato_cliente||'attivo',
        (b.prossima_azione||'').trim(), b.prossima_azione_data||null, (b.drive_url||'').trim(),
-       (b.note_preliminari||'').trim(), consenso, req.params.id, nome, cognome]
+       (b.note_preliminari||'').trim(), consenso, req.params.id, nome, cognome, (b.societa||'').trim()]
     );
     res.json({ ok: true });
   } catch (err) {
@@ -870,6 +870,7 @@ function dashboardPage(clients, req) {
         <div class="form-group"><label>Area</label><select id="new-area">${areaOptions('Personal')}</select></div>
         <div class="form-group"><label>Come ti ha conosciuto</label><select id="new-fonte">${fonteOptions('altro')}</select></div>
       </div>
+      <div class="form-group"><label>Società / azienda</label><input id="new-societa" type="text" placeholder="opzionale"></div>
       <div class="form-group"><label>Obiettivo / motivo</label><textarea id="new-obiettivo" placeholder="opzionale"></textarea></div>
       <div id="new-error" style="display:none" class="flash-error"></div>
       <div id="new-result" style="display:none;background:#e8f5e9;border-radius:6px;padding:12px;margin-bottom:12px;font-size:13px">
@@ -902,7 +903,7 @@ function dashboardPage(clients, req) {
       document.getElementById('modal-overlay').style.display = 'flex';
       document.getElementById('new-result').style.display = 'none';
       document.getElementById('new-error').style.display = 'none';
-      ['new-nome','new-cognome','new-email','new-tel','new-obiettivo'].forEach(id=>document.getElementById(id).value='');
+      ['new-nome','new-cognome','new-email','new-tel','new-societa','new-obiettivo'].forEach(id=>document.getElementById(id).value='');
       document.getElementById('btn-create').style.display = '';
       document.getElementById('new-nome').focus();
     }
@@ -921,6 +922,7 @@ function dashboardPage(clients, req) {
         telefono: document.getElementById('new-tel').value.trim(),
         area: document.getElementById('new-area').value,
         fonte: document.getElementById('new-fonte').value,
+        societa: document.getElementById('new-societa').value.trim(),
         obiettivo: document.getElementById('new-obiettivo').value.trim(),
       }) });
       const data = await res.json();
@@ -1219,6 +1221,7 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, req) {
           <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-top:12px">
             <div><div class="field-label">Data di nascita</div><div class="field-value">${client.data_nascita ? itDate(client.data_nascita) : '<span style="color:#ccc">—</span>'}</div></div>
             <div><div class="field-label">Professione</div><div class="field-value">${val(client.professione)}</div></div>
+            <div><div class="field-label">Società</div><div class="field-value">${val(client.societa)}</div></div>
             <div><div class="field-label">Come ci ha conosciuto</div><div class="field-value">${FONTE_LABEL[client.fonte]||val(client.fonte)}</div></div>
             <div><div class="field-label">Consenso privacy</div><div class="field-value">${client.consenso_privacy ? `Sì${client.consenso_data ? ` (${itDate(client.consenso_data)})` : ''}` : '<span style="color:#ccc">No</span>'}</div></div>
           </div>
@@ -1273,6 +1276,7 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, req) {
         <div class="form-group"><label>Professione / ruolo</label><input id="e-prof" type="text" value="${attr(client.professione)}"></div>
         <div class="form-group"><label>Data di nascita</label><input id="e-nascita" type="date" value="${client.data_nascita ? String(client.data_nascita).slice(0,10) : ''}"></div>
       </div>
+      <div class="form-group"><label>Società / azienda</label><input id="e-societa" type="text" value="${attr(client.societa)}"></div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
         <div class="form-group"><label>Area</label><select id="e-area">${areaOptions(area)}</select></div>
         <div class="form-group"><label>Come ci ha conosciuto</label><select id="e-fonte">${fonteOptions(client.fonte||'altro')}</select></div>
@@ -1479,7 +1483,7 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, req) {
         altro_recapito:document.getElementById('e-altro').value, social_tipo:document.getElementById('e-social-tipo').value,
         via:document.getElementById('e-via').value, cap:document.getElementById('e-cap').value,
         citta:document.getElementById('e-citta').value, provincia:document.getElementById('e-provincia').value,
-        professione:document.getElementById('e-prof').value, data_nascita:document.getElementById('e-nascita').value||null,
+        professione:document.getElementById('e-prof').value, societa:document.getElementById('e-societa').value, data_nascita:document.getElementById('e-nascita').value||null,
         area:document.getElementById('e-area').value, fonte:document.getElementById('e-fonte').value,
         obiettivo:document.getElementById('e-obiettivo').value, stato_cliente:document.getElementById('e-stato').value,
         prossima_azione:document.getElementById('e-azione').value, prossima_azione_data:document.getElementById('e-azione-data').value||null,
@@ -1561,6 +1565,7 @@ function leadsPage(leads, req) {
     nuovo:       { label:'Nuovo',        bg:'#e8f4fd', color:'#1A5280' },
     contattato:  { label:'Contattato',   bg:'#fff8dc', color:'#7a5c00' },
     call_fissata:{ label:'Call fissata', bg:'#e7f1ec', color:'#2e6b52' },
+    incontro_fissato:{ label:'Incontro fissato', bg:'#eae6f7', color:'#4c3a86' },
     convertito:  { label:'Convertito',   bg:'#d1fae5', color:'#065f46' },
     perso:       { label:'Perso',        bg:'#fdf0ef', color:'#c0392b' },
   };
@@ -1630,7 +1635,7 @@ function leadsPage(leads, req) {
         <div class="form-group"><label>Fonte</label>
           <select id="l-fonte">${fonteOptions('altro')}</select></div>
         <div class="form-group"><label>Stato</label>
-          <select id="l-stato"><option value="nuovo">Nuovo</option><option value="contattato">Contattato</option><option value="call_fissata">Call fissata</option><option value="perso">Perso</option></select></div>
+          <select id="l-stato"><option value="nuovo">Nuovo</option><option value="contattato">Contattato</option><option value="call_fissata">Call fissata</option><option value="incontro_fissato">Incontro fissato</option><option value="perso">Perso</option></select></div>
       </div>
       <div class="form-group"><label>Prossimo contatto</label><input id="l-data" type="date"></div>
       <div class="form-group"><label>Note</label><input id="l-note" type="text" placeholder="osservazioni libere"></div>

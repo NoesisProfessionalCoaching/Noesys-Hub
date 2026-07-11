@@ -94,6 +94,8 @@ async function init() {
   // la piattaforma strumenti) e viene tenuto sincronizzato = "Nome Cognome".
   await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS nome TEXT`);
   await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS cognome TEXT`);
+  // Società/azienda del cliente (utile Personal, importante Business e futuri Team/Group).
+  await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS societa TEXT`);
   // Backfill una-tantum dei clienti già esistenti: ultima parola = cognome, il resto = nome.
   // Gira solo dove cognome è ancora vuoto → dopo il primo avvio non tocca più nulla.
   // I casi strani (cognomi composti tipo "De Luca") li corregge il coach a mano nell'Hub.
