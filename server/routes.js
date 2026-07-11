@@ -133,15 +133,18 @@ router.get('/dashboard/diag/drive/test-create', requireCoach, async (req, res) =
 });
 
 router.post('/dashboard/clients', requireCoach, express.json(), async (req, res) => {
-  const { name, email, telefono, area, fonte, obiettivo } = req.body;
-  if (!name) return res.status(400).json({ error: 'Nome obbligatorio' });
+  const { email, telefono, area, fonte, obiettivo } = req.body;
+  const cognome = (req.body.cognome || '').trim();
+  const nome    = (req.body.nome || '').trim();
+  if (!cognome) return res.status(400).json({ error: 'Cognome obbligatorio' });
+  const name = [nome, cognome].filter(Boolean).join(' '); // display "Nome Cognome", tenuto in sync
   const id    = uuidv4();
   const token = uuidv4().replace(/-/g, '');
   try {
     await db.query(
-      `INSERT INTO clients (id, name, email, telefono, area, fonte, obiettivo, token)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-      [id, name.trim(), (email||'').trim(), (telefono||'').trim(),
+      `INSERT INTO clients (id, name, nome, cognome, email, telefono, area, fonte, obiettivo, token)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      [id, name, nome, cognome, (email||'').trim(), (telefono||'').trim(),
        area||'Personal', fonte||'altro', (obiettivo||'').trim(), token]
     );
     res.json({ id, token });
@@ -172,13 +175,16 @@ router.get('/dashboard/clients/:id', requireCoach, async (req, res) => {
 // Aggiornamento dati anagrafici cliente
 router.post('/dashboard/clients/:id', requireCoach, express.json(), async (req, res) => {
   const b = req.body;
-  if (!b.name || !b.name.trim()) return res.status(400).json({ error: 'Nome obbligatorio' });
+  const cognome = (b.cognome || '').trim();
+  const nome    = (b.nome || '').trim();
+  if (!cognome) return res.status(400).json({ error: 'Cognome obbligatorio' });
+  const name = [nome, cognome].filter(Boolean).join(' '); // display "Nome Cognome", tenuto in sync
   try {
     // Se il consenso è appena stato dato e non c'era una data, la impostiamo a oggi.
     const consenso = !!b.consenso_privacy;
     await db.query(
       `UPDATE clients SET
-        name=$1, email=$2, telefono=$3, altro_recapito=$4, social_tipo=$5,
+        name=$1, nome=$22, cognome=$23, email=$2, telefono=$3, altro_recapito=$4, social_tipo=$5,
         via=$6, cap=$7, citta=$8, provincia=$9, data_nascita=$10,
         professione=$11, area=$12, fonte=$13, obiettivo=$14, stato_cliente=$15,
         prossima_azione=$16, prossima_azione_data=$17, drive_url=$18, note_preliminari=$19,
@@ -186,12 +192,12 @@ router.post('/dashboard/clients/:id', requireCoach, express.json(), async (req, 
         consenso_data = CASE WHEN $20 AND consenso_data IS NULL THEN CURRENT_DATE
                              WHEN $20 THEN consenso_data ELSE NULL END
        WHERE id=$21`,
-      [b.name.trim(), (b.email||'').trim(), (b.telefono||'').trim(), (b.altro_recapito||'').trim(),
+      [name, (b.email||'').trim(), (b.telefono||'').trim(), (b.altro_recapito||'').trim(),
        (b.social_tipo||'').trim(), (b.via||'').trim(), (b.cap||'').trim(), (b.citta||'').trim(),
        (b.provincia||'').trim(), b.data_nascita||null, (b.professione||'').trim(),
        b.area||'Personal', b.fonte||'altro', (b.obiettivo||'').trim(), b.stato_cliente||'attivo',
        (b.prossima_azione||'').trim(), b.prossima_azione_data||null, (b.drive_url||'').trim(),
-       (b.note_preliminari||'').trim(), consenso, req.params.id]
+       (b.note_preliminari||'').trim(), consenso, req.params.id, nome, cognome]
     );
     res.json({ ok: true });
   } catch (err) {
@@ -521,12 +527,14 @@ router.post('/dashboard/leads/:id/convert', requireCoach, express.json(), async 
     if (!lead) return res.status(404).json({ error: 'Lead non trovato' });
     const clientId = uuidv4();
     const token    = uuidv4().replace(/-/g, '');
-    const nome     = [lead.nome, lead.cognome].filter(Boolean).join(' ');
-    // Portiamo con noi fonte e note del lead nel nuovo cliente.
+    const nome     = (lead.nome || '').trim();
+    const cognome  = (lead.cognome || '').trim();
+    const name     = [nome, cognome].filter(Boolean).join(' '); // display, tenuto in sync
+    // Portiamo con noi nome/cognome + fonte e note del lead nel nuovo cliente.
     await db.query(
-      `INSERT INTO clients (id,name,email,telefono,fonte,note_preliminari,token)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-      [clientId, nome, lead.email||'', lead.telefono||'', lead.fonte||'altro', lead.note||'', token]
+      `INSERT INTO clients (id,name,nome,cognome,email,telefono,fonte,note_preliminari,token)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [clientId, name, nome, cognome, lead.email||'', lead.telefono||'', lead.fonte||'altro', lead.note||'', token]
     );
     await db.query("UPDATE leads SET stato='convertito',updated_at=NOW() WHERE id=$1", [lead.id]);
     res.json({ ok: true, clientId, token });
@@ -801,7 +809,10 @@ function dashboardPage(clients, req) {
   <div id="modal-overlay" class="modal-overlay">
     <div class="modal-box" style="width:440px">
       <h2 style="margin-bottom:16px">Nuovo cliente</h2>
-      <div class="form-group"><label>Nome e cognome *</label><input id="new-name" type="text" placeholder="es. Mario Rossi"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group"><label>Nome</label><input id="new-nome" type="text" placeholder="es. Mario"></div>
+        <div class="form-group"><label>Cognome *</label><input id="new-cognome" type="text" placeholder="es. Rossi"></div>
+      </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
         <div class="form-group"><label>Email</label><input id="new-email" type="email" placeholder="mario@esempio.it"></div>
         <div class="form-group"><label>Telefono</label><input id="new-tel" type="tel" placeholder="+39…"></div>
@@ -842,21 +853,22 @@ function dashboardPage(clients, req) {
       document.getElementById('modal-overlay').style.display = 'flex';
       document.getElementById('new-result').style.display = 'none';
       document.getElementById('new-error').style.display = 'none';
-      ['new-name','new-email','new-tel','new-obiettivo'].forEach(id=>document.getElementById(id).value='');
+      ['new-nome','new-cognome','new-email','new-tel','new-obiettivo'].forEach(id=>document.getElementById(id).value='');
       document.getElementById('btn-create').style.display = '';
-      document.getElementById('new-name').focus();
+      document.getElementById('new-nome').focus();
     }
     function closeModal() {
       document.getElementById('modal-overlay').style.display = 'none';
       if (document.getElementById('new-result').style.display !== 'none') location.reload();
     }
     async function createClient() {
-      const name  = document.getElementById('new-name').value.trim();
+      const nome    = document.getElementById('new-nome').value.trim();
+      const cognome = document.getElementById('new-cognome').value.trim();
       const errEl = document.getElementById('new-error');
-      if (!name) { errEl.textContent = 'Il nome è obbligatorio'; errEl.style.display='block'; return; }
+      if (!cognome) { errEl.textContent = 'Il cognome è obbligatorio'; errEl.style.display='block'; return; }
       errEl.style.display = 'none';
       const res = await fetch('/dashboard/clients', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({
-        name, email: document.getElementById('new-email').value.trim(),
+        nome, cognome, email: document.getElementById('new-email').value.trim(),
         telefono: document.getElementById('new-tel').value.trim(),
         area: document.getElementById('new-area').value,
         fonte: document.getElementById('new-fonte').value,
@@ -1182,7 +1194,10 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, req) {
   <div id="modal-edit" class="modal-overlay">
     <div class="modal-box">
       <h2 style="margin-bottom:16px">Modifica dati cliente</h2>
-      <div class="form-group"><label>Nome e cognome *</label><input id="e-name" type="text" value="${attr(client.name)}"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group"><label>Nome</label><input id="e-nome" type="text" value="${attr(client.nome)}"></div>
+        <div class="form-group"><label>Cognome *</label><input id="e-cognome" type="text" value="${attr(client.cognome)}"></div>
+      </div>
       <div class="form-group"><label>Via e numero civico</label><input id="e-via" type="text" value="${attr(client.via)}" placeholder="es. Via Roma 12"></div>
       <div style="display:grid;grid-template-columns:1fr 2fr 1fr;gap:12px">
         <div class="form-group"><label>CAP</label><input id="e-cap" type="text" value="${attr(client.cap)}"></div>
@@ -1387,11 +1402,12 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, req) {
     function copyLink(url) { navigator.clipboard.writeText(url).then(() => { const t=document.getElementById('toast'); t.textContent='Link copiato!'; t.style.display='block'; setTimeout(()=>t.style.display='none',2000); }); }
     function openEdit() { document.getElementById('modal-edit').style.display='flex'; }
     async function saveClient() {
-      const name = document.getElementById('e-name').value.trim();
+      const nome    = document.getElementById('e-nome').value.trim();
+      const cognome = document.getElementById('e-cognome').value.trim();
       const err = document.getElementById('edit-error');
-      if (!name) { err.textContent='Il nome è obbligatorio'; err.style.display='block'; return; }
+      if (!cognome) { err.textContent='Il cognome è obbligatorio'; err.style.display='block'; return; }
       const payload = {
-        name, email:document.getElementById('e-email').value, telefono:document.getElementById('e-tel').value,
+        nome, cognome, email:document.getElementById('e-email').value, telefono:document.getElementById('e-tel').value,
         altro_recapito:document.getElementById('e-altro').value, social_tipo:document.getElementById('e-social-tipo').value,
         via:document.getElementById('e-via').value, cap:document.getElementById('e-cap').value,
         citta:document.getElementById('e-citta').value, provincia:document.getElementById('e-provincia').value,

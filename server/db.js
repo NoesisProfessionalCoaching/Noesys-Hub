@@ -89,6 +89,25 @@ async function init() {
   await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS consenso_privacy BOOLEAN DEFAULT FALSE`);
   await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS consenso_data DATE`);
 
+  // Nome/Cognome separati (A6): servono per nominare le cartelle Drive "Cognome Nome"
+  // e in generale per un'anagrafica pulita. Il campo unico `name` resta (lo legge anche
+  // la piattaforma strumenti) e viene tenuto sincronizzato = "Nome Cognome".
+  await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS nome TEXT`);
+  await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS cognome TEXT`);
+  // Backfill una-tantum dei clienti già esistenti: ultima parola = cognome, il resto = nome.
+  // Gira solo dove cognome è ancora vuoto → dopo il primo avvio non tocca più nulla.
+  // I casi strani (cognomi composti tipo "De Luca") li corregge il coach a mano nell'Hub.
+  await query(`
+    UPDATE clients SET
+      cognome = CASE WHEN position(' ' in btrim(name)) > 0
+                     THEN regexp_replace(btrim(name), '^.*\\s+(\\S+)$', '\\1')
+                     ELSE btrim(name) END,
+      nome    = CASE WHEN position(' ' in btrim(name)) > 0
+                     THEN regexp_replace(btrim(name), '^(.*)\\s+\\S+$', '\\1')
+                     ELSE '' END
+    WHERE cognome IS NULL AND name IS NOT NULL AND btrim(name) <> ''
+  `);
+
   await query(`
     CREATE TABLE IF NOT EXISTS leads (
       id                     TEXT PRIMARY KEY,
