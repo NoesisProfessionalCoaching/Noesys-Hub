@@ -1477,48 +1477,42 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, progetti
       </details>
     </div>`;
 
-  // ── Progetti (riflesso SOLA LETTURA) ─────────────────
-  // Se il coachee fa parte di uno o più progetti, mostra qui la sua quota business
-  // e lo stato del pagamento, con link per gestirlo nel progetto. NIENTE scrittura:
-  // la verità del pagamento business vive sul progetto, non in payments.
-  const progettiHtml = (progetti && progetti.length) ? `
-    <div class="card">
-      <h2 style="margin:0 0 4px">Progetti <span style="font-weight:400;font-size:13px;color:#aaa">(${progetti.length})</span></h2>
-      <p style="font-size:12px;color:var(--muted);margin:0 0 12px">Quota e pagamento si gestiscono nel progetto (qui in sola lettura).</p>
-      ${progetti.map(pr => {
-        const ric = (pr.stato_pag_coachee || 'atteso') === 'ricevuto';
-        const q   = pr.quota_coachee != null ? Number(pr.quota_coachee) : null;
-        const dtc = ric && pr.data_pag_coachee ? ` il ${itDate(pr.data_pag_coachee)}` : '';
-        return `
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid #eef1f5;flex-wrap:wrap">
-          <div>
-            <strong style="font-size:14px">${esc(pr.titolo)}</strong>
-            <div style="font-size:12px;color:#aaa">Committente: ${esc(pr.committente_nome)}</div>
-          </div>
-          <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-            <span style="font-size:13px;color:#4a5568">Quota: <strong>${q != null ? '€ ' + q.toLocaleString('it-IT',{minimumFractionDigits:2}) : '<span style="color:#aaa">da definire</span>'}</strong></span>
-            <span class="badge" style="background:${ric?'#d1fae5':'#fff8dc'};color:${ric?'#065f46':'#7a5c00'}">${ric?'Incassato'+dtc:'Da incassare'}</span>
-            <a href="/dashboard/progetti/${pr.progetto_id}" class="btn btn-neutral btn-sm">Gestisci nel progetto</a>
-          </div>
-        </div>`;
-      }).join('')}
-    </div>` : '';
+  // ── Amministrazione ──────────────────────────────────
+  // UN posto solo per i soldi del coachee: pagamenti personali (tabella payments)
+  // + riflesso SOLA LETTURA delle quote nei progetti (business). La quota business
+  // NON si scrive in payments — vive sul progetto, qui si legge e si somma (una
+  // sola verità). Così Amministrazione non resta vuota per un coachee business.
+  const projRicevuto = progetti.reduce((s,pr)=> s + (((pr.stato_pag_coachee||'atteso')==='ricevuto' && pr.quota_coachee!=null) ? Number(pr.quota_coachee) : 0), 0);
+  const projAtteso   = progetti.reduce((s,pr)=> s + (((pr.stato_pag_coachee||'atteso')!=='ricevuto' && pr.quota_coachee!=null) ? Number(pr.quota_coachee) : 0), 0);
+  const payRicevuto  = payments.filter(p=>p.stato==='ricevuto').reduce((s,p)=>s+Number(p.importo),0);
+  const payAtteso    = payments.filter(p=>p.stato==='atteso').reduce((s,p)=>s+Number(p.importo),0);
+  const totRicevuto  = payRicevuto + projRicevuto;
+  const totAtteso    = payAtteso + projAtteso;
 
-  // ── Pagamenti ────────────────────────────────────────
-  const totRicevuto = payments.filter(p=>p.stato==='ricevuto').reduce((s,p)=>s+Number(p.importo),0);
-  const totAtteso   = payments.filter(p=>p.stato==='atteso').reduce((s,p)=>s+Number(p.importo),0);
-  const paymentsHtml = `
-    <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
-        <h2 style="margin:0">Amministrazione
-          <span style="font-size:12px;font-weight:400;color:#aaa;margin-left:10px">
-            Ricevuto: <strong style="color:#4F8B73">€ ${totRicevuto.toLocaleString('it-IT',{minimumFractionDigits:2})}</strong>
-            ${totAtteso > 0 ? ` · In attesa: <strong style="color:#D8AE2E">€ ${totAtteso.toLocaleString('it-IT',{minimumFractionDigits:2})}</strong>` : ''}
-          </span>
-        </h2>
-        <button onclick="openPayment()" class="btn btn-primary btn-sm">+ Pagamento</button>
-      </div>
-      ${payments.length === 0 ? `<div class="empty">Nessun pagamento registrato.</div>` : `
+  const progettiRows = progetti.map(pr => {
+    const ric = (pr.stato_pag_coachee || 'atteso') === 'ricevuto';
+    const q   = pr.quota_coachee != null ? Number(pr.quota_coachee) : null;
+    const dtc = ric && pr.data_pag_coachee ? ` il ${itDate(pr.data_pag_coachee)}` : '';
+    return `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid #eef1f5;flex-wrap:wrap">
+        <div>
+          <strong style="font-size:14px">${esc(pr.titolo)}</strong>
+          <div style="font-size:12px;color:#aaa">Committente: ${esc(pr.committente_nome)}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+          <span style="font-size:13px;color:#4a5568">Quota: <strong>${q != null ? '€ ' + q.toLocaleString('it-IT',{minimumFractionDigits:2}) : '<span style="color:#aaa">da definire</span>'}</strong></span>
+          <span class="badge" style="background:${ric?'#d1fae5':'#fff8dc'};color:${ric?'#065f46':'#7a5c00'}">${ric?'Incassato'+dtc:'Da incassare'}</span>
+          <a href="/dashboard/progetti/${pr.progetto_id}" class="btn btn-neutral btn-sm">Gestisci nel progetto</a>
+        </div>
+      </div>`;
+  }).join('');
+  const progettiBlock = progetti.length ? `
+      <div style="margin-bottom:${payments.length ? '18px' : '0'}">
+        <div class="field-label" style="margin-bottom:2px">Progetti (business) <span style="font-weight:400;color:#aaa">— sola lettura, si gestiscono nel progetto</span></div>
+        ${progettiRows}
+      </div>` : '';
+  const paymentsTable = payments.length ? `
+      ${progetti.length ? `<div class="field-label" style="margin-bottom:2px">Pagamenti personali</div>` : ''}
       <table>
         <thead><tr><th>Importo</th><th>Tipo</th><th>Data</th><th>Stato</th><th>Note</th><th></th></tr></thead>
         <tbody>
@@ -1534,7 +1528,20 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, progetti
             </td>
           </tr>`).join('')}
         </tbody>
-      </table>`}
+      </table>` : (progetti.length ? '' : `<div class="empty">Nessun pagamento registrato.</div>`);
+  const paymentsHtml = `
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+        <h2 style="margin:0">Amministrazione
+          <span style="font-size:12px;font-weight:400;color:#aaa;margin-left:10px">
+            Ricevuto: <strong style="color:#4F8B73">€ ${totRicevuto.toLocaleString('it-IT',{minimumFractionDigits:2})}</strong>
+            ${totAtteso > 0 ? ` · In attesa: <strong style="color:#D8AE2E">€ ${totAtteso.toLocaleString('it-IT',{minimumFractionDigits:2})}</strong>` : ''}
+          </span>
+        </h2>
+        <button onclick="openPayment()" class="btn btn-primary btn-sm">+ Pagamento</button>
+      </div>
+      ${progettiBlock}
+      ${paymentsTable}
     </div>`;
 
   // ── Strumenti utilizzati — sezione a fisarmonica ─────
@@ -1617,7 +1624,6 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, progetti
     </div>
 
     ${percorsiHtml}
-    ${progettiHtml}
     ${paymentsHtml}
     ${seduteHtml}
     ${strumentiHtml}
