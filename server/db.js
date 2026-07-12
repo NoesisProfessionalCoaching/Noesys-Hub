@@ -220,6 +220,28 @@ async function init() {
     )
   `);
 
+  // Progetto (Fase 2): il percorso commissionato da un committente. In Business e
+  // Young-con-sponsor il progetto È il "lead" (nasce in pre-intake) e porta la
+  // pipeline (pre-intake→proposta→attivo→chiuso). I coachee si agganciano al
+  // progetto in Fase 3, con la divisione delle quote (committente/coachee).
+  // ON DELETE RESTRICT: non si cancella un committente che ha progetti (la rotta
+  // committenti dà un messaggio chiaro invece di far esplodere il vincolo).
+  await query(`
+    CREATE TABLE IF NOT EXISTS progetti (
+      id             TEXT PRIMARY KEY,
+      committente_id TEXT NOT NULL REFERENCES committenti(id) ON DELETE RESTRICT,
+      titolo         TEXT NOT NULL,
+      area           TEXT NOT NULL DEFAULT 'Business',    -- 'Business' | 'Young'
+      tipo           TEXT NOT NULL DEFAULT 'individuale',  -- 'individuale' | 'team' | 'group'
+      stato          TEXT NOT NULL DEFAULT 'pre-intake',   -- pre-intake→proposta→attivo→chiuso (+ perso)
+      obiettivi      TEXT,
+      note           TEXT,
+      data_inizio    DATE,
+      created_at     TIMESTAMPTZ DEFAULT NOW(),
+      updated_at     TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
   // Stesso account coach della piattaforma strumenti (solo per il DB di test:
   // sul DB reale condiviso la riga esiste già).
   const existing = await query('SELECT id FROM coach WHERE username = $1', ['Germano']);

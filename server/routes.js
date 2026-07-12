@@ -755,7 +755,88 @@ router.post('/dashboard/committenti/:id', requireCoach, express.json(), async (r
 
 router.delete('/dashboard/committenti/:id', requireCoach, async (req, res) => {
   try {
+    const used = await db.query('SELECT 1 FROM progetti WHERE committente_id=$1 LIMIT 1', [req.params.id]);
+    if (used.rows.length) return res.status(409).json({ error: 'Ha progetti collegati: elimina o riassegna prima i progetti.' });
     await db.query('DELETE FROM committenti WHERE id=$1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Errore' });
+  }
+});
+
+// ═══════════════════════════════════════════════════════
+// PROGETTI (Fase 2) — il percorso commissionato da un committente.
+// In Business / Young-con-sponsor il progetto È il lead (nasce in pre-intake).
+// I coachee si agganciano in Fase 3 (con le quote).
+// ═══════════════════════════════════════════════════════
+
+const AREE_PROGETTO  = ['Business', 'Young'];
+const TIPI_PROGETTO  = ['individuale', 'team', 'group'];
+const STATI_PROGETTO = ['pre-intake', 'proposta', 'attivo', 'chiuso', 'perso'];
+
+router.get('/dashboard/progetti', requireCoach, async (req, res) => {
+  try {
+    const progetti = await db.query(`
+      SELECT p.*, c.denominazione AS committente_nome
+      FROM progetti p JOIN committenti c ON c.id = p.committente_id
+      ORDER BY p.created_at DESC`);
+    const committenti = await db.query('SELECT id, denominazione FROM committenti ORDER BY denominazione');
+    res.send(progettiPage(progetti.rows, committenti.rows, req));
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('Errore');
+  }
+});
+
+router.post('/dashboard/progetti', requireCoach, express.json(), async (req, res) => {
+  const { committente_id, titolo, area, tipo, stato, obiettivi, note, data_inizio } = req.body;
+  if (!committente_id) return res.status(400).json({ error: 'Committente obbligatorio' });
+  if (!titolo || !titolo.trim()) return res.status(400).json({ error: 'Titolo obbligatorio' });
+  try {
+    const c = await db.query('SELECT 1 FROM committenti WHERE id=$1', [committente_id]);
+    if (!c.rows.length) return res.status(400).json({ error: 'Committente non valido' });
+    const id = uuidv4();
+    await db.query(
+      `INSERT INTO progetti (id,committente_id,titolo,area,tipo,stato,obiettivi,note,data_inizio)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [id, committente_id, titolo.trim(),
+       AREE_PROGETTO.includes(area) ? area : 'Business',
+       TIPI_PROGETTO.includes(tipo) ? tipo : 'individuale',
+       STATI_PROGETTO.includes(stato) ? stato : 'pre-intake',
+       (obiettivi||'').trim(), (note||'').trim(), data_inizio||null]
+    );
+    res.json({ ok: true, id });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Errore' });
+  }
+});
+
+router.post('/dashboard/progetti/:id', requireCoach, express.json(), async (req, res) => {
+  const { committente_id, titolo, area, tipo, stato, obiettivi, note, data_inizio } = req.body;
+  if (!committente_id) return res.status(400).json({ error: 'Committente obbligatorio' });
+  if (!titolo || !titolo.trim()) return res.status(400).json({ error: 'Titolo obbligatorio' });
+  try {
+    await db.query(
+      `UPDATE progetti SET committente_id=$1,titolo=$2,area=$3,tipo=$4,stato=$5,
+         obiettivi=$6,note=$7,data_inizio=$8,updated_at=NOW() WHERE id=$9`,
+      [committente_id, titolo.trim(),
+       AREE_PROGETTO.includes(area) ? area : 'Business',
+       TIPI_PROGETTO.includes(tipo) ? tipo : 'individuale',
+       STATI_PROGETTO.includes(stato) ? stato : 'pre-intake',
+       (obiettivi||'').trim(), (note||'').trim(), data_inizio||null, req.params.id]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Errore' });
+  }
+});
+
+router.delete('/dashboard/progetti/:id', requireCoach, async (req, res) => {
+  try {
+    await db.query('DELETE FROM progetti WHERE id=$1', [req.params.id]);
     res.json({ ok: true });
   } catch (err) {
     console.error(err);
@@ -925,7 +1006,7 @@ function dashboardPage(clients, req) {
     }).join('');
 
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Clienti</title>${baseStyle()}</head><body>
-  ${appBar({ home: '/dashboard', right: `<a href="/dashboard/leads" class="btn btn-neutral btn-sm">Lead</a><a href="/dashboard/committenti" class="btn btn-neutral btn-sm">Committenti</a><a href="/dashboard/icf" class="btn btn-neutral btn-sm">Estratto ICF</a><a href="/logout" class="btn btn-neutral btn-sm">Esci</a>` })}
+  ${appBar({ home: '/dashboard', right: `<a href="/dashboard/leads" class="btn btn-neutral btn-sm">Lead</a><a href="/dashboard/committenti" class="btn btn-neutral btn-sm">Committenti</a><a href="/dashboard/progetti" class="btn btn-neutral btn-sm">Progetti</a><a href="/dashboard/icf" class="btn btn-neutral btn-sm">Estratto ICF</a><a href="/logout" class="btn btn-neutral btn-sm">Esci</a>` })}
   <div class="container" style="max-width:980px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px">
       <div><h1>Clienti</h1><p style="color:#aaa;font-size:13px">${clients.length} clienti registrati</p></div>
@@ -1844,7 +1925,7 @@ function committentiPage(committenti, req) {
   }
 
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Committenti</title>${baseStyle()}</head><body>
-  ${appBar({ home:'/dashboard', right:`<a href="/dashboard" class="btn btn-neutral btn-sm">← Clienti</a><a href="/dashboard/leads" class="btn btn-neutral btn-sm">Lead</a><a href="/logout" class="btn btn-neutral btn-sm">Esci</a>` })}
+  ${appBar({ home:'/dashboard', right:`<a href="/dashboard" class="btn btn-neutral btn-sm">← Clienti</a><a href="/dashboard/leads" class="btn btn-neutral btn-sm">Lead</a><a href="/dashboard/progetti" class="btn btn-neutral btn-sm">Progetti</a><a href="/logout" class="btn btn-neutral btn-sm">Esci</a>` })}
   <div class="container" style="max-width:980px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:12px">
       <div><h1>Committenti / Sponsor</h1><p style="color:#aaa;font-size:13px">${committenti.length} ${committenti.length===1?'committente':'committenti'}</p></div>
@@ -1941,9 +2022,146 @@ function committentiPage(committenti, req) {
     }
     async function deleteComm(id) {
       if (!confirm('Eliminare questo committente?')) return;
-      await fetch('/dashboard/committenti/'+id, { method:'DELETE' }); location.reload();
+      const r = await fetch('/dashboard/committenti/'+id, { method:'DELETE' });
+      const d = await r.json();
+      if (d.ok) location.reload(); else alert(d.error || 'Errore');
     }
     document.getElementById('modal-comm').addEventListener('click', e => { if (e.target === document.getElementById('modal-comm')) closeCommModal(); });
+  </script>
+  </body></html>`;
+}
+
+// ═══════════════════════════════════════════════════════
+// PAGINA PROGETTI (Fase 2)
+// ═══════════════════════════════════════════════════════
+function progettiPage(progetti, committenti, req) {
+  const STATO_CFG = {
+    'pre-intake': { label:'Pre-intake', bg:'#eae6f7', color:'#4c3a86' },
+    'proposta':   { label:'Proposta',   bg:'#fff8dc', color:'#7a5c00' },
+    'attivo':     { label:'Attivo',     bg:'#d1fae5', color:'#065f46' },
+    'chiuso':     { label:'Chiuso',     bg:'#eef1f5', color:'#7a8089' },
+    'perso':      { label:'Perso',      bg:'#fdf0ef', color:'#c0392b' },
+  };
+  const TIPO_LABEL = { individuale:'Individuale', team:'Team', group:'Group' };
+  const AREA_COL   = { Business:'#4F8B73', Young:'#D8AE2E' };
+
+  const noComm = committenti.length === 0;
+  const commOptions = committenti.map(c => `<option value="${c.id}">${esc(c.denominazione)}</option>`).join('');
+
+  function renderRow(p) {
+    const sc = STATO_CFG[p.stato] || STATO_CFG['pre-intake'];
+    const ac = AREA_COL[p.area] || '#1A5280';
+    return `<tr>
+      <td><strong>${esc(p.titolo)}</strong>
+        <br><span style="font-size:11px;color:#aaa">${esc(p.committente_nome)}</span>
+      </td>
+      <td><span class="badge" style="background:${ac}18;color:${ac}">${esc(p.area)}</span></td>
+      <td style="font-size:12px;color:#4a5568">${TIPO_LABEL[p.tipo] || esc(p.tipo)}</td>
+      <td><span class="badge" style="background:${sc.bg};color:${sc.color}">${sc.label}</span></td>
+      <td style="font-size:12px;color:#aaa">${p.data_inizio ? itDate(p.data_inizio) : '—'}</td>
+      <td style="white-space:nowrap">
+        <button onclick='editProg(${JSON.stringify(p).replace(/'/g, "&#39;")})' class="btn btn-neutral btn-sm">Modifica</button>
+        <button onclick="deleteProg('${p.id}')" class="btn btn-danger btn-sm">✕</button>
+      </td>
+    </tr>`;
+  }
+
+  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Progetti</title>${baseStyle()}</head><body>
+  ${appBar({ home:'/dashboard', right:`<a href="/dashboard" class="btn btn-neutral btn-sm">← Clienti</a><a href="/dashboard/committenti" class="btn btn-neutral btn-sm">Committenti</a><a href="/dashboard/leads" class="btn btn-neutral btn-sm">Lead</a><a href="/logout" class="btn btn-neutral btn-sm">Esci</a>` })}
+  <div class="container" style="max-width:980px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:12px">
+      <div><h1>Progetti</h1><p style="color:#aaa;font-size:13px">${progetti.length} ${progetti.length===1?'progetto':'progetti'}</p></div>
+      ${noComm
+        ? `<a href="/dashboard/committenti" class="btn btn-primary">+ Crea prima un committente</a>`
+        : `<button onclick="openNew()" class="btn btn-primary">+ Nuovo progetto</button>`}
+    </div>
+    <p style="color:var(--muted);font-size:12.5px;margin-bottom:16px">Il percorso commissionato da un committente. In Business/Young con sponsor è qui che nasce la trattativa (pre-intake → proposta → attivo).</p>
+
+    <input id="cerca" type="search" placeholder="🔍 Cerca progetto (titolo, committente…)" oninput="filtra()" style="margin-bottom:14px">
+
+    <div class="card" style="padding:0;overflow:hidden">
+      <table>
+        <thead><tr><th>Progetto</th><th>Area</th><th>Tipo</th><th>Stato</th><th>Inizio</th><th>Azioni</th></tr></thead>
+        <tbody>
+          ${progetti.length ? progetti.map(renderRow).join('') : `<tr><td colspan="6" class="empty">Nessun progetto. ${noComm ? 'Crea prima un committente.' : 'Crea il primo con il pulsante qui sopra.'}</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="modal-prog" class="modal-overlay">
+    <div class="modal-box" style="width:520px">
+      <h2 style="margin-bottom:16px" id="modal-prog-title">Nuovo progetto</h2>
+      <input type="hidden" id="p-id">
+      <div class="form-group"><label>Committente *</label>
+        <select id="p-committente"><option value="">— scegli —</option>${commOptions}</select></div>
+      <div class="form-group"><label>Titolo *</label><input id="p-titolo" type="text" placeholder="es. Percorso team vendite — Rossi SpA"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+        <div class="form-group"><label>Area</label>
+          <select id="p-area"><option value="Business">Business</option><option value="Young">Young</option></select></div>
+        <div class="form-group"><label>Tipo</label>
+          <select id="p-tipo"><option value="individuale">Individuale</option><option value="team">Team</option><option value="group">Group</option></select></div>
+        <div class="form-group"><label>Stato</label>
+          <select id="p-stato"><option value="pre-intake">Pre-intake</option><option value="proposta">Proposta</option><option value="attivo">Attivo</option><option value="chiuso">Chiuso</option><option value="perso">Perso</option></select></div>
+      </div>
+      <div class="form-group"><label>Data inizio</label><input id="p-data" type="date"></div>
+      <div class="form-group"><label>Obiettivi (aziendali)</label><textarea id="p-obiettivi" placeholder="obiettivi del committente per questo progetto"></textarea></div>
+      <div class="form-group"><label>Note</label><input id="p-note" type="text" placeholder="osservazioni libere"></div>
+      <div style="display:flex;gap:8px;margin-top:4px">
+        <button onclick="closeProgModal()" class="btn btn-neutral" style="flex:1">Annulla</button>
+        <button onclick="saveProg()" class="btn btn-primary" style="flex:1">Salva</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const F = ['committente_id','titolo','area','tipo','stato','data_inizio','obiettivi','note'];
+    const ID = { committente_id:'p-committente', titolo:'p-titolo', area:'p-area', tipo:'p-tipo',
+      stato:'p-stato', data_inizio:'p-data', obiettivi:'p-obiettivi', note:'p-note' };
+    function filtra() {
+      const q = document.getElementById('cerca').value.trim().toLowerCase();
+      document.querySelectorAll('tbody tr').forEach(tr => {
+        tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none';
+      });
+    }
+    function openNew() {
+      document.getElementById('modal-prog-title').textContent = 'Nuovo progetto';
+      document.getElementById('p-id').value = '';
+      Object.values(ID).forEach(id => document.getElementById(id).value = '');
+      document.getElementById('p-committente').value = '';
+      document.getElementById('p-area').value = 'Business';
+      document.getElementById('p-tipo').value = 'individuale';
+      document.getElementById('p-stato').value = 'pre-intake';
+      document.getElementById('modal-prog').style.display = 'flex';
+    }
+    function editProg(p) {
+      document.getElementById('modal-prog-title').textContent = 'Modifica progetto';
+      document.getElementById('p-id').value = p.id;
+      F.forEach(f => document.getElementById(ID[f]).value = (f==='data_inizio' && p[f]) ? String(p[f]).slice(0,10) : (p[f] || ''));
+      document.getElementById('modal-prog').style.display = 'flex';
+    }
+    function closeProgModal() { document.getElementById('modal-prog').style.display = 'none'; }
+    async function saveProg() {
+      const committente_id = document.getElementById('p-committente').value;
+      const titolo = document.getElementById('p-titolo').value.trim();
+      if (!committente_id) { alert('Scegli un committente'); return; }
+      if (!titolo) { alert('Titolo obbligatorio'); return; }
+      const payload = {};
+      F.forEach(f => payload[f] = document.getElementById(ID[f]).value);
+      payload.data_inizio = payload.data_inizio || null;
+      const id = document.getElementById('p-id').value;
+      const url = id ? '/dashboard/progetti/'+id : '/dashboard/progetti';
+      const r = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+      const d = await r.json();
+      if (d.ok) location.reload(); else alert(d.error || 'Errore');
+    }
+    async function deleteProg(id) {
+      if (!confirm('Eliminare questo progetto?')) return;
+      const r = await fetch('/dashboard/progetti/'+id, { method:'DELETE' });
+      const d = await r.json();
+      if (d.ok) location.reload(); else alert(d.error || 'Errore');
+    }
+    document.getElementById('modal-prog').addEventListener('click', e => { if (e.target === document.getElementById('modal-prog')) closeProgModal(); });
   </script>
   </body></html>`;
 }
