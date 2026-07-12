@@ -853,7 +853,8 @@ router.get('/dashboard/progetti/:id', requireCoach, async (req, res) => {
       FROM progetti p JOIN committenti c ON c.id = p.committente_id WHERE p.id=$1`, [req.params.id]);
     if (!pr.rows.length) return res.status(404).send('Progetto non trovato');
     const coachee = await db.query(`
-      SELECT pa.id AS part_id, cl.id AS client_id, cl.name, cl.email, cl.token
+      SELECT pa.id AS part_id, cl.id AS client_id, cl.name, cl.email, cl.token,
+             pa.quota_coachee, pa.stato_pag_coachee, pa.data_pag_coachee
       FROM partecipazioni pa JOIN clients cl ON cl.id = pa.client_id
       WHERE pa.progetto_id=$1 ORDER BY cl.cognome NULLS LAST, cl.nome`, [req.params.id]);
     res.send(progettoDettaglioPage(pr.rows[0], coachee.rows, req));
@@ -963,6 +964,48 @@ router.post('/dashboard/progetti/:id/pag-committente', requireCoach, express.jso
          data_pag_committente = CASE WHEN $1='ricevuto' THEN CURRENT_DATE ELSE NULL END,
          updated_at=NOW() WHERE id=$2`,
       [stato, req.params.id]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Errore' });
+  }
+});
+
+// Fase 3B Pezzo 2 — salva le quote dei coachee (quota_coachee per partecipazione).
+// Riceve un array {part_id, quota}; campo vuoto = null (non ancora deciso).
+router.post('/dashboard/progetti/:id/quote-coachee', requireCoach, express.json(), async (req, res) => {
+  const quote = Array.isArray(req.body.quote) ? req.body.quote : [];
+  const num = v => {
+    if (v === '' || v === null || v === undefined) return null;
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 ? n : NaN;
+  };
+  for (const q of quote) if (Number.isNaN(num(q.quota))) return res.status(400).json({ error: 'Importi non validi' });
+  try {
+    for (const q of quote) {
+      await db.query(
+        `UPDATE partecipazioni SET quota_coachee=$1 WHERE id=$2 AND progetto_id=$3`,
+        [num(q.quota), q.part_id, req.params.id]
+      );
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Errore' });
+  }
+});
+
+// Fase 3B Pezzo 2 — interruttore pagamento di un coachee. Ricevuto → registra la
+// data (oggi); torna ad atteso → azzera la data.
+router.post('/dashboard/progetti/:id/coachee/:partId/pagamento', requireCoach, express.json(), async (req, res) => {
+  const stato = req.body.stato === 'ricevuto' ? 'ricevuto' : 'atteso';
+  try {
+    await db.query(
+      `UPDATE partecipazioni SET stato_pag_coachee=$1,
+         data_pag_coachee = CASE WHEN $1='ricevuto' THEN CURRENT_DATE ELSE NULL END
+       WHERE id=$2 AND progetto_id=$3`,
+      [stato, req.params.partId, req.params.id]
     );
     res.json({ ok: true });
   } catch (err) {
@@ -2316,15 +2359,28 @@ function progettoDettaglioPage(p, coachee, req) {
   const qComm    = p.quota_committente != null ? Number(p.quota_committente) : null;
   const statoComm = p.stato_pag_committente || 'atteso';
 
-  const coacheeRows = coachee.length ? coachee.map(k => `
+  const coacheeRows = coachee.length ? coachee.map(k => {
+    const qc  = k.quota_coachee != null ? Number(k.quota_coachee) : null;
+    const stc = k.stato_pag_coachee || 'atteso';
+    const dtc = k.data_pag_coachee ? itDate(k.data_pag_coachee) : '';
+    const ric = stc === 'ricevuto';
+    return `
     <tr>
       <td><strong>${esc(k.name)}</strong>${k.email ? `<br><span style="font-size:11px;color:#aaa">${esc(k.email)}</span>` : ''}</td>
+      <td onclick="event.stopPropagation()">
+        <input class="q-coachee" data-part="${k.part_id}" type="number" step="0.01" min="0" value="${qc != null ? qc : ''}" oninput="updateCoacheeSum()" placeholder="€" style="width:100px">
+      </td>
+      <td style="white-space:nowrap" onclick="event.stopPropagation()">
+        <span class="badge" style="background:${ric ? '#d1fae5' : '#fff8dc'};color:${ric ? '#065f46' : '#7a5c00'}">${ric ? 'Ricevuto' : 'Atteso'}</span>${ric && dtc ? ` <span style="font-size:11px;color:#aaa">${dtc}</span>` : ''}
+        <button onclick="togglePagCoachee('${k.part_id}','${stc}')" class="btn btn-neutral btn-sm">${ric ? 'Segna atteso' : 'Segna ricevuto'}</button>
+      </td>
       <td style="white-space:nowrap" onclick="event.stopPropagation()">
         <button onclick="copyLink('${PLATFORM_URL}/c/${k.token}')" class="btn btn-neutral btn-sm">🔗 Link</button>
         <a href="/dashboard/clients/${k.client_id}" class="btn btn-neutral btn-sm">Scheda</a>
         <button onclick="removeCoachee('${k.part_id}')" class="btn btn-danger btn-sm">✕</button>
       </td>
-    </tr>`).join('') : `<tr><td colspan="2" class="empty">Nessun coachee collegato. Aggiungi la prima persona.</td></tr>`;
+    </tr>`;
+  }).join('') : `<tr><td colspan="4" class="empty">Nessun coachee collegato. Aggiungi la prima persona.</td></tr>`;
 
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — ${esc(p.titolo)}</title>${baseStyle()}</head><body>
   ${appBar({ home:'/dashboard', right:`<a href="/dashboard/progetti" class="btn btn-neutral btn-sm">← Progetti</a><a href="/dashboard/committenti" class="btn btn-neutral btn-sm">Committenti</a><a href="/logout" class="btn btn-neutral btn-sm">Esci</a>` })}
@@ -2377,9 +2433,23 @@ function progettoDettaglioPage(p, coachee, req) {
       <h2 style="margin:0">Coachee <span style="color:#aaa;font-weight:500;font-size:13px">(${coachee.length})</span></h2>
       <button onclick="openAdd()" class="btn btn-primary btn-sm">+ Aggiungi coachee</button>
     </div>
-    <p style="color:var(--muted);font-size:12.5px;margin-bottom:12px">Le persone che fanno le sessioni in questo progetto. Le quote (chi paga quanto) arrivano nella prossima fase.</p>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+      <span id="coachee-sum" style="font-size:12.5px;color:var(--muted)"></span>
+      <div style="display:flex;gap:8px">
+        <button onclick="dividiEqui()" class="btn btn-neutral btn-sm">Dividi in parti uguali</button>
+        <button onclick="salvaQuoteCoachee()" class="btn btn-primary btn-sm">Salva quote coachee</button>
+      </div>
+    </div>
     <div class="card" style="padding:0;overflow:hidden">
-      <table><tbody>${coacheeRows}</tbody></table>
+      <table>
+        <thead><tr>
+          <th style="text-align:left;font-size:12px;color:var(--muted)">Coachee</th>
+          <th style="text-align:left;font-size:12px;color:var(--muted)">Quota (€)</th>
+          <th style="text-align:left;font-size:12px;color:var(--muted)">Pagamento</th>
+          <th></th>
+        </tr></thead>
+        <tbody>${coacheeRows}</tbody>
+      </table>
     </div>
   </div>
 
@@ -2413,14 +2483,62 @@ function progettoDettaglioPage(p, coachee, req) {
       const comm = parseFloat(document.getElementById('q-comm').value);
       const box = document.getElementById('q-riepilogo');
       const pctField = document.getElementById('q-comm-pct');
-      if (!isFinite(tot) || tot <= 0) { box.textContent = 'Inserisci la quota totale per vedere la divisione.'; return; }
+      if (!isFinite(tot) || tot <= 0) {
+        box.textContent = 'Inserisci la quota totale per vedere la divisione.';
+      } else {
+        const c = isFinite(comm) ? comm : 0;
+        const resto = tot - c;
+        const pct = Math.round(c / tot * 100);
+        if (document.activeElement !== pctField) pctField.value = c ? pct : '';
+        box.textContent = resto < 0
+          ? 'Attenzione: il committente paga piu della quota totale.'
+          : 'Resta da dividere tra i coachee: € ' + euro(resto) + '  ·  il committente copre ' + pct + '%';
+      }
+      updateCoacheeSum();
+    }
+
+    // ── Fase 3B Pezzo 2: divisione tra i coachee ──
+    function getResto() {
+      const tot = parseFloat(document.getElementById('q-totale').value);
+      const comm = parseFloat(document.getElementById('q-comm').value);
+      if (!isFinite(tot) || tot <= 0) return null;
       const c = isFinite(comm) ? comm : 0;
-      const resto = tot - c;
-      const pct = Math.round(c / tot * 100);
-      if (document.activeElement !== pctField) pctField.value = c ? pct : '';
-      box.textContent = resto < 0
-        ? 'Attenzione: il committente paga piu della quota totale.'
-        : 'Resta da dividere tra i coachee: € ' + euro(resto) + '  ·  il committente copre ' + pct + '%';
+      return Math.max(tot - c, 0);
+    }
+    function coacheeInputs() { return Array.prototype.slice.call(document.querySelectorAll('.q-coachee')); }
+    function dividiEqui() {
+      const resto = getResto();
+      if (resto === null) { alert('Inserisci prima la quota totale del progetto.'); return; }
+      const inputs = coacheeInputs();
+      if (!inputs.length) return;
+      const quota = Math.round(resto / inputs.length * 100) / 100;
+      inputs.forEach(i => i.value = quota);
+      updateCoacheeSum();
+    }
+    function updateCoacheeSum() {
+      const el = document.getElementById('coachee-sum');
+      if (!el) return;
+      const inputs = coacheeInputs();
+      if (!inputs.length) { el.textContent = ''; return; }
+      const somma = inputs.reduce((s,i) => s + (parseFloat(i.value) || 0), 0);
+      const resto = getResto();
+      if (resto === null) { el.style.color = 'var(--muted)'; el.textContent = 'I coachee coprono € ' + euro(somma) + '.'; return; }
+      const diff = Math.round((somma - resto) * 100) / 100;
+      if (diff === 0) { el.style.color = '#4F8B73'; el.textContent = 'I coachee coprono € ' + euro(somma) + ' su € ' + euro(resto) + ' — torna.'; }
+      else { el.style.color = '#c0392b'; el.textContent = 'I coachee coprono € ' + euro(somma) + ' su € ' + euro(resto) + ' (' + (diff > 0 ? '+' : '') + euro(diff) + ').'; }
+    }
+    async function salvaQuoteCoachee() {
+      const quote = coacheeInputs().map(i => ({ part_id: i.getAttribute('data-part'), quota: i.value }));
+      const r = await fetch('/dashboard/progetti/'+PID+'/quote-coachee', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ quote }) });
+      const d = await r.json();
+      if (d.ok) showToast('Quote coachee salvate'); else alert(d.error || 'Errore');
+    }
+    async function togglePagCoachee(partId, stato) {
+      const nuovo = stato === 'ricevuto' ? 'atteso' : 'ricevuto';
+      const r = await fetch('/dashboard/progetti/'+PID+'/coachee/'+partId+'/pagamento', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ stato:nuovo }) });
+      const d = await r.json();
+      if (!d.ok) { alert(d.error || 'Errore'); return; }
+      location.reload();
     }
     function fromPct() {
       const tot = parseFloat(document.getElementById('q-totale').value);
