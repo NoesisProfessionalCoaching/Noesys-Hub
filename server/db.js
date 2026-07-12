@@ -242,6 +242,29 @@ async function init() {
     )
   `);
 
+  // Partecipazione (Fase 3): collega un coachee (client) a un progetto. Le colonne
+  // delle quote nascono ORA ma restano vuote: la 3a collega solo i coachee, la 3b
+  // riempirà la divisione della quota (committente/coachee) e lo stato pagamenti —
+  // così non si rifà la tabella. UNIQUE: stesso coachee non due volte sullo stesso
+  // progetto. ON DELETE CASCADE: cancellare progetto o cliente toglie il legame
+  // (NON cancella il cliente dall'anagrafica quando si toglie dal progetto: quello
+  // lo fa la rotta, che elimina solo la riga di partecipazione).
+  await query(`
+    CREATE TABLE IF NOT EXISTS partecipazioni (
+      id                    TEXT PRIMARY KEY,
+      progetto_id           TEXT NOT NULL REFERENCES progetti(id) ON DELETE CASCADE,
+      client_id             TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+      quota_totale          NUMERIC(10,2),
+      quota_committente     NUMERIC(10,2),
+      quota_coachee         NUMERIC(10,2),
+      stato_pag_committente TEXT DEFAULT 'atteso',
+      stato_pag_coachee     TEXT DEFAULT 'atteso',
+      note                  TEXT,
+      created_at            TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE (progetto_id, client_id)
+    )
+  `);
+
   // Stesso account coach della piattaforma strumenti (solo per il DB di test:
   // sul DB reale condiviso la riga esiste già).
   const existing = await query('SELECT id FROM coach WHERE username = $1', ['Germano']);

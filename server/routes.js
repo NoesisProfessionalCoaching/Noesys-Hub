@@ -778,7 +778,8 @@ const STATI_PROGETTO = ['pre-intake', 'proposta', 'attivo', 'chiuso', 'perso'];
 router.get('/dashboard/progetti', requireCoach, async (req, res) => {
   try {
     const progetti = await db.query(`
-      SELECT p.*, c.denominazione AS committente_nome
+      SELECT p.*, c.denominazione AS committente_nome,
+        (SELECT count(*) FROM partecipazioni pa WHERE pa.progetto_id = p.id) AS n_coachee
       FROM progetti p JOIN committenti c ON c.id = p.committente_id
       ORDER BY p.created_at DESC`);
     const committenti = await db.query('SELECT id, denominazione FROM committenti ORDER BY denominazione');
@@ -838,6 +839,86 @@ router.delete('/dashboard/progetti/:id', requireCoach, async (req, res) => {
   try {
     await db.query('DELETE FROM progetti WHERE id=$1', [req.params.id]);
     res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Errore' });
+  }
+});
+
+// Dettaglio progetto: dati + committente + elenco coachee collegati (Fase 3a).
+router.get('/dashboard/progetti/:id', requireCoach, async (req, res) => {
+  try {
+    const pr = await db.query(`
+      SELECT p.*, c.denominazione AS committente_nome, c.tipo AS committente_tipo, c.email AS committente_email
+      FROM progetti p JOIN committenti c ON c.id = p.committente_id WHERE p.id=$1`, [req.params.id]);
+    if (!pr.rows.length) return res.status(404).send('Progetto non trovato');
+    const coachee = await db.query(`
+      SELECT pa.id AS part_id, cl.id AS client_id, cl.name, cl.email, cl.token
+      FROM partecipazioni pa JOIN clients cl ON cl.id = pa.client_id
+      WHERE pa.progetto_id=$1 ORDER BY cl.cognome NULLS LAST, cl.nome`, [req.params.id]);
+    res.send(progettoDettaglioPage(pr.rows[0], coachee.rows, req));
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('Errore');
+  }
+});
+
+// Aggiunge un coachee al progetto CREANDO la persona nuova (client + partecipazione).
+// La scelta di un cliente esistente è rara: non la implementiamo (scelta di Germano).
+// NB: qui NON creiamo cartelle Drive (dove va la cartella nei progetti è deciso dopo):
+// il coachee nasce col suo token/link piattaforma, drive_url resta vuoto.
+router.post('/dashboard/progetti/:id/coachee', requireCoach, express.json(), async (req, res) => {
+  const cognome = (req.body.cognome || '').trim();
+  const nome    = (req.body.nome || '').trim();
+  const email   = (req.body.email || '').trim();
+  if (!cognome) return res.status(400).json({ error: 'Cognome obbligatorio' });
+  try {
+    const pr = await db.query('SELECT area FROM progetti WHERE id=$1', [req.params.id]);
+    if (!pr.rows.length) return res.status(404).json({ error: 'Progetto non trovato' });
+    const area = pr.rows[0].area || 'Business';
+    const name = [nome, cognome].filter(Boolean).join(' ');
+    const clientId = uuidv4();
+    const token    = uuidv4().replace(/-/g, '');
+    await db.query(
+      `INSERT INTO clients (id,name,nome,cognome,email,area,fonte,token)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [clientId, name, nome, cognome, email, area, 'altro', token]
+    );
+    await db.query(
+      `INSERT INTO partecipazioni (id,progetto_id,client_id) VALUES ($1,$2,$3)`,
+      [uuidv4(), req.params.id, clientId]
+    );
+    res.json({ ok: true, clientId, token });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Errore' });
+  }
+});
+
+// Toglie un coachee dal progetto ed ELIMINA la persona dall'anagrafica (scelta di
+// Germano: chi si ritira potrebbe non aver firmato la privacy → non deve restare).
+// Rete di sicurezza: se la persona ha GIÀ dati (sedute, percorsi, pagamenti, strumenti
+// compilati), non la cancelliamo dal pulsante del progetto (sarebbe una perdita
+// silenziosa): la togliamo solo dal progetto e resta in anagrafica; il coach la
+// eliminerà di proposito dalla sua scheda.
+router.delete('/dashboard/progetti/:id/coachee/:partId', requireCoach, async (req, res) => {
+  try {
+    const pr = await db.query('SELECT client_id FROM partecipazioni WHERE id=$1 AND progetto_id=$2', [req.params.partId, req.params.id]);
+    if (!pr.rows.length) return res.json({ ok: true }); // già rimosso
+    const clientId = pr.rows[0].client_id;
+    const hist = await db.query(`
+      SELECT (SELECT count(*) FROM sedute   WHERE client_id=$1)
+           + (SELECT count(*) FROM percorsi WHERE client_id=$1)
+           + (SELECT count(*) FROM payments WHERE client_id=$1)
+           + (SELECT count(*) FROM sessions WHERE client_id=$1) AS n`, [clientId]);
+    if (Number(hist.rows[0].n) > 0) {
+      await db.query('DELETE FROM partecipazioni WHERE id=$1', [req.params.partId]);
+      return res.json({ ok: true, kept: true,
+        message: 'Tolto dal progetto. Questa persona ha già dati (sessioni/pagamenti): resta in anagrafica. Per rimuoverla del tutto, eliminala dalla sua scheda.' });
+    }
+    // Nessuna storia → elimina la persona; il cascade toglie anche la partecipazione.
+    await db.query('DELETE FROM clients WHERE id=$1', [clientId]);
+    res.json({ ok: true, deleted: true });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Errore' });
@@ -2051,15 +2132,17 @@ function progettiPage(progetti, committenti, req) {
   function renderRow(p) {
     const sc = STATO_CFG[p.stato] || STATO_CFG['pre-intake'];
     const ac = AREA_COL[p.area] || '#1A5280';
-    return `<tr>
+    const n = Number(p.n_coachee) || 0;
+    return `<tr onclick="location.href='/dashboard/progetti/${p.id}'" style="cursor:pointer">
       <td><strong>${esc(p.titolo)}</strong>
         <br><span style="font-size:11px;color:#aaa">${esc(p.committente_nome)}</span>
       </td>
       <td><span class="badge" style="background:${ac}18;color:${ac}">${esc(p.area)}</span></td>
       <td style="font-size:12px;color:#4a5568">${TIPO_LABEL[p.tipo] || esc(p.tipo)}</td>
       <td><span class="badge" style="background:${sc.bg};color:${sc.color}">${sc.label}</span></td>
+      <td style="font-size:12px;color:#4a5568">${n > 0 ? `${n} ${n===1?'coachee':'coachee'}` : '<span style="color:#ccc">—</span>'}</td>
       <td style="font-size:12px;color:#aaa">${p.data_inizio ? itDate(p.data_inizio) : '—'}</td>
-      <td style="white-space:nowrap">
+      <td style="white-space:nowrap" onclick="event.stopPropagation()">
         <button onclick='editProg(${JSON.stringify(p).replace(/'/g, "&#39;")})' class="btn btn-neutral btn-sm">Modifica</button>
         <button onclick="deleteProg('${p.id}')" class="btn btn-danger btn-sm">✕</button>
       </td>
@@ -2081,9 +2164,9 @@ function progettiPage(progetti, committenti, req) {
 
     <div class="card" style="padding:0;overflow:hidden">
       <table>
-        <thead><tr><th>Progetto</th><th>Area</th><th>Tipo</th><th>Stato</th><th>Inizio</th><th>Azioni</th></tr></thead>
+        <thead><tr><th>Progetto</th><th>Area</th><th>Tipo</th><th>Stato</th><th>Coachee</th><th>Inizio</th><th>Azioni</th></tr></thead>
         <tbody>
-          ${progetti.length ? progetti.map(renderRow).join('') : `<tr><td colspan="6" class="empty">Nessun progetto. ${noComm ? 'Crea prima un committente.' : 'Crea il primo con il pulsante qui sopra.'}</td></tr>`}
+          ${progetti.length ? progetti.map(renderRow).join('') : `<tr><td colspan="7" class="empty">Nessun progetto. ${noComm ? 'Crea prima un committente.' : 'Crea il primo con il pulsante qui sopra.'}</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -2162,6 +2245,112 @@ function progettiPage(progetti, committenti, req) {
       if (d.ok) location.reload(); else alert(d.error || 'Errore');
     }
     document.getElementById('modal-prog').addEventListener('click', e => { if (e.target === document.getElementById('modal-prog')) closeProgModal(); });
+  </script>
+  </body></html>`;
+}
+
+// ═══════════════════════════════════════════════════════
+// PAGINA DETTAGLIO PROGETTO (Fase 3a) — dati + coachee collegati
+// ═══════════════════════════════════════════════════════
+function progettoDettaglioPage(p, coachee, req) {
+  const STATO_CFG = {
+    'pre-intake': { label:'Pre-intake', bg:'#eae6f7', color:'#4c3a86' },
+    'proposta':   { label:'Proposta',   bg:'#fff8dc', color:'#7a5c00' },
+    'attivo':     { label:'Attivo',     bg:'#d1fae5', color:'#065f46' },
+    'chiuso':     { label:'Chiuso',     bg:'#eef1f5', color:'#7a8089' },
+    'perso':      { label:'Perso',      bg:'#fdf0ef', color:'#c0392b' },
+  };
+  const TIPO_LABEL = { individuale:'Individuale', team:'Team', group:'Group' };
+  const AREA_COL   = { Business:'#4F8B73', Young:'#D8AE2E' };
+  const sc = STATO_CFG[p.stato] || STATO_CFG['pre-intake'];
+  const ac = AREA_COL[p.area] || '#1A5280';
+
+  const coacheeRows = coachee.length ? coachee.map(k => `
+    <tr>
+      <td><strong>${esc(k.name)}</strong>${k.email ? `<br><span style="font-size:11px;color:#aaa">${esc(k.email)}</span>` : ''}</td>
+      <td style="white-space:nowrap" onclick="event.stopPropagation()">
+        <button onclick="copyLink('${PLATFORM_URL}/c/${k.token}')" class="btn btn-neutral btn-sm">🔗 Link</button>
+        <a href="/dashboard/clients/${k.client_id}" class="btn btn-neutral btn-sm">Scheda</a>
+        <button onclick="removeCoachee('${k.part_id}')" class="btn btn-danger btn-sm">✕</button>
+      </td>
+    </tr>`).join('') : `<tr><td colspan="2" class="empty">Nessun coachee collegato. Aggiungi la prima persona.</td></tr>`;
+
+  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — ${esc(p.titolo)}</title>${baseStyle()}</head><body>
+  ${appBar({ home:'/dashboard', right:`<a href="/dashboard/progetti" class="btn btn-neutral btn-sm">← Progetti</a><a href="/dashboard/committenti" class="btn btn-neutral btn-sm">Committenti</a><a href="/logout" class="btn btn-neutral btn-sm">Esci</a>` })}
+  <div class="container" style="max-width:820px">
+    <div style="margin-bottom:18px">
+      <h1>${esc(p.titolo)}</h1>
+      <p style="color:#aaa;font-size:13px">Committente: <strong style="color:var(--ink)">${esc(p.committente_nome)}</strong>${p.committente_email ? ` · ${esc(p.committente_email)}` : ''}</p>
+      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+        <span class="badge" style="background:${ac}18;color:${ac}">${esc(p.area)}</span>
+        <span class="badge" style="background:#eef1f5;color:#4a5568">${TIPO_LABEL[p.tipo] || esc(p.tipo)}</span>
+        <span class="badge" style="background:${sc.bg};color:${sc.color}">${sc.label}</span>
+        ${p.data_inizio ? `<span class="badge" style="background:#eef1f5;color:#7a8089">Inizio ${itDate(p.data_inizio)}</span>` : ''}
+      </div>
+    </div>
+
+    ${(p.obiettivi || p.note) ? `<div class="card">
+      ${p.obiettivi ? `<div style="margin-bottom:${p.note?'12px':'0'}"><div class="field-label">Obiettivi aziendali</div><div class="field-value" style="white-space:pre-wrap">${esc(p.obiettivi)}</div></div>` : ''}
+      ${p.note ? `<div><div class="field-label">Note</div><div class="field-value" style="white-space:pre-wrap">${esc(p.note)}</div></div>` : ''}
+    </div>` : ''}
+
+    <div style="display:flex;align-items:center;justify-content:space-between;margin:22px 0 10px">
+      <h2 style="margin:0">Coachee <span style="color:#aaa;font-weight:500;font-size:13px">(${coachee.length})</span></h2>
+      <button onclick="openAdd()" class="btn btn-primary btn-sm">+ Aggiungi coachee</button>
+    </div>
+    <p style="color:var(--muted);font-size:12.5px;margin-bottom:12px">Le persone che fanno le sessioni in questo progetto. Le quote (chi paga quanto) arrivano nella prossima fase.</p>
+    <div class="card" style="padding:0;overflow:hidden">
+      <table><tbody>${coacheeRows}</tbody></table>
+    </div>
+  </div>
+
+  <div id="modal-coachee" class="modal-overlay">
+    <div class="modal-box" style="width:440px">
+      <h2 style="margin-bottom:16px">Aggiungi coachee</h2>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group"><label>Nome</label><input id="k-nome" type="text"></div>
+        <div class="form-group"><label>Cognome *</label><input id="k-cognome" type="text"></div>
+      </div>
+      <div class="form-group"><label>Email</label><input id="k-email" type="email"></div>
+      <p style="color:var(--muted);font-size:12px;margin-bottom:12px">Nasce come cliente con il suo link alla piattaforma. La cartella Drive si crea dopo, dalla sua scheda.</p>
+      <div style="display:flex;gap:8px">
+        <button onclick="closeAdd()" class="btn btn-neutral" style="flex:1">Annulla</button>
+        <button onclick="saveCoachee()" class="btn btn-primary" style="flex:1">Aggiungi</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" style="display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#223B6E;color:#fff;padding:10px 18px;border-radius:22px;font-size:13px;z-index:200">Link copiato!</div>
+
+  <script>
+    const PID = ${JSON.stringify(p.id)};
+    function openAdd() {
+      ['k-nome','k-cognome','k-email'].forEach(id=>document.getElementById(id).value='');
+      document.getElementById('modal-coachee').style.display='flex';
+    }
+    function closeAdd() { document.getElementById('modal-coachee').style.display='none'; }
+    async function saveCoachee() {
+      const cognome = document.getElementById('k-cognome').value.trim();
+      if (!cognome) { alert('Cognome obbligatorio'); return; }
+      const payload = { nome:document.getElementById('k-nome').value, cognome, email:document.getElementById('k-email').value };
+      const r = await fetch('/dashboard/progetti/'+PID+'/coachee', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+      const d = await r.json();
+      if (d.ok) location.reload(); else alert(d.error || 'Errore');
+    }
+    async function removeCoachee(partId) {
+      if (!confirm('Togliere questo coachee dal progetto? Se non ha ancora dati, viene eliminato anche dall\'anagrafica.')) return;
+      const r = await fetch('/dashboard/progetti/'+PID+'/coachee/'+partId, { method:'DELETE' });
+      const d = await r.json();
+      if (!d.ok) { alert(d.error || 'Errore'); return; }
+      if (d.kept && d.message) alert(d.message);
+      location.reload();
+    }
+    function copyLink(url) {
+      navigator.clipboard.writeText(url).then(() => {
+        const t=document.getElementById('toast'); t.style.display='block'; setTimeout(()=>t.style.display='none',2000);
+      });
+    }
+    document.getElementById('modal-coachee').addEventListener('click', e => { if (e.target === document.getElementById('modal-coachee')) closeAdd(); });
   </script>
   </body></html>`;
 }
