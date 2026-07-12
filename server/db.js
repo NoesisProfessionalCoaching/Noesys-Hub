@@ -265,6 +265,19 @@ async function init() {
     )
   `);
 
+  // Fase 3B — le quote. La quota si decide in pre-intake sul PROGETTO intero:
+  // un totale + quanto paga il committente (una fattura sola al committente);
+  // il resto lo dividono i coachee (quota_coachee sulle partecipazioni). Perciò
+  // totale/quota-committente/stato-pagamento-committente stanno sul progetto (il
+  // committente è UN pagamento, non uno per coachee). Additivo: restano vuoti
+  // finché il coach non compila. Le vecchie colonne quota_totale/quota_committente
+  // su `partecipazioni` (nate con un modello precedente) restano inutilizzate.
+  await query(`ALTER TABLE progetti ADD COLUMN IF NOT EXISTS quota_totale          NUMERIC(10,2)`);
+  await query(`ALTER TABLE progetti ADD COLUMN IF NOT EXISTS quota_committente     NUMERIC(10,2)`);
+  await query(`ALTER TABLE progetti ADD COLUMN IF NOT EXISTS stato_pag_committente TEXT DEFAULT 'atteso'`);
+  await query(`ALTER TABLE progetti ADD COLUMN IF NOT EXISTS data_pag_committente  DATE`);
+  await query(`ALTER TABLE partecipazioni ADD COLUMN IF NOT EXISTS data_pag_coachee DATE`);
+
   // Stesso account coach della piattaforma strumenti (solo per il DB di test:
   // sul DB reale condiviso la riga esiste già).
   const existing = await query('SELECT id FROM coach WHERE username = $1', ['Germano']);

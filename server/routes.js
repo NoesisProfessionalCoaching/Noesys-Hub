@@ -925,6 +925,52 @@ router.delete('/dashboard/progetti/:id/coachee/:partId', requireCoach, async (re
   }
 });
 
+// Fase 3B — salva la quota del progetto: totale + quanto paga il committente.
+// Il resto (totale − committente) lo dividono i coachee (Pezzo 2). Numeri in euro;
+// campo vuoto = null (quota non ancora decisa). Guard: il committente non può
+// pagare più del totale.
+router.post('/dashboard/progetti/:id/quota', requireCoach, express.json(), async (req, res) => {
+  const num = v => {
+    if (v === '' || v === null || v === undefined) return null;
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 ? n : NaN;
+  };
+  const totale = num(req.body.quota_totale);
+  const committente = num(req.body.quota_committente);
+  if (Number.isNaN(totale) || Number.isNaN(committente))
+    return res.status(400).json({ error: 'Importi non validi' });
+  if (totale !== null && committente !== null && committente > totale)
+    return res.status(400).json({ error: 'Il committente non puo pagare piu della quota totale' });
+  try {
+    await db.query(
+      `UPDATE progetti SET quota_totale=$1, quota_committente=$2, updated_at=NOW() WHERE id=$3`,
+      [totale, committente, req.params.id]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Errore' });
+  }
+});
+
+// Fase 3B — interruttore pagamento del committente. Ricevuto → registra la data
+// (oggi); torna ad atteso → azzera la data.
+router.post('/dashboard/progetti/:id/pag-committente', requireCoach, express.json(), async (req, res) => {
+  const stato = req.body.stato === 'ricevuto' ? 'ricevuto' : 'atteso';
+  try {
+    await db.query(
+      `UPDATE progetti SET stato_pag_committente=$1,
+         data_pag_committente = CASE WHEN $1='ricevuto' THEN CURRENT_DATE ELSE NULL END,
+         updated_at=NOW() WHERE id=$2`,
+      [stato, req.params.id]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Errore' });
+  }
+});
+
 module.exports = router;
 
 // ═══════════════════════════════════════════════════════
@@ -2265,6 +2311,11 @@ function progettoDettaglioPage(p, coachee, req) {
   const sc = STATO_CFG[p.stato] || STATO_CFG['pre-intake'];
   const ac = AREA_COL[p.area] || '#1A5280';
 
+  // Fase 3B — quota del progetto (pg restituisce i NUMERIC come stringa).
+  const qTot     = p.quota_totale      != null ? Number(p.quota_totale)      : null;
+  const qComm    = p.quota_committente != null ? Number(p.quota_committente) : null;
+  const statoComm = p.stato_pag_committente || 'atteso';
+
   const coacheeRows = coachee.length ? coachee.map(k => `
     <tr>
       <td><strong>${esc(k.name)}</strong>${k.email ? `<br><span style="font-size:11px;color:#aaa">${esc(k.email)}</span>` : ''}</td>
@@ -2293,6 +2344,34 @@ function progettoDettaglioPage(p, coachee, req) {
       ${p.obiettivi ? `<div style="margin-bottom:${p.note?'12px':'0'}"><div class="field-label">Obiettivi aziendali</div><div class="field-value" style="white-space:pre-wrap">${esc(p.obiettivi)}</div></div>` : ''}
       ${p.note ? `<div><div class="field-label">Note</div><div class="field-value" style="white-space:pre-wrap">${esc(p.note)}</div></div>` : ''}
     </div>` : ''}
+
+    <div class="card" style="margin-bottom:18px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <div class="field-label" style="margin:0">Quota del progetto</div>
+        <span style="font-size:12px;color:var(--muted)">decisa in pre-intake</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group" style="margin:0"><label>Quota totale (€)</label>
+          <input id="q-totale" type="number" step="0.01" min="0" value="${qTot != null ? qTot : ''}" placeholder="es. 2700" oninput="recalcQuota()"></div>
+        <div class="form-group" style="margin:0"><label>Paga il committente</label>
+          <div style="display:flex;gap:8px">
+            <input id="q-comm" type="number" step="0.01" min="0" value="${qComm != null ? qComm : ''}" placeholder="€" oninput="recalcQuota()" style="flex:2">
+            <input id="q-comm-pct" type="number" step="1" min="0" max="100" placeholder="%" oninput="fromPct()" style="flex:1">
+          </div>
+        </div>
+      </div>
+      <div id="q-riepilogo" style="margin-top:12px;padding:10px 12px;background:#f4f7fa;border-radius:8px;font-size:13px;color:#4a5568"></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px;flex-wrap:wrap;gap:10px">
+        <div style="font-size:13px">Pagamento committente:
+          <span id="pag-badge" class="badge"></span>
+          <span id="pag-data" style="font-size:12px;color:var(--muted)"></span>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button id="pag-btn" onclick="togglePagComm()" class="btn btn-neutral btn-sm"></button>
+          <button onclick="salvaQuota()" class="btn btn-primary btn-sm">Salva quota</button>
+        </div>
+      </div>
+    </div>
 
     <div style="display:flex;align-items:center;justify-content:space-between;margin:22px 0 10px">
       <h2 style="margin:0">Coachee <span style="color:#aaa;font-weight:500;font-size:13px">(${coachee.length})</span></h2>
@@ -2324,6 +2403,62 @@ function progettoDettaglioPage(p, coachee, req) {
 
   <script>
     const PID = ${JSON.stringify(p.id)};
+
+    // ── Fase 3B: quota del progetto ──
+    let pagStato = ${JSON.stringify(statoComm)};
+    const Q_DATA = ${JSON.stringify(p.data_pag_committente ? itDate(p.data_pag_committente) : '')};
+    function euro(n) { return n.toLocaleString('it-IT', { minimumFractionDigits:2, maximumFractionDigits:2 }); }
+    function recalcQuota() {
+      const tot = parseFloat(document.getElementById('q-totale').value);
+      const comm = parseFloat(document.getElementById('q-comm').value);
+      const box = document.getElementById('q-riepilogo');
+      const pctField = document.getElementById('q-comm-pct');
+      if (!isFinite(tot) || tot <= 0) { box.textContent = 'Inserisci la quota totale per vedere la divisione.'; return; }
+      const c = isFinite(comm) ? comm : 0;
+      const resto = tot - c;
+      const pct = Math.round(c / tot * 100);
+      if (document.activeElement !== pctField) pctField.value = c ? pct : '';
+      box.textContent = resto < 0
+        ? 'Attenzione: il committente paga piu della quota totale.'
+        : 'Resta da dividere tra i coachee: € ' + euro(resto) + '  ·  il committente copre ' + pct + '%';
+    }
+    function fromPct() {
+      const tot = parseFloat(document.getElementById('q-totale').value);
+      const pct = parseFloat(document.getElementById('q-comm-pct').value);
+      if (isFinite(tot) && isFinite(pct)) document.getElementById('q-comm').value = Math.round(tot * pct) / 100;
+      recalcQuota();
+    }
+    async function salvaQuota() {
+      const payload = {
+        quota_totale: document.getElementById('q-totale').value,
+        quota_committente: document.getElementById('q-comm').value
+      };
+      const r = await fetch('/dashboard/progetti/'+PID+'/quota', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+      const d = await r.json();
+      if (d.ok) showToast('Quota salvata'); else alert(d.error || 'Errore');
+    }
+    function renderPag() {
+      const badge = document.getElementById('pag-badge');
+      const btn = document.getElementById('pag-btn');
+      const dataEl = document.getElementById('pag-data');
+      if (pagStato === 'ricevuto') {
+        badge.textContent = 'Ricevuto'; badge.style.background = '#d1fae5'; badge.style.color = '#065f46';
+        btn.textContent = 'Segna atteso';
+        dataEl.textContent = Q_DATA ? ('il ' + Q_DATA) : '';
+      } else {
+        badge.textContent = 'Atteso'; badge.style.background = '#fff8dc'; badge.style.color = '#7a5c00';
+        btn.textContent = 'Segna ricevuto';
+        dataEl.textContent = '';
+      }
+    }
+    async function togglePagComm() {
+      const nuovo = pagStato === 'ricevuto' ? 'atteso' : 'ricevuto';
+      const r = await fetch('/dashboard/progetti/'+PID+'/pag-committente', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ stato:nuovo }) });
+      const d = await r.json();
+      if (!d.ok) { alert(d.error || 'Errore'); return; }
+      location.reload();
+    }
+
     function openAdd() {
       ['k-nome','k-cognome','k-email'].forEach(id=>document.getElementById(id).value='');
       document.getElementById('modal-coachee').style.display='flex';
@@ -2345,12 +2480,15 @@ function progettoDettaglioPage(p, coachee, req) {
       if (d.kept && d.message) alert(d.message);
       location.reload();
     }
+    function showToast(msg) {
+      const t=document.getElementById('toast'); t.textContent=msg; t.style.display='block'; setTimeout(()=>t.style.display='none',2000);
+    }
     function copyLink(url) {
-      navigator.clipboard.writeText(url).then(() => {
-        const t=document.getElementById('toast'); t.style.display='block'; setTimeout(()=>t.style.display='none',2000);
-      });
+      navigator.clipboard.writeText(url).then(() => showToast('Link copiato!'));
     }
     document.getElementById('modal-coachee').addEventListener('click', e => { if (e.target === document.getElementById('modal-coachee')) closeAdd(); });
+    recalcQuota();
+    renderPag();
   </script>
   </body></html>`;
 }
