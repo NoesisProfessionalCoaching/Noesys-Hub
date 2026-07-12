@@ -2338,7 +2338,7 @@ function progettoDettaglioPage(p, coachee, req) {
       if (d.ok) location.reload(); else alert(d.error || 'Errore');
     }
     async function removeCoachee(partId) {
-      if (!confirm('Togliere questo coachee dal progetto? Se non ha ancora dati, viene eliminato anche dall\'anagrafica.')) return;
+      if (!confirm('Togliere questo coachee dal progetto? Se non ha ancora dati, viene eliminato anche dall\\'anagrafica.')) return;
       const r = await fetch('/dashboard/progetti/'+PID+'/coachee/'+partId, { method:'DELETE' });
       const d = await r.json();
       if (!d.ok) { alert(d.error || 'Errore'); return; }
