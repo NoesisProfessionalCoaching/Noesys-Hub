@@ -189,13 +189,21 @@ router.get('/dashboard/clients/:id', requireCoach, async (req, res) => {
     const cr = await db.query('SELECT * FROM clients WHERE id = $1', [req.params.id]);
     const client = cr.rows[0];
     if (!client) return res.redirect('/dashboard');
-    const [sr, pr, payr, sedr] = await Promise.all([
+    const [sr, pr, payr, sedr, prjr] = await Promise.all([
       db.query('SELECT * FROM sessions WHERE client_id=$1 ORDER BY tool, created_at DESC', [req.params.id]),
       db.query('SELECT * FROM percorsi WHERE client_id=$1 ORDER BY created_at ASC', [req.params.id]),
       db.query('SELECT * FROM payments WHERE client_id=$1 ORDER BY created_at DESC', [req.params.id]),
       db.query('SELECT * FROM sedute WHERE client_id=$1 ORDER BY data ASC NULLS LAST, created_at ASC', [req.params.id]),
+      // Progetti di cui il coachee fa parte: SOLA LETTURA, per riflettere la sua
+      // quota business sulla scheda. Il pagamento vive sul progetto (payments non toccata).
+      db.query(`SELECT pa.quota_coachee, pa.stato_pag_coachee, pa.data_pag_coachee,
+                       pr.id AS progetto_id, pr.titolo, c.denominazione AS committente_nome
+                FROM partecipazioni pa
+                JOIN progetti pr ON pr.id = pa.progetto_id
+                JOIN committenti c ON c.id = pr.committente_id
+                WHERE pa.client_id=$1 ORDER BY pr.titolo`, [req.params.id]),
     ]);
-    res.send(clientDetailPage(client, sr.rows, pr.rows, payr.rows, sedr.rows, req));
+    res.send(clientDetailPage(client, sr.rows, pr.rows, payr.rows, sedr.rows, prjr.rows, req));
   } catch (err) {
     console.error(err);
     res.redirect('/dashboard');
@@ -1404,7 +1412,7 @@ function renderSedutaRow(s) {
   </tr>`;
 }
 
-function clientDetailPage(client, sessions, percorsi, payments, sedute, req) {
+function clientDetailPage(client, sessions, percorsi, payments, sedute, progetti, req) {
   const link = PLATFORM_URL + '/c/' + client.token;
   sedute = sedute || [];
   const area = client.area || 'Personal';
@@ -1468,6 +1476,33 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, req) {
         <div style="margin-top:14px">${seduteBody}</div>
       </details>
     </div>`;
+
+  // ── Progetti (riflesso SOLA LETTURA) ─────────────────
+  // Se il coachee fa parte di uno o più progetti, mostra qui la sua quota business
+  // e lo stato del pagamento, con link per gestirlo nel progetto. NIENTE scrittura:
+  // la verità del pagamento business vive sul progetto, non in payments.
+  const progettiHtml = (progetti && progetti.length) ? `
+    <div class="card">
+      <h2 style="margin:0 0 4px">Progetti <span style="font-weight:400;font-size:13px;color:#aaa">(${progetti.length})</span></h2>
+      <p style="font-size:12px;color:var(--muted);margin:0 0 12px">Quota e pagamento si gestiscono nel progetto (qui in sola lettura).</p>
+      ${progetti.map(pr => {
+        const ric = (pr.stato_pag_coachee || 'atteso') === 'ricevuto';
+        const q   = pr.quota_coachee != null ? Number(pr.quota_coachee) : null;
+        const dtc = ric && pr.data_pag_coachee ? ` il ${itDate(pr.data_pag_coachee)}` : '';
+        return `
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid #eef1f5;flex-wrap:wrap">
+          <div>
+            <strong style="font-size:14px">${esc(pr.titolo)}</strong>
+            <div style="font-size:12px;color:#aaa">Committente: ${esc(pr.committente_nome)}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+            <span style="font-size:13px;color:#4a5568">Quota: <strong>${q != null ? '€ ' + q.toLocaleString('it-IT',{minimumFractionDigits:2}) : '<span style="color:#aaa">da definire</span>'}</strong></span>
+            <span class="badge" style="background:${ric?'#d1fae5':'#fff8dc'};color:${ric?'#065f46':'#7a5c00'}">${ric?'Incassato'+dtc:'Da incassare'}</span>
+            <a href="/dashboard/progetti/${pr.progetto_id}" class="btn btn-neutral btn-sm">Gestisci nel progetto</a>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>` : '';
 
   // ── Pagamenti ────────────────────────────────────────
   const totRicevuto = payments.filter(p=>p.stato==='ricevuto').reduce((s,p)=>s+Number(p.importo),0);
@@ -1582,6 +1617,7 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, req) {
     </div>
 
     ${percorsiHtml}
+    ${progettiHtml}
     ${paymentsHtml}
     ${seduteHtml}
     ${strumentiHtml}
