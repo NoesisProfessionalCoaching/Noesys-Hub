@@ -692,6 +692,77 @@ router.get('/dashboard/icf/export.csv', requireCoach, async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════
+// COMMITTENTI / SPONSOR (Fase 1) — il terzo che commissiona/paga un percorso.
+// Contatto a sé (azienda o persona). CRUD semplice, sul modello dei Lead.
+// I collegamenti a clienti/progetti arrivano nelle fasi successive.
+// ═══════════════════════════════════════════════════════
+
+const TIPI_COMMITTENTE = ['azienda', 'persona'];
+
+router.get('/dashboard/committenti', requireCoach, async (req, res) => {
+  try {
+    const result = await db.query('SELECT * FROM committenti ORDER BY denominazione');
+    res.send(committentiPage(result.rows, req));
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('Errore');
+  }
+});
+
+router.post('/dashboard/committenti', requireCoach, express.json(), async (req, res) => {
+  const { tipo, denominazione, referente, ruolo, email, telefono,
+          codice_fiscale, partita_iva, indirizzo, pec_sdi, note } = req.body;
+  if (!denominazione || !denominazione.trim()) return res.status(400).json({ error: 'Denominazione obbligatoria' });
+  try {
+    const id = uuidv4();
+    await db.query(
+      `INSERT INTO committenti (id,tipo,denominazione,referente,ruolo,email,telefono,
+         codice_fiscale,partita_iva,indirizzo,pec_sdi,note)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      [id, TIPI_COMMITTENTE.includes(tipo) ? tipo : 'azienda', denominazione.trim(),
+       (referente||'').trim(), (ruolo||'').trim(), (email||'').trim(), (telefono||'').trim(),
+       (codice_fiscale||'').trim(), (partita_iva||'').trim(), (indirizzo||'').trim(),
+       (pec_sdi||'').trim(), (note||'').trim()]
+    );
+    res.json({ ok: true, id });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Errore' });
+  }
+});
+
+router.post('/dashboard/committenti/:id', requireCoach, express.json(), async (req, res) => {
+  const { tipo, denominazione, referente, ruolo, email, telefono,
+          codice_fiscale, partita_iva, indirizzo, pec_sdi, note } = req.body;
+  if (!denominazione || !denominazione.trim()) return res.status(400).json({ error: 'Denominazione obbligatoria' });
+  try {
+    await db.query(
+      `UPDATE committenti SET tipo=$1,denominazione=$2,referente=$3,ruolo=$4,email=$5,telefono=$6,
+         codice_fiscale=$7,partita_iva=$8,indirizzo=$9,pec_sdi=$10,note=$11,updated_at=NOW()
+       WHERE id=$12`,
+      [TIPI_COMMITTENTE.includes(tipo) ? tipo : 'azienda', denominazione.trim(),
+       (referente||'').trim(), (ruolo||'').trim(), (email||'').trim(), (telefono||'').trim(),
+       (codice_fiscale||'').trim(), (partita_iva||'').trim(), (indirizzo||'').trim(),
+       (pec_sdi||'').trim(), (note||'').trim(), req.params.id]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Errore' });
+  }
+});
+
+router.delete('/dashboard/committenti/:id', requireCoach, async (req, res) => {
+  try {
+    await db.query('DELETE FROM committenti WHERE id=$1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Errore' });
+  }
+});
+
 module.exports = router;
 
 // ═══════════════════════════════════════════════════════
@@ -854,7 +925,7 @@ function dashboardPage(clients, req) {
     }).join('');
 
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Clienti</title>${baseStyle()}</head><body>
-  ${appBar({ home: '/dashboard', right: `<a href="/dashboard/leads" class="btn btn-neutral btn-sm">Lead</a><a href="/dashboard/icf" class="btn btn-neutral btn-sm">Estratto ICF</a><a href="/logout" class="btn btn-neutral btn-sm">Esci</a>` })}
+  ${appBar({ home: '/dashboard', right: `<a href="/dashboard/leads" class="btn btn-neutral btn-sm">Lead</a><a href="/dashboard/committenti" class="btn btn-neutral btn-sm">Committenti</a><a href="/dashboard/icf" class="btn btn-neutral btn-sm">Estratto ICF</a><a href="/logout" class="btn btn-neutral btn-sm">Esci</a>` })}
   <div class="container" style="max-width:980px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px">
       <div><h1>Clienti</h1><p style="color:#aaa;font-size:13px">${clients.length} clienti registrati</p></div>
@@ -1739,6 +1810,140 @@ function leadsPage(leads, req) {
     }
     document.getElementById('modal-lead').addEventListener('click',e=>{ if(e.target===document.getElementById('modal-lead')) closeLeadModal(); });
     document.getElementById('modal-area').addEventListener('click',e=>{ if(e.target===document.getElementById('modal-area')) closeAreaModal(); });
+  </script>
+  </body></html>`;
+}
+
+// ═══════════════════════════════════════════════════════
+// PAGINA COMMITTENTI / SPONSOR (Fase 1)
+// ═══════════════════════════════════════════════════════
+function committentiPage(committenti, req) {
+  const TIPO_CFG = {
+    azienda: { label: 'Azienda',  bg: '#e7f1ec', color: '#2e6b52' },
+    persona: { label: 'Persona',  bg: '#e8f4fd', color: '#1A5280' },
+  };
+
+  function renderRow(k) {
+    const tc = TIPO_CFG[k.tipo] || TIPO_CFG.azienda;
+    const fatt = [k.partita_iva ? 'P.IVA '+esc(k.partita_iva) : '', k.codice_fiscale ? 'CF '+esc(k.codice_fiscale) : '']
+      .filter(Boolean).join(' · ');
+    return `<tr>
+      <td><strong>${esc(k.denominazione)}</strong>
+        ${k.referente ? `<br><span style="font-size:11px;color:#aaa">${esc(k.referente)}${k.ruolo ? ' — '+esc(k.ruolo) : ''}</span>` : ''}
+      </td>
+      <td><span class="badge" style="background:${tc.bg};color:${tc.color}">${tc.label}</span></td>
+      <td style="font-size:12px;color:#4a5568">
+        ${k.email ? esc(k.email) : ''}${k.email && k.telefono ? '<br>' : ''}${k.telefono ? `<span style="color:#aaa">${esc(k.telefono)}</span>` : ''}${!k.email && !k.telefono ? '<span style="color:#ccc">—</span>' : ''}
+      </td>
+      <td style="font-size:12px;color:#aaa">${fatt || '—'}</td>
+      <td style="white-space:nowrap">
+        <button onclick='editComm(${JSON.stringify(k).replace(/'/g, "&#39;")})' class="btn btn-neutral btn-sm">Modifica</button>
+        <button onclick="deleteComm('${k.id}')" class="btn btn-danger btn-sm">✕</button>
+      </td>
+    </tr>`;
+  }
+
+  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Committenti</title>${baseStyle()}</head><body>
+  ${appBar({ home:'/dashboard', right:`<a href="/dashboard" class="btn btn-neutral btn-sm">← Clienti</a><a href="/dashboard/leads" class="btn btn-neutral btn-sm">Lead</a><a href="/logout" class="btn btn-neutral btn-sm">Esci</a>` })}
+  <div class="container" style="max-width:980px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:12px">
+      <div><h1>Committenti / Sponsor</h1><p style="color:#aaa;font-size:13px">${committenti.length} ${committenti.length===1?'committente':'committenti'}</p></div>
+      <button onclick="openNew()" class="btn btn-primary">+ Nuovo committente</button>
+    </div>
+    <p style="color:var(--muted);font-size:12.5px;margin-bottom:16px">Chi commissiona o paga un percorso (azienda o persona). Non ha accesso all'Hub.</p>
+
+    <input id="cerca" type="search" placeholder="🔍 Cerca committente (nome, referente, email…)" oninput="filtra()" style="margin-bottom:14px">
+
+    <div class="card" style="padding:0;overflow:hidden">
+      <table>
+        <thead><tr><th>Committente</th><th>Tipo</th><th>Contatto</th><th>Fatturazione</th><th>Azioni</th></tr></thead>
+        <tbody>
+          ${committenti.length ? committenti.map(renderRow).join('') : `<tr><td colspan="5" class="empty">Nessun committente. Crea il primo con il pulsante qui sopra.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="modal-comm" class="modal-overlay">
+    <div class="modal-box" style="width:520px">
+      <h2 style="margin-bottom:16px" id="modal-comm-title">Nuovo committente</h2>
+      <input type="hidden" id="c-id">
+      <div style="display:grid;grid-template-columns:150px 1fr;gap:12px">
+        <div class="form-group"><label>Tipo</label>
+          <select id="c-tipo"><option value="azienda">Azienda</option><option value="persona">Persona</option></select></div>
+        <div class="form-group"><label id="c-denom-label">Ragione sociale *</label><input id="c-denominazione" type="text"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group"><label>Referente</label><input id="c-referente" type="text" placeholder="persona di contatto"></div>
+        <div class="form-group"><label>Ruolo</label><input id="c-ruolo" type="text" placeholder="es. HR, dirigente, genitore"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group"><label>Email</label><input id="c-email" type="email"></div>
+        <div class="form-group"><label>Telefono</label><input id="c-tel" type="tel"></div>
+      </div>
+      <h2 style="font-size:13px;margin:6px 0 12px;color:var(--muted)">Dati fatturazione</h2>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group"><label>Partita IVA</label><input id="c-piva" type="text"></div>
+        <div class="form-group"><label>Codice fiscale</label><input id="c-cf" type="text"></div>
+      </div>
+      <div class="form-group"><label>Indirizzo di fatturazione</label><input id="c-indirizzo" type="text" placeholder="Via, CAP Città (Prov.)"></div>
+      <div class="form-group"><label>PEC / Codice SDI</label><input id="c-pecsdi" type="text" placeholder="fattura elettronica"></div>
+      <div class="form-group"><label>Note</label><input id="c-note" type="text" placeholder="osservazioni libere"></div>
+      <div style="display:flex;gap:8px;margin-top:4px">
+        <button onclick="closeCommModal()" class="btn btn-neutral" style="flex:1">Annulla</button>
+        <button onclick="saveComm()" class="btn btn-primary" style="flex:1">Salva</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const F = ['tipo','denominazione','referente','ruolo','email','telefono','codice_fiscale','partita_iva','indirizzo','pec_sdi','note'];
+    const ID = { tipo:'c-tipo', denominazione:'c-denominazione', referente:'c-referente', ruolo:'c-ruolo',
+      email:'c-email', telefono:'c-tel', codice_fiscale:'c-cf', partita_iva:'c-piva',
+      indirizzo:'c-indirizzo', pec_sdi:'c-pecsdi', note:'c-note' };
+    function filtra() {
+      const q = document.getElementById('cerca').value.trim().toLowerCase();
+      document.querySelectorAll('tbody tr').forEach(tr => {
+        tr.style.display = tr.textContent.toLowerCase().includes(q) ? '' : 'none';
+      });
+    }
+    function syncDenomLabel() {
+      document.getElementById('c-denom-label').textContent =
+        document.getElementById('c-tipo').value === 'persona' ? 'Nome e cognome *' : 'Ragione sociale *';
+    }
+    document.getElementById('c-tipo').addEventListener('change', syncDenomLabel);
+    function openNew() {
+      document.getElementById('modal-comm-title').textContent = 'Nuovo committente';
+      document.getElementById('c-id').value = '';
+      Object.values(ID).forEach(id => document.getElementById(id).value = '');
+      document.getElementById('c-tipo').value = 'azienda';
+      syncDenomLabel();
+      document.getElementById('modal-comm').style.display = 'flex';
+    }
+    function editComm(k) {
+      document.getElementById('modal-comm-title').textContent = 'Modifica committente';
+      document.getElementById('c-id').value = k.id;
+      F.forEach(f => document.getElementById(ID[f]).value = k[f] || '');
+      syncDenomLabel();
+      document.getElementById('modal-comm').style.display = 'flex';
+    }
+    function closeCommModal() { document.getElementById('modal-comm').style.display = 'none'; }
+    async function saveComm() {
+      const denominazione = document.getElementById('c-denominazione').value.trim();
+      if (!denominazione) { alert('Denominazione obbligatoria'); return; }
+      const payload = {};
+      F.forEach(f => payload[f] = document.getElementById(ID[f]).value);
+      const id = document.getElementById('c-id').value;
+      const url = id ? '/dashboard/committenti/'+id : '/dashboard/committenti';
+      const r = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+      const d = await r.json();
+      if (d.ok) location.reload(); else alert(d.error || 'Errore');
+    }
+    async function deleteComm(id) {
+      if (!confirm('Eliminare questo committente?')) return;
+      await fetch('/dashboard/committenti/'+id, { method:'DELETE' }); location.reload();
+    }
+    document.getElementById('modal-comm').addEventListener('click', e => { if (e.target === document.getElementById('modal-comm')) closeCommModal(); });
   </script>
   </body></html>`;
 }

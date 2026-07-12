@@ -196,6 +196,30 @@ async function init() {
     )
   `);
 
+  // Committente/Sponsor (Fase 1): il terzo che commissiona/paga un percorso
+  // (azienda o persona — es. genitore). È un contatto a sé, NON entra nell'Hub e
+  // non ha login. Un committente potrà avere più clienti/progetti collegati (Fase 2/3).
+  // I campi fatturazione servono per emettere la fattura al committente senza rifare
+  // il lavoro quando arriveranno documenti e fatture vere.
+  await query(`
+    CREATE TABLE IF NOT EXISTS committenti (
+      id             TEXT PRIMARY KEY,
+      tipo           TEXT NOT NULL DEFAULT 'azienda',   -- 'azienda' | 'persona'
+      denominazione  TEXT NOT NULL,                     -- ragione sociale o "Nome Cognome"
+      referente      TEXT,                              -- persona di contatto (HR, dirigente, genitore…)
+      ruolo          TEXT,                              -- ruolo del referente
+      email          TEXT,
+      telefono       TEXT,
+      codice_fiscale TEXT,                              -- CF (tipico persona)
+      partita_iva    TEXT,                              -- P.IVA (tipico azienda)
+      indirizzo      TEXT,                              -- indirizzo di fatturazione (una riga)
+      pec_sdi        TEXT,                              -- PEC o codice SDI (fattura elettronica)
+      note           TEXT,
+      created_at     TIMESTAMPTZ DEFAULT NOW(),
+      updated_at     TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
   // Stesso account coach della piattaforma strumenti (solo per il DB di test:
   // sul DB reale condiviso la riga esiste già).
   const existing = await query('SELECT id FROM coach WHERE username = $1', ['Germano']);
