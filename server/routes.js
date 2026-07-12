@@ -2422,31 +2422,6 @@ function progettoDettaglioPage(p, coachee, req) {
       </div>
     </div>
 
-    <div class="card" id="amm" style="margin-bottom:18px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-        <div class="field-label" style="margin:0">Amministrazione</div>
-        <span style="font-size:12px;color:var(--muted)">colpo d'occhio sui pagamenti</span>
-      </div>
-      <div id="amm-empty" style="display:${ammQuoteSet ? 'none' : 'block'};font-size:13px;color:var(--muted)">Quote non ancora impostate — questo progetto è in pre-intake. Imposta la quota qui sotto.</div>
-      <div id="amm-body" style="display:${ammQuoteSet ? 'block' : 'none'}">
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:4px">
-          <div style="background:#f4f7fa;border-radius:8px;padding:12px">
-            <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#9AA0AA">Atteso</div>
-            <div id="amm-atteso" style="font-size:20px;font-weight:700;color:var(--ink)">€ ${eur(ammAtteso0)}</div>
-          </div>
-          <div style="background:#eafaf1;border-radius:8px;padding:12px">
-            <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#4F8B73">Incassato</div>
-            <div id="amm-incassato" style="font-size:20px;font-weight:700;color:#065f46">€ ${eur(ammIncassato0)}</div>
-          </div>
-          <div style="background:#fdf6ec;border-radius:8px;padding:12px">
-            <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#b7791f">Da incassare</div>
-            <div id="amm-manca" style="font-size:20px;font-weight:700;color:#7a5c00">€ ${eur(ammManca0)}</div>
-          </div>
-        </div>
-        ${ammActorList}
-      </div>
-    </div>
-
     ${(p.obiettivi || p.note) ? `<div class="card">
       ${p.obiettivi ? `<div style="margin-bottom:${p.note?'12px':'0'}"><div class="field-label">Obiettivi aziendali</div><div class="field-value" style="white-space:pre-wrap">${esc(p.obiettivi)}</div></div>` : ''}
       ${p.note ? `<div><div class="field-label">Note</div><div class="field-value" style="white-space:pre-wrap">${esc(p.note)}</div></div>` : ''}
@@ -2477,6 +2452,31 @@ function progettoDettaglioPage(p, coachee, req) {
           <button id="pag-btn" onclick="togglePagComm()" class="btn btn-neutral btn-sm"></button>
           <button onclick="salvaQuota()" class="btn btn-primary btn-sm">Salva quota</button>
         </div>
+      </div>
+    </div>
+
+    <div class="card" id="amm" style="margin-bottom:18px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <div class="field-label" style="margin:0">Amministrazione</div>
+        <span style="font-size:12px;color:var(--muted)">colpo d'occhio sui pagamenti</span>
+      </div>
+      <div id="amm-empty" style="display:${ammQuoteSet ? 'none' : 'block'};font-size:13px;color:var(--muted)">Quote non ancora impostate — questo progetto è in pre-intake. Imposta la quota qui sopra.</div>
+      <div id="amm-body" style="display:${ammQuoteSet ? 'block' : 'none'}">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:4px">
+          <div style="background:#f4f7fa;border-radius:8px;padding:12px">
+            <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#9AA0AA">Atteso</div>
+            <div id="amm-atteso" style="font-size:20px;font-weight:700;color:var(--ink)">€ ${eur(ammAtteso0)}</div>
+          </div>
+          <div style="background:#eafaf1;border-radius:8px;padding:12px">
+            <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#4F8B73">Incassato</div>
+            <div id="amm-incassato" style="font-size:20px;font-weight:700;color:#065f46">€ ${eur(ammIncassato0)}</div>
+          </div>
+          <div style="background:#fdf6ec;border-radius:8px;padding:12px">
+            <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#b7791f">Da incassare</div>
+            <div id="amm-manca" style="font-size:20px;font-weight:700;color:#7a5c00">€ ${eur(ammManca0)}</div>
+          </div>
+        </div>
+        ${ammActorList}
       </div>
     </div>
 
