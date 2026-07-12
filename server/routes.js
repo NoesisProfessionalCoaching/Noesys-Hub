@@ -2371,8 +2371,9 @@ function progettoDettaglioPage(p, coachee, req) {
         <input class="q-coachee" data-part="${k.part_id}" type="number" step="0.01" min="0" value="${qc != null ? qc : ''}" oninput="updateCoacheeSum()" placeholder="€" style="width:100px">
       </td>
       <td style="white-space:nowrap" onclick="event.stopPropagation()">
-        <span class="badge" style="background:${ric ? '#d1fae5' : '#fff8dc'};color:${ric ? '#065f46' : '#7a5c00'}">${ric ? 'Ricevuto' : 'Atteso'}</span>${ric && dtc ? ` <span style="font-size:11px;color:#aaa">${dtc}</span>` : ''}
-        <button onclick="togglePagCoachee('${k.part_id}','${stc}')" class="btn btn-neutral btn-sm">${ric ? 'Segna atteso' : 'Segna ricevuto'}</button>
+        <span id="badge-${k.part_id}" class="badge" style="background:${ric ? '#d1fae5' : '#fff8dc'};color:${ric ? '#065f46' : '#7a5c00'}">${ric ? 'Ricevuto' : 'Atteso'}</span>
+        <span id="pagdata-${k.part_id}" style="font-size:11px;color:#aaa">${ric && dtc ? dtc : ''}</span>
+        <button id="pagbtn-${k.part_id}" data-stato="${stc}" onclick="togglePagCoachee('${k.part_id}')" class="btn btn-neutral btn-sm">${ric ? 'Segna atteso' : 'Segna ricevuto'}</button>
       </td>
       <td style="white-space:nowrap" onclick="event.stopPropagation()">
         <button onclick="copyLink('${PLATFORM_URL}/c/${k.token}')" class="btn btn-neutral btn-sm">🔗 Link</button>
@@ -2476,8 +2477,9 @@ function progettoDettaglioPage(p, coachee, req) {
 
     // ── Fase 3B: quota del progetto ──
     let pagStato = ${JSON.stringify(statoComm)};
-    const Q_DATA = ${JSON.stringify(p.data_pag_committente ? itDate(p.data_pag_committente) : '')};
+    let pagData = ${JSON.stringify(p.data_pag_committente ? itDate(p.data_pag_committente) : '')};
     function euro(n) { return n.toLocaleString('it-IT', { minimumFractionDigits:2, maximumFractionDigits:2 }); }
+    function oggiIt() { const d=new Date(); const z=n=>String(n).padStart(2,'0'); return z(d.getDate())+'/'+z(d.getMonth()+1)+'/'+d.getFullYear(); }
     function recalcQuota() {
       const tot = parseFloat(document.getElementById('q-totale').value);
       const comm = parseFloat(document.getElementById('q-comm').value);
@@ -2533,12 +2535,25 @@ function progettoDettaglioPage(p, coachee, req) {
       const d = await r.json();
       if (d.ok) showToast('Quote coachee salvate'); else alert(d.error || 'Errore');
     }
-    async function togglePagCoachee(partId, stato) {
-      const nuovo = stato === 'ricevuto' ? 'atteso' : 'ricevuto';
+    function paintPagCoachee(partId, stato) {
+      const ric = stato === 'ricevuto';
+      const badge = document.getElementById('badge-'+partId);
+      const dataEl = document.getElementById('pagdata-'+partId);
+      const btn = document.getElementById('pagbtn-'+partId);
+      badge.textContent = ric ? 'Ricevuto' : 'Atteso';
+      badge.style.background = ric ? '#d1fae5' : '#fff8dc';
+      badge.style.color = ric ? '#065f46' : '#7a5c00';
+      dataEl.textContent = ric ? oggiIt() : '';
+      btn.textContent = ric ? 'Segna atteso' : 'Segna ricevuto';
+      btn.dataset.stato = stato;
+    }
+    async function togglePagCoachee(partId) {
+      const btn = document.getElementById('pagbtn-'+partId);
+      const nuovo = btn.dataset.stato === 'ricevuto' ? 'atteso' : 'ricevuto';
       const r = await fetch('/dashboard/progetti/'+PID+'/coachee/'+partId+'/pagamento', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ stato:nuovo }) });
       const d = await r.json();
       if (!d.ok) { alert(d.error || 'Errore'); return; }
-      location.reload();
+      paintPagCoachee(partId, nuovo);
     }
     function fromPct() {
       const tot = parseFloat(document.getElementById('q-totale').value);
@@ -2562,7 +2577,7 @@ function progettoDettaglioPage(p, coachee, req) {
       if (pagStato === 'ricevuto') {
         badge.textContent = 'Ricevuto'; badge.style.background = '#d1fae5'; badge.style.color = '#065f46';
         btn.textContent = 'Segna atteso';
-        dataEl.textContent = Q_DATA ? ('il ' + Q_DATA) : '';
+        dataEl.textContent = pagData ? ('il ' + pagData) : '';
       } else {
         badge.textContent = 'Atteso'; badge.style.background = '#fff8dc'; badge.style.color = '#7a5c00';
         btn.textContent = 'Segna ricevuto';
@@ -2574,7 +2589,9 @@ function progettoDettaglioPage(p, coachee, req) {
       const r = await fetch('/dashboard/progetti/'+PID+'/pag-committente', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ stato:nuovo }) });
       const d = await r.json();
       if (!d.ok) { alert(d.error || 'Errore'); return; }
-      location.reload();
+      pagStato = nuovo;
+      pagData = nuovo === 'ricevuto' ? oggiIt() : '';
+      renderPag();
     }
 
     function openAdd() {
