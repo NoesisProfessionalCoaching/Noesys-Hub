@@ -2383,6 +2383,31 @@ function progettoDettaglioPage(p, coachee, req) {
     </tr>`;
   }).join('') : `<tr><td colspan="4" class="empty">Nessun coachee collegato. Aggiungi la prima persona.</td></tr>`;
 
+  // ── Amministrazione: colpo d'occhio sui soldi. SOLA LETTURA, tutto derivato
+  // dai dati già in pagina (quote + stati pagamento). NIENTE scrittura, payments
+  // non si tocca. La verità dell'Atteso è la quota totale T (scelta di Germano).
+  const eur = n => Number(n || 0).toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const ammCommRic = statoComm === 'ricevuto';
+  const ammParts = coachee.map(k => k.part_id);
+  const ammQuoteSet = qTot != null && qTot > 0;
+  let ammIncassato0 = ammCommRic ? (qComm || 0) : 0;
+  coachee.forEach(k => {
+    if ((k.stato_pag_coachee || 'atteso') === 'ricevuto') ammIncassato0 += (k.quota_coachee != null ? Number(k.quota_coachee) : 0);
+  });
+  const ammAtteso0 = qTot != null ? qTot : 0;
+  const ammManca0  = Math.max(ammAtteso0 - ammIncassato0, 0);
+  const ammActorRow = (nome, ruolo, qId, sId, q, ric) => `
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-top:1px solid #eef1f5">
+        <div><strong style="font-size:13px">${esc(nome)}</strong> <span style="font-size:11px;color:#aaa">${ruolo}</span></div>
+        <div style="display:flex;align-items:center;gap:14px">
+          <span id="${qId}" style="font-size:13px;color:#4a5568">€ ${eur(q)}</span>
+          <span id="${sId}" style="font-size:12px;font-weight:600;white-space:nowrap;color:${ric ? '#065f46' : '#7a5c00'}">${ric ? '✓ incassato' : '⌛ da incassare'}</span>
+        </div>
+      </div>`;
+  const ammActorList = ammActorRow(p.committente_nome, 'committente', 'amm-q-comm', 'amm-s-comm', qComm || 0, ammCommRic)
+    + coachee.map(k => ammActorRow(k.name, 'coachee', 'amm-q-' + k.part_id, 'amm-s-' + k.part_id,
+        k.quota_coachee != null ? Number(k.quota_coachee) : 0, (k.stato_pag_coachee || 'atteso') === 'ricevuto')).join('');
+
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — ${esc(p.titolo)}</title>${baseStyle()}</head><body>
   ${appBar({ home:'/dashboard', right:`<a href="/dashboard/progetti" class="btn btn-neutral btn-sm">← Progetti</a><a href="/dashboard/committenti" class="btn btn-neutral btn-sm">Committenti</a><a href="/logout" class="btn btn-neutral btn-sm">Esci</a>` })}
   <div class="container" style="max-width:820px">
@@ -2394,6 +2419,31 @@ function progettoDettaglioPage(p, coachee, req) {
         <span class="badge" style="background:#eef1f5;color:#4a5568">${TIPO_LABEL[p.tipo] || esc(p.tipo)}</span>
         <span class="badge" style="background:${sc.bg};color:${sc.color}">${sc.label}</span>
         ${p.data_inizio ? `<span class="badge" style="background:#eef1f5;color:#7a8089">Inizio ${itDate(p.data_inizio)}</span>` : ''}
+      </div>
+    </div>
+
+    <div class="card" id="amm" style="margin-bottom:18px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <div class="field-label" style="margin:0">Amministrazione</div>
+        <span style="font-size:12px;color:var(--muted)">colpo d'occhio sui pagamenti</span>
+      </div>
+      <div id="amm-empty" style="display:${ammQuoteSet ? 'none' : 'block'};font-size:13px;color:var(--muted)">Quote non ancora impostate — questo progetto è in pre-intake. Imposta la quota qui sotto.</div>
+      <div id="amm-body" style="display:${ammQuoteSet ? 'block' : 'none'}">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:4px">
+          <div style="background:#f4f7fa;border-radius:8px;padding:12px">
+            <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#9AA0AA">Atteso</div>
+            <div id="amm-atteso" style="font-size:20px;font-weight:700;color:var(--ink)">€ ${eur(ammAtteso0)}</div>
+          </div>
+          <div style="background:#eafaf1;border-radius:8px;padding:12px">
+            <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#4F8B73">Incassato</div>
+            <div id="amm-incassato" style="font-size:20px;font-weight:700;color:#065f46">€ ${eur(ammIncassato0)}</div>
+          </div>
+          <div style="background:#fdf6ec;border-radius:8px;padding:12px">
+            <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#b7791f">Da incassare</div>
+            <div id="amm-manca" style="font-size:20px;font-weight:700;color:#7a5c00">€ ${eur(ammManca0)}</div>
+          </div>
+        </div>
+        ${ammActorList}
       </div>
     </div>
 
@@ -2480,6 +2530,36 @@ function progettoDettaglioPage(p, coachee, req) {
     let pagData = ${JSON.stringify(p.data_pag_committente ? itDate(p.data_pag_committente) : '')};
     function euro(n) { return n.toLocaleString('it-IT', { minimumFractionDigits:2, maximumFractionDigits:2 }); }
     function oggiIt() { const d=new Date(); const z=n=>String(n).padStart(2,'0'); return z(d.getDate())+'/'+z(d.getMonth()+1)+'/'+d.getFullYear(); }
+
+    // ── Amministrazione (live): rilegge quote e stati dalla pagina e ricalcola i totali.
+    // SOLA LETTURA: non scrive nulla, riflette solo ciò che è già in pagina.
+    const AMM_PARTS = ${JSON.stringify(ammParts)};
+    function ammSetStato(el, ric) { if (!el) return; el.textContent = ric ? '✓ incassato' : '⌛ da incassare'; el.style.color = ric ? '#065f46' : '#7a5c00'; }
+    function renderAmministrazione() {
+      const tot = parseFloat(document.getElementById('q-totale').value);
+      const body = document.getElementById('amm-body');
+      const empty = document.getElementById('amm-empty');
+      if (!isFinite(tot) || tot <= 0) { body.style.display = 'none'; empty.style.display = 'block'; return; }
+      body.style.display = 'block'; empty.style.display = 'none';
+      const qc = parseFloat(document.getElementById('q-comm').value) || 0;
+      const commRic = pagStato === 'ricevuto';
+      document.getElementById('amm-q-comm').textContent = '€ ' + euro(qc);
+      ammSetStato(document.getElementById('amm-s-comm'), commRic);
+      let incassato = commRic ? qc : 0;
+      AMM_PARTS.forEach(function(part) {
+        const inp = document.querySelector('.q-coachee[data-part="' + part + '"]');
+        const q = inp ? (parseFloat(inp.value) || 0) : 0;
+        const btn = document.getElementById('pagbtn-' + part);
+        const ric = !!(btn && btn.dataset.stato === 'ricevuto');
+        const qEl = document.getElementById('amm-q-' + part);
+        if (qEl) qEl.textContent = '€ ' + euro(q);
+        ammSetStato(document.getElementById('amm-s-' + part), ric);
+        if (ric) incassato += q;
+      });
+      document.getElementById('amm-atteso').textContent = '€ ' + euro(tot);
+      document.getElementById('amm-incassato').textContent = '€ ' + euro(incassato);
+      document.getElementById('amm-manca').textContent = '€ ' + euro(Math.max(tot - incassato, 0));
+    }
     function recalcQuota() {
       const tot = parseFloat(document.getElementById('q-totale').value);
       const comm = parseFloat(document.getElementById('q-comm').value);
@@ -2497,6 +2577,7 @@ function progettoDettaglioPage(p, coachee, req) {
           : 'Resta da dividere tra i coachee: € ' + euro(resto) + '  ·  il committente copre ' + pct + '%';
       }
       updateCoacheeSum();
+      renderAmministrazione();
     }
 
     // ── Fase 3B Pezzo 2: divisione tra i coachee ──
@@ -2528,6 +2609,7 @@ function progettoDettaglioPage(p, coachee, req) {
       const diff = Math.round((somma - resto) * 100) / 100;
       if (diff === 0) { el.style.color = '#4F8B73'; el.textContent = 'I coachee coprono € ' + euro(somma) + ' su € ' + euro(resto) + ' — torna.'; }
       else { el.style.color = '#c0392b'; el.textContent = 'I coachee coprono € ' + euro(somma) + ' su € ' + euro(resto) + ' (' + (diff > 0 ? '+' : '') + euro(diff) + ').'; }
+      renderAmministrazione();
     }
     async function salvaQuoteCoachee() {
       const quote = coacheeInputs().map(i => ({ part_id: i.getAttribute('data-part'), quota: i.value }));
@@ -2546,6 +2628,7 @@ function progettoDettaglioPage(p, coachee, req) {
       dataEl.textContent = ric ? oggiIt() : '';
       btn.textContent = ric ? 'Segna atteso' : 'Segna ricevuto';
       btn.dataset.stato = stato;
+      renderAmministrazione();
     }
     async function togglePagCoachee(partId) {
       const btn = document.getElementById('pagbtn-'+partId);
@@ -2583,6 +2666,7 @@ function progettoDettaglioPage(p, coachee, req) {
         btn.textContent = 'Segna ricevuto';
         dataEl.textContent = '';
       }
+      renderAmministrazione();
     }
     async function togglePagComm() {
       const nuovo = pagStato === 'ricevuto' ? 'atteso' : 'ricevuto';
