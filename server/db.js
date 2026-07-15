@@ -233,7 +233,7 @@ async function init() {
       titolo         TEXT NOT NULL,
       area           TEXT NOT NULL DEFAULT 'Business',    -- 'Business' | 'Young'
       tipo           TEXT NOT NULL DEFAULT 'individuale',  -- 'individuale' | 'team' | 'group'
-      stato          TEXT NOT NULL DEFAULT 'pre-intake',   -- pre-intake→proposta→attivo→chiuso (+ perso)
+      stato          TEXT NOT NULL DEFAULT 'attivo',       -- stato della relazione: attivo | in pausa | concluso
       obiettivi      TEXT,
       note           TEXT,
       data_inizio    DATE,
@@ -277,6 +277,12 @@ async function init() {
   await query(`ALTER TABLE progetti ADD COLUMN IF NOT EXISTS stato_pag_committente TEXT DEFAULT 'atteso'`);
   await query(`ALTER TABLE progetti ADD COLUMN IF NOT EXISTS data_pag_committente  DATE`);
   await query(`ALTER TABLE partecipazioni ADD COLUMN IF NOT EXISTS data_pag_coachee DATE`);
+
+  // Fase 0 (2026-07-15) — stato del progetto = stato della relazione, 3 valori
+  // come per il cliente individuale: attivo | in pausa | concluso. I vecchi stati
+  // di pipeline (pre-intake/proposta/chiuso/perso) vengono rimappati una tantum.
+  await query(`UPDATE progetti SET stato='attivo'   WHERE stato IN ('pre-intake','proposta')`);
+  await query(`UPDATE progetti SET stato='concluso' WHERE stato IN ('chiuso','perso')`);
 
   // Stesso account coach della piattaforma strumenti (solo per il DB di test:
   // sul DB reale condiviso la riga esiste già).

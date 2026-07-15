@@ -781,7 +781,8 @@ router.delete('/dashboard/committenti/:id', requireCoach, async (req, res) => {
 
 const AREE_PROGETTO  = ['Business', 'Young'];
 const TIPI_PROGETTO  = ['individuale', 'team', 'group'];
-const STATI_PROGETTO = ['pre-intake', 'proposta', 'attivo', 'chiuso', 'perso'];
+// Stato del progetto = stato della relazione (come per il cliente individuale).
+const STATI_PROGETTO = ['attivo', 'in pausa', 'concluso'];
 
 router.get('/dashboard/progetti', requireCoach, async (req, res) => {
   try {
@@ -812,7 +813,7 @@ router.post('/dashboard/progetti', requireCoach, express.json(), async (req, res
       [id, committente_id, titolo.trim(),
        AREE_PROGETTO.includes(area) ? area : 'Business',
        TIPI_PROGETTO.includes(tipo) ? tipo : 'individuale',
-       STATI_PROGETTO.includes(stato) ? stato : 'pre-intake',
+       STATI_PROGETTO.includes(stato) ? stato : 'attivo',
        (obiettivi||'').trim(), (note||'').trim(), data_inizio||null]
     );
     res.json({ ok: true, id });
@@ -833,7 +834,7 @@ router.post('/dashboard/progetti/:id', requireCoach, express.json(), async (req,
       [committente_id, titolo.trim(),
        AREE_PROGETTO.includes(area) ? area : 'Business',
        TIPI_PROGETTO.includes(tipo) ? tipo : 'individuale',
-       STATI_PROGETTO.includes(stato) ? stato : 'pre-intake',
+       STATI_PROGETTO.includes(stato) ? stato : 'attivo',
        (obiettivi||'').trim(), (note||'').trim(), data_inizio||null, req.params.id]
     );
     res.json({ ok: true });
@@ -2248,11 +2249,9 @@ function committentiPage(committenti, req) {
 // ═══════════════════════════════════════════════════════
 function progettiPage(progetti, committenti, req) {
   const STATO_CFG = {
-    'pre-intake': { label:'Pre-intake', bg:'#eae6f7', color:'#4c3a86' },
-    'proposta':   { label:'Proposta',   bg:'#fff8dc', color:'#7a5c00' },
-    'attivo':     { label:'Attivo',     bg:'#d1fae5', color:'#065f46' },
-    'chiuso':     { label:'Chiuso',     bg:'#eef1f5', color:'#7a8089' },
-    'perso':      { label:'Perso',      bg:'#fdf0ef', color:'#c0392b' },
+    'attivo':   { label:'Attivo',   bg:'#d1fae5', color:'#065f46' },
+    'in pausa': { label:'In pausa', bg:'#fff8dc', color:'#7a5c00' },
+    'concluso': { label:'Concluso', bg:'#eef1f5', color:'#7a8089' },
   };
   const TIPO_LABEL = { individuale:'Individuale', team:'Team', group:'Group' };
   const AREA_COL   = { Business:'#4F8B73', Young:'#D8AE2E' };
@@ -2261,7 +2260,7 @@ function progettiPage(progetti, committenti, req) {
   const commOptions = committenti.map(c => `<option value="${c.id}">${esc(c.denominazione)}</option>`).join('');
 
   function renderRow(p) {
-    const sc = STATO_CFG[p.stato] || STATO_CFG['pre-intake'];
+    const sc = STATO_CFG[p.stato] || STATO_CFG['attivo'];
     const ac = AREA_COL[p.area] || '#1A5280';
     const n = Number(p.n_coachee) || 0;
     return `<tr onclick="location.href='/dashboard/progetti/${p.id}'" style="cursor:pointer">
@@ -2289,7 +2288,7 @@ function progettiPage(progetti, committenti, req) {
         ? `<a href="/dashboard/committenti" class="btn btn-primary">+ Crea prima un committente</a>`
         : `<button onclick="openNew()" class="btn btn-primary">+ Nuovo progetto</button>`}
     </div>
-    <p style="color:var(--muted);font-size:12.5px;margin-bottom:16px">Il percorso commissionato da un committente. In Business/Young con sponsor è qui che nasce la trattativa (pre-intake → proposta → attivo).</p>
+    <p style="color:var(--muted);font-size:12.5px;margin-bottom:16px">Il percorso commissionato da un committente (Business/Young con sponsor). Lo stato segue la relazione: attivo · in pausa · concluso.</p>
 
     <input id="cerca" type="search" placeholder="🔍 Cerca progetto (titolo, committente…)" oninput="filtra()" style="margin-bottom:14px">
 
@@ -2316,7 +2315,7 @@ function progettiPage(progetti, committenti, req) {
         <div class="form-group"><label>Tipo</label>
           <select id="p-tipo"><option value="individuale">Individuale</option><option value="team">Team</option><option value="group">Group</option></select></div>
         <div class="form-group"><label>Stato</label>
-          <select id="p-stato"><option value="pre-intake">Pre-intake</option><option value="proposta">Proposta</option><option value="attivo">Attivo</option><option value="chiuso">Chiuso</option><option value="perso">Perso</option></select></div>
+          <select id="p-stato"><option value="attivo">Attivo</option><option value="in pausa">In pausa</option><option value="concluso">Concluso</option></select></div>
       </div>
       <div class="form-group"><label>Data inizio</label><input id="p-data" type="date"></div>
       <div class="form-group"><label>Obiettivi (aziendali)</label><textarea id="p-obiettivi" placeholder="obiettivi del committente per questo progetto"></textarea></div>
@@ -2345,7 +2344,7 @@ function progettiPage(progetti, committenti, req) {
       document.getElementById('p-committente').value = '';
       document.getElementById('p-area').value = 'Business';
       document.getElementById('p-tipo').value = 'individuale';
-      document.getElementById('p-stato').value = 'pre-intake';
+      document.getElementById('p-stato').value = 'attivo';
       document.getElementById('modal-prog').style.display = 'flex';
     }
     function editProg(p) {
@@ -2385,15 +2384,13 @@ function progettiPage(progetti, committenti, req) {
 // ═══════════════════════════════════════════════════════
 function progettoDettaglioPage(p, coachee, req) {
   const STATO_CFG = {
-    'pre-intake': { label:'Pre-intake', bg:'#eae6f7', color:'#4c3a86' },
-    'proposta':   { label:'Proposta',   bg:'#fff8dc', color:'#7a5c00' },
-    'attivo':     { label:'Attivo',     bg:'#d1fae5', color:'#065f46' },
-    'chiuso':     { label:'Chiuso',     bg:'#eef1f5', color:'#7a8089' },
-    'perso':      { label:'Perso',      bg:'#fdf0ef', color:'#c0392b' },
+    'attivo':   { label:'Attivo',   bg:'#d1fae5', color:'#065f46' },
+    'in pausa': { label:'In pausa', bg:'#fff8dc', color:'#7a5c00' },
+    'concluso': { label:'Concluso', bg:'#eef1f5', color:'#7a8089' },
   };
   const TIPO_LABEL = { individuale:'Individuale', team:'Team', group:'Group' };
   const AREA_COL   = { Business:'#4F8B73', Young:'#D8AE2E' };
-  const sc = STATO_CFG[p.stato] || STATO_CFG['pre-intake'];
+  const sc = STATO_CFG[p.stato] || STATO_CFG['attivo'];
   const ac = AREA_COL[p.area] || '#1A5280';
 
   // Fase 3B — quota del progetto (pg restituisce i NUMERIC come stringa).
@@ -2418,16 +2415,15 @@ function progettoDettaglioPage(p, coachee, req) {
         <button id="pagbtn-${k.part_id}" data-stato="${stc}" onclick="togglePagCoachee('${k.part_id}')" class="btn btn-neutral btn-sm">${ric ? 'Segna atteso' : 'Segna ricevuto'}</button>
       </td>
       <td style="white-space:nowrap" onclick="event.stopPropagation()">
-        <button onclick="copyLink('${PLATFORM_URL}/c/${k.token}')" class="btn btn-neutral btn-sm">🔗 Link</button>
         <a href="/dashboard/clients/${k.client_id}" class="btn btn-neutral btn-sm">Scheda</a>
         <button onclick="removeCoachee('${k.part_id}')" class="btn btn-danger btn-sm">✕</button>
       </td>
     </tr>`;
   }).join('') : `<tr><td colspan="4" class="empty">Nessun coachee collegato. Aggiungi la prima persona.</td></tr>`;
 
-  // ── Amministrazione: colpo d'occhio sui soldi. SOLA LETTURA, tutto derivato
-  // dai dati già in pagina (quote + stati pagamento). NIENTE scrittura, payments
-  // non si tocca. La verità dell'Atteso è la quota totale T (scelta di Germano).
+  // ── Amministrazione: unica scheda modificabile (quota + attori + colpo d'occhio).
+  // I tre totali sono DERIVATI dai dati in pagina; le quote/stati si modificano qui
+  // e si salvano con "Salva". payments NON si tocca. Verità dell'Atteso = quota T.
   const eur = n => Number(n || 0).toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const ammCommRic = statoComm === 'ricevuto';
   const ammParts = coachee.map(k => k.part_id);
@@ -2438,17 +2434,20 @@ function progettoDettaglioPage(p, coachee, req) {
   });
   const ammAtteso0 = qTot != null ? qTot : 0;
   const ammManca0  = Math.max(ammAtteso0 - ammIncassato0, 0);
-  const ammActorRow = (nome, ruolo, qId, sId, q, ric) => `
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-top:1px solid #eef1f5">
-        <div><strong style="font-size:13px">${esc(nome)}</strong> <span style="font-size:11px;color:#aaa">${ruolo}</span></div>
-        <div style="display:flex;align-items:center;gap:14px">
-          <span id="${qId}" style="font-size:13px;color:#4a5568">€ ${eur(q)}</span>
-          <span id="${sId}" style="font-size:12px;font-weight:600;white-space:nowrap;color:${ric ? '#065f46' : '#7a5c00'}">${ric ? '✓ incassato' : '⌛ da incassare'}</span>
-        </div>
-      </div>`;
-  const ammActorList = ammActorRow(p.committente_nome, 'committente', 'amm-q-comm', 'amm-s-comm', qComm || 0, ammCommRic)
-    + coachee.map(k => ammActorRow(k.name, 'coachee', 'amm-q-' + k.part_id, 'amm-s-' + k.part_id,
-        k.quota_coachee != null ? Number(k.quota_coachee) : 0, (k.stato_pag_coachee || 'atteso') === 'ricevuto')).join('');
+
+  // Riga committente della tabella attori (una fattura sola; niente scheda coachee).
+  const commRow = `
+    <tr>
+      <td><strong>${esc(p.committente_nome)}</strong><br><span style="font-size:11px;color:#aaa">committente</span></td>
+      <td onclick="event.stopPropagation()">
+        <input id="q-comm" type="number" step="0.01" min="0" value="${qComm != null ? qComm : ''}" placeholder="€" oninput="recalcQuota()" style="width:100px"></td>
+      <td style="white-space:nowrap" onclick="event.stopPropagation()">
+        <span id="pag-badge" class="badge"></span>
+        <span id="pag-data" style="font-size:11px;color:#aaa"></span>
+        <button id="pag-btn" onclick="togglePagComm()" class="btn btn-neutral btn-sm"></button>
+      </td>
+      <td></td>
+    </tr>`;
 
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — ${esc(p.titolo)}</title>${baseStyle()}</head><body>
   ${appBar({ home:'/dashboard', right:`<a href="/dashboard/progetti" class="btn btn-neutral btn-sm">← Progetti</a><a href="/dashboard/committenti" class="btn btn-neutral btn-sm">Committenti</a><a href="/logout" class="btn btn-neutral btn-sm">Esci</a>` })}
@@ -2469,42 +2468,20 @@ function progettoDettaglioPage(p, coachee, req) {
       ${p.note ? `<div><div class="field-label">Note</div><div class="field-value" style="white-space:pre-wrap">${esc(p.note)}</div></div>` : ''}
     </div>` : ''}
 
-    <div class="card" style="margin-bottom:18px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-        <div class="field-label" style="margin:0">Quota del progetto</div>
-        <span style="font-size:12px;color:var(--muted)">decisa in pre-intake</span>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div class="form-group" style="margin:0"><label>Quota totale (€)</label>
-          <input id="q-totale" type="number" step="0.01" min="0" value="${qTot != null ? qTot : ''}" placeholder="es. 2700" oninput="recalcQuota()"></div>
-        <div class="form-group" style="margin:0"><label>Paga il committente</label>
-          <div style="display:flex;gap:8px">
-            <input id="q-comm" type="number" step="0.01" min="0" value="${qComm != null ? qComm : ''}" placeholder="€" oninput="recalcQuota()" style="flex:2">
-            <input id="q-comm-pct" type="number" step="1" min="0" max="100" placeholder="%" oninput="fromPct()" style="flex:1">
-          </div>
-        </div>
-      </div>
-      <div id="q-riepilogo" style="margin-top:12px;padding:10px 12px;background:#f4f7fa;border-radius:8px;font-size:13px;color:#4a5568"></div>
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px;flex-wrap:wrap;gap:10px">
-        <div style="font-size:13px">Pagamento committente:
-          <span id="pag-badge" class="badge"></span>
-          <span id="pag-data" style="font-size:12px;color:var(--muted)"></span>
-        </div>
-        <div style="display:flex;gap:8px">
-          <button id="pag-btn" onclick="togglePagComm()" class="btn btn-neutral btn-sm"></button>
-          <button onclick="salvaQuota()" class="btn btn-primary btn-sm">Salva quota</button>
-        </div>
-      </div>
-    </div>
-
     <div class="card" id="amm" style="margin-bottom:18px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
         <div class="field-label" style="margin:0">Amministrazione</div>
-        <span style="font-size:12px;color:var(--muted)">colpo d'occhio sui pagamenti</span>
+        <span style="font-size:12px;color:var(--muted)">quote e pagamenti del progetto</span>
       </div>
-      <div id="amm-empty" style="display:${ammQuoteSet ? 'none' : 'block'};font-size:13px;color:var(--muted)">Quote non ancora impostate — questo progetto è in pre-intake. Imposta la quota qui sopra.</div>
-      <div id="amm-body" style="display:${ammQuoteSet ? 'block' : 'none'}">
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:4px">
+
+      <div class="form-group" style="margin:0 0 14px">
+        <label>Quota totale del progetto (€)</label>
+        <input id="q-totale" type="number" step="0.01" min="0" value="${qTot != null ? qTot : ''}" placeholder="es. 2700" oninput="recalcQuota()" style="max-width:220px">
+      </div>
+
+      <div id="amm-empty" style="display:${ammQuoteSet ? 'none' : 'block'};font-size:13px;color:var(--muted);margin-bottom:14px">Imposta la quota totale per vedere il riepilogo.</div>
+      <div id="amm-body" style="display:${ammQuoteSet ? 'block' : 'none'};margin-bottom:14px">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
           <div style="background:#f4f7fa;border-radius:8px;padding:12px">
             <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#9AA0AA">Atteso</div>
             <div id="amm-atteso" style="font-size:20px;font-weight:700;color:var(--ink)">€ ${eur(ammAtteso0)}</div>
@@ -2518,31 +2495,28 @@ function progettoDettaglioPage(p, coachee, req) {
             <div id="amm-manca" style="font-size:20px;font-weight:700;color:#7a5c00">€ ${eur(ammManca0)}</div>
           </div>
         </div>
-        ${ammActorList}
       </div>
-    </div>
 
-    <div style="display:flex;align-items:center;justify-content:space-between;margin:22px 0 10px">
-      <h2 style="margin:0">Coachee <span style="color:#aaa;font-weight:500;font-size:13px">(${coachee.length})</span></h2>
-      <button onclick="openAdd()" class="btn btn-primary btn-sm">+ Aggiungi coachee</button>
-    </div>
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px">
-      <span id="coachee-sum" style="font-size:12.5px;color:var(--muted)"></span>
-      <div style="display:flex;gap:8px">
-        <button onclick="dividiEqui()" class="btn btn-neutral btn-sm">Dividi in parti uguali</button>
-        <button onclick="salvaQuoteCoachee()" class="btn btn-primary btn-sm">Salva quote coachee</button>
+      <div style="overflow-x:auto;margin:0 -4px">
+        <table style="min-width:520px">
+          <thead><tr>
+            <th style="text-align:left;font-size:12px;color:var(--muted)">Attore</th>
+            <th style="text-align:left;font-size:12px;color:var(--muted)">Quota (€)</th>
+            <th style="text-align:left;font-size:12px;color:var(--muted)">Pagamento</th>
+            <th></th>
+          </tr></thead>
+          <tbody>${commRow}${coacheeRows}</tbody>
+        </table>
       </div>
-    </div>
-    <div class="card" style="padding:0;overflow:hidden">
-      <table>
-        <thead><tr>
-          <th style="text-align:left;font-size:12px;color:var(--muted)">Coachee</th>
-          <th style="text-align:left;font-size:12px;color:var(--muted)">Quota (€)</th>
-          <th style="text-align:left;font-size:12px;color:var(--muted)">Pagamento</th>
-          <th></th>
-        </tr></thead>
-        <tbody>${coacheeRows}</tbody>
-      </table>
+
+      <div id="q-riepilogo" style="margin-top:12px;padding:10px 12px;background:#f4f7fa;border-radius:8px;font-size:13px;color:#4a5568"></div>
+      <div id="coachee-sum" style="font-size:12.5px;color:var(--muted);margin-top:8px"></div>
+
+      <div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:14px;flex-wrap:wrap">
+        <button onclick="openAdd()" class="btn btn-neutral btn-sm">+ Aggiungi coachee</button>
+        <button onclick="dividiEqui()" class="btn btn-neutral btn-sm">Dividi in parti uguali</button>
+        <button onclick="salvaTutto()" class="btn btn-primary btn-sm">Salva</button>
+      </div>
     </div>
   </div>
 
@@ -2573,10 +2547,8 @@ function progettoDettaglioPage(p, coachee, req) {
     function euro(n) { return n.toLocaleString('it-IT', { minimumFractionDigits:2, maximumFractionDigits:2 }); }
     function oggiIt() { const d=new Date(); const z=n=>String(n).padStart(2,'0'); return z(d.getDate())+'/'+z(d.getMonth()+1)+'/'+d.getFullYear(); }
 
-    // ── Amministrazione (live): rilegge quote e stati dalla pagina e ricalcola i totali.
-    // SOLA LETTURA: non scrive nulla, riflette solo ciò che è già in pagina.
+    // ── Amministrazione (live): i tre totali sono DERIVATI da quote + stati in pagina.
     const AMM_PARTS = ${JSON.stringify(ammParts)};
-    function ammSetStato(el, ric) { if (!el) return; el.textContent = ric ? '✓ incassato' : '⌛ da incassare'; el.style.color = ric ? '#065f46' : '#7a5c00'; }
     function renderAmministrazione() {
       const tot = parseFloat(document.getElementById('q-totale').value);
       const body = document.getElementById('amm-body');
@@ -2585,17 +2557,12 @@ function progettoDettaglioPage(p, coachee, req) {
       body.style.display = 'block'; empty.style.display = 'none';
       const qc = parseFloat(document.getElementById('q-comm').value) || 0;
       const commRic = pagStato === 'ricevuto';
-      document.getElementById('amm-q-comm').textContent = '€ ' + euro(qc);
-      ammSetStato(document.getElementById('amm-s-comm'), commRic);
       let incassato = commRic ? qc : 0;
       AMM_PARTS.forEach(function(part) {
         const inp = document.querySelector('.q-coachee[data-part="' + part + '"]');
         const q = inp ? (parseFloat(inp.value) || 0) : 0;
         const btn = document.getElementById('pagbtn-' + part);
         const ric = !!(btn && btn.dataset.stato === 'ricevuto');
-        const qEl = document.getElementById('amm-q-' + part);
-        if (qEl) qEl.textContent = '€ ' + euro(q);
-        ammSetStato(document.getElementById('amm-s-' + part), ric);
         if (ric) incassato += q;
       });
       document.getElementById('amm-atteso').textContent = '€ ' + euro(tot);
@@ -2606,14 +2573,12 @@ function progettoDettaglioPage(p, coachee, req) {
       const tot = parseFloat(document.getElementById('q-totale').value);
       const comm = parseFloat(document.getElementById('q-comm').value);
       const box = document.getElementById('q-riepilogo');
-      const pctField = document.getElementById('q-comm-pct');
       if (!isFinite(tot) || tot <= 0) {
         box.textContent = 'Inserisci la quota totale per vedere la divisione.';
       } else {
         const c = isFinite(comm) ? comm : 0;
         const resto = tot - c;
         const pct = Math.round(c / tot * 100);
-        if (document.activeElement !== pctField) pctField.value = c ? pct : '';
         box.textContent = resto < 0
           ? 'Attenzione: il committente paga piu della quota totale.'
           : 'Resta da dividere tra i coachee: € ' + euro(resto) + '  ·  il committente copre ' + pct + '%';
@@ -2653,11 +2618,17 @@ function progettoDettaglioPage(p, coachee, req) {
       else { el.style.color = '#c0392b'; el.textContent = 'I coachee coprono € ' + euro(somma) + ' su € ' + euro(resto) + ' (' + (diff > 0 ? '+' : '') + euro(diff) + ').'; }
       renderAmministrazione();
     }
-    async function salvaQuoteCoachee() {
+    async function salvaTutto() {
+      // 1) quota totale + quota committente sul progetto
+      const rq = await fetch('/dashboard/progetti/'+PID+'/quota', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ quota_totale: document.getElementById('q-totale').value, quota_committente: document.getElementById('q-comm').value }) });
+      const dq = await rq.json();
+      if (!dq.ok) { alert(dq.error || 'Errore nel salvataggio della quota'); return; }
+      // 2) quote dei coachee
       const quote = coacheeInputs().map(i => ({ part_id: i.getAttribute('data-part'), quota: i.value }));
-      const r = await fetch('/dashboard/progetti/'+PID+'/quote-coachee', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ quote }) });
-      const d = await r.json();
-      if (d.ok) showToast('Quote coachee salvate'); else alert(d.error || 'Errore');
+      const rc = await fetch('/dashboard/progetti/'+PID+'/quote-coachee', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ quote }) });
+      const dc = await rc.json();
+      if (!dc.ok) { alert(dc.error || 'Errore nel salvataggio delle quote coachee'); return; }
+      showToast('Salvato');
     }
     function paintPagCoachee(partId, stato) {
       const ric = stato === 'ricevuto';
@@ -2679,21 +2650,6 @@ function progettoDettaglioPage(p, coachee, req) {
       const d = await r.json();
       if (!d.ok) { alert(d.error || 'Errore'); return; }
       paintPagCoachee(partId, nuovo);
-    }
-    function fromPct() {
-      const tot = parseFloat(document.getElementById('q-totale').value);
-      const pct = parseFloat(document.getElementById('q-comm-pct').value);
-      if (isFinite(tot) && isFinite(pct)) document.getElementById('q-comm').value = Math.round(tot * pct) / 100;
-      recalcQuota();
-    }
-    async function salvaQuota() {
-      const payload = {
-        quota_totale: document.getElementById('q-totale').value,
-        quota_committente: document.getElementById('q-comm').value
-      };
-      const r = await fetch('/dashboard/progetti/'+PID+'/quota', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
-      const d = await r.json();
-      if (d.ok) showToast('Quota salvata'); else alert(d.error || 'Errore');
     }
     function renderPag() {
       const badge = document.getElementById('pag-badge');
