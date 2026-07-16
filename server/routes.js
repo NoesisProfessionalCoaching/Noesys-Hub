@@ -191,7 +191,9 @@ router.get('/dashboard/clients/:id', requireCoach, async (req, res) => {
     if (!client) return res.redirect('/dashboard');
     const [sr, pr, payr, sedr, prjr] = await Promise.all([
       db.query('SELECT * FROM sessions WHERE client_id=$1 ORDER BY tool, created_at DESC', [req.params.id]),
-      db.query('SELECT * FROM percorsi WHERE client_id=$1 ORDER BY created_at ASC', [req.params.id]),
+      db.query(`SELECT p.*, prj.titolo AS progetto_titolo
+                FROM percorsi p LEFT JOIN progetti prj ON prj.id = p.progetto_id
+                WHERE p.client_id=$1 ORDER BY p.created_at ASC`, [req.params.id]),
       db.query('SELECT * FROM payments WHERE client_id=$1 ORDER BY created_at DESC', [req.params.id]),
       db.query('SELECT * FROM sedute WHERE client_id=$1 ORDER BY data ASC NULLS LAST, created_at ASC', [req.params.id]),
       // Progetti di cui il coachee fa parte: SOLA LETTURA, per riflettere la sua
@@ -286,15 +288,15 @@ router.delete('/dashboard/clients/:id', requireCoach, async (req, res) => {
 
 router.post('/dashboard/clients/:id/percorsi', requireCoach, express.json(), async (req, res) => {
   const { tipo, n_sessioni_previste, n_sessioni_fatte, prezzo, promo, sconto_note,
-          data_inizio, data_fine, modalita, ore_fatte, stato } = req.body;
+          data_inizio, data_fine, modalita, ore_fatte, stato, progetto_id } = req.body;
   try {
     const pid = uuidv4();
     await db.query(
-      `INSERT INTO percorsi (id,client_id,tipo,n_sessioni_previste,n_sessioni_fatte,prezzo,promo,sconto_note,data_inizio,data_fine,modalita,ore_fatte,stato)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+      `INSERT INTO percorsi (id,client_id,tipo,n_sessioni_previste,n_sessioni_fatte,prezzo,promo,sconto_note,data_inizio,data_fine,modalita,ore_fatte,stato,progetto_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
       [pid, req.params.id, tipo||'Individuale', n_sessioni_previste||8, n_sessioni_fatte||0,
        prezzo||null, promo||false, sconto_note||'', data_inizio||null, data_fine||null,
-       modalita||'Standard', ore_fatte||0, stato||'attivo']
+       modalita||'Standard', ore_fatte||0, stato||'attivo', progetto_id||null]
     );
     // Cartelle Drive del percorso: Percorsi/{gg-mm-aaaa}/{Intake,Ongoing,Final}.
     // Servono: cartella cliente (drive_url) + data inizio. Se manca l'una o l'altra,
@@ -1446,7 +1448,7 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, progetti
         <thead><tr><th>Tipo</th><th>Sessioni</th><th>Ore</th><th>Modalità</th><th>Prezzo</th><th>Periodo</th><th>Stato</th><th></th></tr></thead>
         <tbody>
           ${percorsi.map(p => `<tr>
-            <td><strong>${esc(p.tipo)}</strong></td>
+            <td><strong>${esc(p.tipo)}</strong>${p.progetto_titolo ? `<br><a href="/dashboard/progetti/${p.progetto_id}" class="badge" style="background:#e8f4fd;color:#1A5280;text-decoration:none">📁 ${esc(p.progetto_titolo)}</a>` : ''}</td>
             <td>
               <span style="font-size:13px;font-weight:700;color:var(--blue)">${p.n_sessioni_fatte}</span>
               <span style="font-size:11px;color:#aaa"> ${p.n_sessioni_fatte === 1 ? 'sessione' : 'sessioni'}</span>
@@ -1714,6 +1716,8 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, progetti
         <div class="form-group"><label>Ore svolte</label><input id="p-ore" type="number" step="0.5" min="0" value="0"></div>
         <div class="form-group"><label>Prezzo (€)</label><input id="p-prezzo" type="number" step="0.01" placeholder="es. 900"></div>
       </div>
+      ${progetti.length ? `<div class="form-group"><label>Progetto (facoltativo)</label>
+        <select id="p-progetto"><option value="">— nessuno (percorso individuale) —</option>${progetti.map(pr => `<option value="${pr.progetto_id}">${esc(pr.titolo)} · ${esc(pr.committente_nome)}</option>`).join('')}</select></div>` : ''}
       <div class="form-group"><label>Data inizio</label><input id="p-data" type="date"></div>
       <div class="form-group" style="display:flex;align-items:center;gap:8px">
         <input id="p-promo" type="checkbox" style="width:auto;margin:0">
@@ -1903,6 +1907,7 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, progetti
         promo: document.getElementById('p-promo').checked,
         sconto_note: document.getElementById('p-sconto').value,
         data_inizio: document.getElementById('p-data').value || null,
+        progetto_id: (document.getElementById('p-progetto') ? document.getElementById('p-progetto').value : '') || null,
       })});
       const d = await r.json().catch(()=>({}));
       if (d && d.driveWarning) alert(d.driveWarning);

@@ -288,6 +288,13 @@ async function init() {
   await query(`ALTER TABLE progetti ADD COLUMN IF NOT EXISTS referente_ruolo TEXT`);
   await query(`ALTER TABLE progetti ADD COLUMN IF NOT EXISTS referente_email TEXT`);
 
+  // B1 (2026-07-16) — un percorso può appartenere a un PROGETTO. Opzionale e nullo
+  // per tutti i percorsi esistenti (individuali fuori progetto = mondo di oggi).
+  // ON DELETE SET NULL: se si elimina il progetto, il percorso sopravvive e si
+  // stacca (non si perde il lavoro fatto). La gerarchia progetto→percorsi→sedute
+  // del documento parte da qui; i partecipanti multipli (team/group) arrivano in B2.
+  await query(`ALTER TABLE percorsi ADD COLUMN IF NOT EXISTS progetto_id TEXT REFERENCES progetti(id) ON DELETE SET NULL`);
+
   // Fase 0 (2026-07-15) — stato del progetto = stato della relazione, 3 valori
   // come per il cliente individuale: attivo | in pausa | concluso. I vecchi stati
   // di pipeline (pre-intake/proposta/chiuso/perso) vengono rimappati una tantum.
