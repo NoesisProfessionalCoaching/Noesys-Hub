@@ -2670,7 +2670,7 @@ function progettoDettaglioPage(p, coachee, req) {
       const quote = coacheeInputs().map(i => ({ part_id: i.getAttribute('data-part'), quota: i.value }));
       const rc = await fetch('/dashboard/progetti/'+PID+'/quote-coachee', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ quote }) });
       const dc = await rc.json();
-      if (!dc.ok) { alert(dc.error || 'Errore nel salvataggio delle quote coachee'); return; }
+      if (!dc.ok) { alert(dc.error || 'Errore nel salvataggio delle quote dei Clienti'); return; }
       showToast('Salvato');
     }
     function paintPagCoachee(partId, stato) {
@@ -2733,7 +2733,7 @@ function progettoDettaglioPage(p, coachee, req) {
       if (d.ok) location.reload(); else alert(d.error || 'Errore');
     }
     async function removeCoachee(partId) {
-      if (!confirm('Togliere questo coachee dal progetto? Se non ha ancora dati, viene eliminato anche dall\\'anagrafica.')) return;
+      if (!confirm('Togliere questo cliente dal progetto? Se non ha ancora dati, viene eliminato anche dall\\'anagrafica.')) return;
       const r = await fetch('/dashboard/progetti/'+PID+'/coachee/'+partId, { method:'DELETE' });
       const d = await r.json();
       if (!d.ok) { alert(d.error || 'Errore'); return; }
