@@ -780,7 +780,7 @@ router.delete('/dashboard/committenti/:id', requireCoach, async (req, res) => {
 // ═══════════════════════════════════════════════════════
 
 const AREE_PROGETTO  = ['Business', 'Young'];
-const TIPI_PROGETTO  = ['individuale', 'team', 'group'];
+const TIPI_PROGETTO  = ['individuale', 'individuale-multiplo', 'team', 'group'];
 // Stato del progetto = stato della relazione (come per il cliente individuale).
 const STATI_PROGETTO = ['attivo', 'in pausa', 'concluso'];
 
@@ -800,21 +800,27 @@ router.get('/dashboard/progetti', requireCoach, async (req, res) => {
 });
 
 router.post('/dashboard/progetti', requireCoach, express.json(), async (req, res) => {
-  const { committente_id, titolo, area, tipo, stato, obiettivi, note, data_inizio } = req.body;
+  const { committente_id, titolo, area, tipo, stato, obiettivi, note, data_inizio,
+          referente_modo, referente_nome, referente_ruolo, referente_email } = req.body;
   if (!committente_id) return res.status(400).json({ error: 'Committente obbligatorio' });
   if (!titolo || !titolo.trim()) return res.status(400).json({ error: 'Titolo obbligatorio' });
+  const refModo  = referente_modo === 'altra' ? 'altra' : 'sponsor';
+  const refNome  = refModo === 'altra' ? (referente_nome||'').trim()  : '';
+  const refRuolo = refModo === 'altra' ? (referente_ruolo||'').trim() : '';
+  const refEmail = refModo === 'altra' ? (referente_email||'').trim() : '';
   try {
     const c = await db.query('SELECT 1 FROM committenti WHERE id=$1', [committente_id]);
     if (!c.rows.length) return res.status(400).json({ error: 'Committente non valido' });
     const id = uuidv4();
     await db.query(
-      `INSERT INTO progetti (id,committente_id,titolo,area,tipo,stato,obiettivi,note,data_inizio)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      `INSERT INTO progetti (id,committente_id,titolo,area,tipo,stato,obiettivi,note,data_inizio,referente_modo,referente_nome,referente_ruolo,referente_email)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
       [id, committente_id, titolo.trim(),
        AREE_PROGETTO.includes(area) ? area : 'Business',
        TIPI_PROGETTO.includes(tipo) ? tipo : 'individuale',
        STATI_PROGETTO.includes(stato) ? stato : 'attivo',
-       (obiettivi||'').trim(), (note||'').trim(), data_inizio||null]
+       (obiettivi||'').trim(), (note||'').trim(), data_inizio||null,
+       refModo, refNome, refRuolo, refEmail]
     );
     res.json({ ok: true, id });
   } catch (err) {
@@ -824,18 +830,25 @@ router.post('/dashboard/progetti', requireCoach, express.json(), async (req, res
 });
 
 router.post('/dashboard/progetti/:id', requireCoach, express.json(), async (req, res) => {
-  const { committente_id, titolo, area, tipo, stato, obiettivi, note, data_inizio } = req.body;
+  const { committente_id, titolo, area, tipo, stato, obiettivi, note, data_inizio,
+          referente_modo, referente_nome, referente_ruolo, referente_email } = req.body;
   if (!committente_id) return res.status(400).json({ error: 'Committente obbligatorio' });
   if (!titolo || !titolo.trim()) return res.status(400).json({ error: 'Titolo obbligatorio' });
+  const refModo  = referente_modo === 'altra' ? 'altra' : 'sponsor';
+  const refNome  = refModo === 'altra' ? (referente_nome||'').trim()  : '';
+  const refRuolo = refModo === 'altra' ? (referente_ruolo||'').trim() : '';
+  const refEmail = refModo === 'altra' ? (referente_email||'').trim() : '';
   try {
     await db.query(
       `UPDATE progetti SET committente_id=$1,titolo=$2,area=$3,tipo=$4,stato=$5,
-         obiettivi=$6,note=$7,data_inizio=$8,updated_at=NOW() WHERE id=$9`,
+         obiettivi=$6,note=$7,data_inizio=$8,referente_modo=$9,referente_nome=$10,
+         referente_ruolo=$11,referente_email=$12,updated_at=NOW() WHERE id=$13`,
       [committente_id, titolo.trim(),
        AREE_PROGETTO.includes(area) ? area : 'Business',
        TIPI_PROGETTO.includes(tipo) ? tipo : 'individuale',
        STATI_PROGETTO.includes(stato) ? stato : 'attivo',
-       (obiettivi||'').trim(), (note||'').trim(), data_inizio||null, req.params.id]
+       (obiettivi||'').trim(), (note||'').trim(), data_inizio||null,
+       refModo, refNome, refRuolo, refEmail, req.params.id]
     );
     res.json({ ok: true });
   } catch (err) {
@@ -2253,7 +2266,7 @@ function progettiPage(progetti, committenti, req) {
     'in pausa': { label:'In pausa', bg:'#fff8dc', color:'#7a5c00' },
     'concluso': { label:'Concluso', bg:'#eef1f5', color:'#7a8089' },
   };
-  const TIPO_LABEL = { individuale:'Individuale', team:'Team', group:'Group' };
+  const TIPO_LABEL = { individuale:'Individuale', 'individuale-multiplo':'Individuale per più Clienti', team:'Team', group:'Group' };
   const AREA_COL   = { Business:'#4F8B73', Young:'#D8AE2E' };
 
   const noComm = committenti.length === 0;
@@ -2270,7 +2283,7 @@ function progettiPage(progetti, committenti, req) {
       <td><span class="badge" style="background:${ac}18;color:${ac}">${esc(p.area)}</span></td>
       <td style="font-size:12px;color:#4a5568">${TIPO_LABEL[p.tipo] || esc(p.tipo)}</td>
       <td><span class="badge" style="background:${sc.bg};color:${sc.color}">${sc.label}</span></td>
-      <td style="font-size:12px;color:#4a5568">${n > 0 ? `${n} ${n===1?'coachee':'coachee'}` : '<span style="color:#ccc">—</span>'}</td>
+      <td style="font-size:12px;color:#4a5568">${n > 0 ? `${n} ${n===1?'cliente':'clienti'}` : '<span style="color:#ccc">—</span>'}</td>
       <td style="font-size:12px;color:#aaa">${p.data_inizio ? itDate(p.data_inizio) : '—'}</td>
       <td style="white-space:nowrap" onclick="event.stopPropagation()">
         <button onclick='editProg(${JSON.stringify(p).replace(/'/g, "&#39;")})' class="btn btn-neutral btn-sm">Modifica</button>
@@ -2294,7 +2307,7 @@ function progettiPage(progetti, committenti, req) {
 
     <div class="card" style="padding:0;overflow:hidden">
       <table>
-        <thead><tr><th>Progetto</th><th>Area</th><th>Tipo</th><th>Stato</th><th>Coachee</th><th>Inizio</th><th>Azioni</th></tr></thead>
+        <thead><tr><th>Progetto</th><th>Area</th><th>Tipo</th><th>Stato</th><th>Clienti</th><th>Inizio</th><th>Azioni</th></tr></thead>
         <tbody>
           ${progetti.length ? progetti.map(renderRow).join('') : `<tr><td colspan="7" class="empty">Nessun progetto. ${noComm ? 'Crea prima un committente.' : 'Crea il primo con il pulsante qui sopra.'}</td></tr>`}
         </tbody>
@@ -2313,9 +2326,21 @@ function progettiPage(progetti, committenti, req) {
         <div class="form-group"><label>Area</label>
           <select id="p-area"><option value="Business">Business</option><option value="Young">Young</option></select></div>
         <div class="form-group"><label>Tipo</label>
-          <select id="p-tipo"><option value="individuale">Individuale</option><option value="team">Team</option><option value="group">Group</option></select></div>
+          <select id="p-tipo"><option value="individuale">Individuale</option><option value="individuale-multiplo">Individuale per più Clienti</option><option value="team">Team</option><option value="group">Group</option></select></div>
         <div class="form-group"><label>Stato</label>
           <select id="p-stato"><option value="attivo">Attivo</option><option value="in pausa">In pausa</option><option value="concluso">Concluso</option></select></div>
+      </div>
+      <div class="form-group"><label>Referente del progetto</label>
+        <select id="p-ref-modo" onchange="toggleRef()">
+          <option value="sponsor">Lo stesso committente</option>
+          <option value="altra">Un'altra persona</option>
+        </select></div>
+      <div id="ref-extra" style="display:none">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="form-group"><label>Nome referente</label><input id="p-ref-nome" type="text" placeholder="Nome Cognome"></div>
+          <div class="form-group"><label>Ruolo</label><input id="p-ref-ruolo" type="text" placeholder="es. HR, dirigente, genitore"></div>
+        </div>
+        <div class="form-group"><label>Email referente</label><input id="p-ref-email" type="email" placeholder="referente@azienda.it"></div>
       </div>
       <div class="form-group"><label>Data inizio</label><input id="p-data" type="date"></div>
       <div class="form-group"><label>Obiettivi (aziendali)</label><textarea id="p-obiettivi" placeholder="obiettivi del committente per questo progetto"></textarea></div>
@@ -2328,9 +2353,14 @@ function progettiPage(progetti, committenti, req) {
   </div>
 
   <script>
-    const F = ['committente_id','titolo','area','tipo','stato','data_inizio','obiettivi','note'];
+    const F = ['committente_id','titolo','area','tipo','stato','data_inizio','obiettivi','note','referente_modo','referente_nome','referente_ruolo','referente_email'];
     const ID = { committente_id:'p-committente', titolo:'p-titolo', area:'p-area', tipo:'p-tipo',
-      stato:'p-stato', data_inizio:'p-data', obiettivi:'p-obiettivi', note:'p-note' };
+      stato:'p-stato', data_inizio:'p-data', obiettivi:'p-obiettivi', note:'p-note',
+      referente_modo:'p-ref-modo', referente_nome:'p-ref-nome', referente_ruolo:'p-ref-ruolo', referente_email:'p-ref-email' };
+    function toggleRef() {
+      var m = document.getElementById('p-ref-modo').value;
+      document.getElementById('ref-extra').style.display = (m === 'altra') ? 'block' : 'none';
+    }
     function filtra() {
       const q = document.getElementById('cerca').value.trim().toLowerCase();
       document.querySelectorAll('tbody tr').forEach(tr => {
@@ -2345,12 +2375,16 @@ function progettiPage(progetti, committenti, req) {
       document.getElementById('p-area').value = 'Business';
       document.getElementById('p-tipo').value = 'individuale';
       document.getElementById('p-stato').value = 'attivo';
+      document.getElementById('p-ref-modo').value = 'sponsor';
+      toggleRef();
       document.getElementById('modal-prog').style.display = 'flex';
     }
     function editProg(p) {
       document.getElementById('modal-prog-title').textContent = 'Modifica progetto';
       document.getElementById('p-id').value = p.id;
       F.forEach(f => document.getElementById(ID[f]).value = (f==='data_inizio' && p[f]) ? String(p[f]).slice(0,10) : (p[f] || ''));
+      document.getElementById('p-ref-modo').value = p.referente_modo || 'sponsor';
+      toggleRef();
       document.getElementById('modal-prog').style.display = 'flex';
     }
     function closeProgModal() { document.getElementById('modal-prog').style.display = 'none'; }
@@ -2388,7 +2422,7 @@ function progettoDettaglioPage(p, coachee, req) {
     'in pausa': { label:'In pausa', bg:'#fff8dc', color:'#7a5c00' },
     'concluso': { label:'Concluso', bg:'#eef1f5', color:'#7a8089' },
   };
-  const TIPO_LABEL = { individuale:'Individuale', team:'Team', group:'Group' };
+  const TIPO_LABEL = { individuale:'Individuale', 'individuale-multiplo':'Individuale per più Clienti', team:'Team', group:'Group' };
   const AREA_COL   = { Business:'#4F8B73', Young:'#D8AE2E' };
   const sc = STATO_CFG[p.stato] || STATO_CFG['attivo'];
   const ac = AREA_COL[p.area] || '#1A5280';
@@ -2419,7 +2453,7 @@ function progettoDettaglioPage(p, coachee, req) {
         <button onclick="removeCoachee('${k.part_id}')" class="btn btn-danger btn-sm">✕</button>
       </td>
     </tr>`;
-  }).join('') : `<tr><td colspan="4" class="empty">Nessun coachee collegato. Aggiungi la prima persona.</td></tr>`;
+  }).join('') : `<tr><td colspan="4" class="empty">Nessun cliente collegato. Aggiungi la prima persona.</td></tr>`;
 
   // ── Amministrazione: unica scheda modificabile (quota + attori + colpo d'occhio).
   // I tre totali sono DERIVATI dai dati in pagina; le quote/stati si modificano qui
@@ -2455,6 +2489,15 @@ function progettoDettaglioPage(p, coachee, req) {
     <div style="margin-bottom:18px">
       <h1>${esc(p.titolo)}</h1>
       <p style="color:#aaa;font-size:13px">Committente: <strong style="color:var(--ink)">${esc(p.committente_nome)}</strong>${p.committente_email ? ` · ${esc(p.committente_email)}` : ''}</p>
+      <p style="color:#aaa;font-size:13px">Referente: <strong style="color:var(--ink)">${
+        (p.referente_modo || 'sponsor') === 'altra'
+          ? `${esc(p.referente_nome || '—')}`
+          : `${esc(p.committente_nome)}`
+      }</strong>${
+        (p.referente_modo || 'sponsor') === 'altra'
+          ? `${p.referente_ruolo ? ` · ${esc(p.referente_ruolo)}` : ''}${p.referente_email ? ` · ${esc(p.referente_email)}` : ''}`
+          : ` <span style="color:#aaa">(il committente stesso)</span>`
+      }</p>
       <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
         <span class="badge" style="background:${ac}18;color:${ac}">${esc(p.area)}</span>
         <span class="badge" style="background:#eef1f5;color:#4a5568">${TIPO_LABEL[p.tipo] || esc(p.tipo)}</span>
@@ -2513,7 +2556,7 @@ function progettoDettaglioPage(p, coachee, req) {
       <div id="coachee-sum" style="font-size:12.5px;color:var(--muted);margin-top:8px"></div>
 
       <div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:14px;flex-wrap:wrap">
-        <button onclick="openAdd()" class="btn btn-neutral btn-sm">+ Aggiungi coachee</button>
+        <button onclick="openAdd()" class="btn btn-neutral btn-sm">+ Aggiungi cliente</button>
         <button onclick="dividiEqui()" class="btn btn-neutral btn-sm">Dividi in parti uguali</button>
         <button onclick="salvaTutto()" class="btn btn-primary btn-sm">Salva</button>
       </div>
@@ -2522,7 +2565,7 @@ function progettoDettaglioPage(p, coachee, req) {
 
   <div id="modal-coachee" class="modal-overlay">
     <div class="modal-box" style="width:440px">
-      <h2 style="margin-bottom:16px">Aggiungi coachee</h2>
+      <h2 style="margin-bottom:16px">Aggiungi cliente</h2>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
         <div class="form-group"><label>Nome</label><input id="k-nome" type="text"></div>
         <div class="form-group"><label>Cognome *</label><input id="k-cognome" type="text"></div>
@@ -2581,7 +2624,7 @@ function progettoDettaglioPage(p, coachee, req) {
         const pct = Math.round(c / tot * 100);
         box.textContent = resto < 0
           ? 'Attenzione: il committente paga piu della quota totale.'
-          : 'Resta da dividere tra i coachee: € ' + euro(resto) + '  ·  il committente copre ' + pct + '%';
+          : 'Resta da dividere tra i Clienti: € ' + euro(resto) + '  ·  il committente copre ' + pct + '%';
       }
       updateCoacheeSum();
       renderAmministrazione();
@@ -2612,10 +2655,10 @@ function progettoDettaglioPage(p, coachee, req) {
       if (!inputs.length) { el.textContent = ''; return; }
       const somma = inputs.reduce((s,i) => s + (parseFloat(i.value) || 0), 0);
       const resto = getResto();
-      if (resto === null) { el.style.color = 'var(--muted)'; el.textContent = 'I coachee coprono € ' + euro(somma) + '.'; return; }
+      if (resto === null) { el.style.color = 'var(--muted)'; el.textContent = 'I Clienti coprono € ' + euro(somma) + '.'; return; }
       const diff = Math.round((somma - resto) * 100) / 100;
-      if (diff === 0) { el.style.color = '#4F8B73'; el.textContent = 'I coachee coprono € ' + euro(somma) + ' su € ' + euro(resto) + ' — torna.'; }
-      else { el.style.color = '#c0392b'; el.textContent = 'I coachee coprono € ' + euro(somma) + ' su € ' + euro(resto) + ' (' + (diff > 0 ? '+' : '') + euro(diff) + ').'; }
+      if (diff === 0) { el.style.color = '#4F8B73'; el.textContent = 'I Clienti coprono € ' + euro(somma) + ' su € ' + euro(resto) + ' — torna.'; }
+      else { el.style.color = '#c0392b'; el.textContent = 'I Clienti coprono € ' + euro(somma) + ' su € ' + euro(resto) + ' (' + (diff > 0 ? '+' : '') + euro(diff) + ').'; }
       renderAmministrazione();
     }
     async function salvaTutto() {

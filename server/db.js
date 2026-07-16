@@ -278,6 +278,16 @@ async function init() {
   await query(`ALTER TABLE progetti ADD COLUMN IF NOT EXISTS data_pag_committente  DATE`);
   await query(`ALTER TABLE partecipazioni ADD COLUMN IF NOT EXISTS data_pag_coachee DATE`);
 
+  // Anagrafica progetto (2026-07-16) — il REFERENTE è un ruolo sul PROGETTO, non
+  // sul committente: lo stesso committente può avere referenti diversi su progetti
+  // diversi. referente_modo = 'sponsor' (coincide col committente, quando è persona
+  // fisica e segue lui) | 'altra' (persona fisica distinta → si compilano nome/ruolo/
+  // email). Additivo: i vecchi progetti restano su 'sponsor' di default.
+  await query(`ALTER TABLE progetti ADD COLUMN IF NOT EXISTS referente_modo  TEXT DEFAULT 'sponsor'`);
+  await query(`ALTER TABLE progetti ADD COLUMN IF NOT EXISTS referente_nome  TEXT`);
+  await query(`ALTER TABLE progetti ADD COLUMN IF NOT EXISTS referente_ruolo TEXT`);
+  await query(`ALTER TABLE progetti ADD COLUMN IF NOT EXISTS referente_email TEXT`);
+
   // Fase 0 (2026-07-15) — stato del progetto = stato della relazione, 3 valori
   // come per il cliente individuale: attivo | in pausa | concluso. I vecchi stati
   // di pipeline (pre-intake/proposta/chiuso/perso) vengono rimappati una tantum.
