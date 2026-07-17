@@ -881,25 +881,51 @@ router.get('/dashboard/progetti/:id', requireCoach, async (req, res) => {
              pa.quota_coachee, pa.stato_pag_coachee, pa.data_pag_coachee
       FROM partecipazioni pa JOIN clients cl ON cl.id = pa.client_id
       WHERE pa.progetto_id=$1 ORDER BY cl.cognome NULLS LAST, cl.nome`, [req.params.id]);
-    res.send(progettoDettaglioPage(pr.rows[0], coachee.rows, req));
+    // Clienti già in anagrafica NON ancora in questo progetto: per collegarne uno
+    // esistente senza crearne un doppione.
+    const disponibili = await db.query(`
+      SELECT id, name, cognome, area FROM clients
+      WHERE id NOT IN (SELECT client_id FROM partecipazioni WHERE progetto_id=$1)
+      ORDER BY cognome NULLS LAST, nome`, [req.params.id]);
+    res.send(progettoDettaglioPage(pr.rows[0], coachee.rows, req, disponibili.rows));
   } catch (err) {
     console.error(err);
     res.status(500).send('Errore');
   }
 });
 
-// Aggiunge un coachee al progetto CREANDO la persona nuova (client + partecipazione).
-// La scelta di un cliente esistente è rara: non la implementiamo (scelta di Germano).
+// Aggiunge un cliente al progetto: o COLLEGANDO un cliente esistente (solo
+// partecipazione), o CREANDO la persona nuova (client + partecipazione).
 // NB: qui NON creiamo cartelle Drive (dove va la cartella nei progetti è deciso dopo):
-// il coachee nasce col suo token/link piattaforma, drive_url resta vuoto.
+// il cliente nuovo nasce col suo token/link piattaforma, drive_url resta vuoto.
 router.post('/dashboard/progetti/:id/coachee', requireCoach, express.json(), async (req, res) => {
-  const cognome = (req.body.cognome || '').trim();
-  const nome    = (req.body.nome || '').trim();
-  const email   = (req.body.email || '').trim();
-  if (!cognome) return res.status(400).json({ error: 'Cognome obbligatorio' });
   try {
     const pr = await db.query('SELECT area FROM progetti WHERE id=$1', [req.params.id]);
     if (!pr.rows.length) return res.status(404).json({ error: 'Progetto non trovato' });
+
+    // Caso A — cliente ESISTENTE: si crea solo il collegamento (partecipazione),
+    // senza toccare i dati della persona. Se è già nel progetto, lo diciamo.
+    const existingId = (req.body.clientId || '').trim();
+    if (existingId) {
+      const cl = await db.query('SELECT id FROM clients WHERE id=$1', [existingId]);
+      if (!cl.rows.length) return res.status(404).json({ error: 'Cliente non trovato' });
+      const dup = await db.query(
+        'SELECT 1 FROM partecipazioni WHERE progetto_id=$1 AND client_id=$2',
+        [req.params.id, existingId]
+      );
+      if (dup.rows.length) return res.status(409).json({ error: 'Questo cliente è già nel progetto.' });
+      await db.query(
+        `INSERT INTO partecipazioni (id,progetto_id,client_id) VALUES ($1,$2,$3)`,
+        [uuidv4(), req.params.id, existingId]
+      );
+      return res.json({ ok: true, clientId: existingId });
+    }
+
+    // Caso B — cliente NUOVO: nasce la persona (col suo token/link) + il collegamento.
+    const cognome = (req.body.cognome || '').trim();
+    const nome    = (req.body.nome || '').trim();
+    const email   = (req.body.email || '').trim();
+    if (!cognome) return res.status(400).json({ error: 'Cognome obbligatorio' });
     const area = pr.rows[0].area || 'Business';
     const name = [nome, cognome].filter(Boolean).join(' ');
     const clientId = uuidv4();
@@ -2421,7 +2447,7 @@ function progettiPage(progetti, committenti, req) {
 // ═══════════════════════════════════════════════════════
 // PAGINA DETTAGLIO PROGETTO (Fase 3a) — dati + coachee collegati
 // ═══════════════════════════════════════════════════════
-function progettoDettaglioPage(p, coachee, req) {
+function progettoDettaglioPage(p, coachee, req, disponibili) {
   const STATO_CFG = {
     'attivo':   { label:'Attivo',   bg:'#d1fae5', color:'#065f46' },
     'in pausa': { label:'In pausa', bg:'#fff8dc', color:'#7a5c00' },
@@ -2431,6 +2457,13 @@ function progettoDettaglioPage(p, coachee, req) {
   const AREA_COL   = { Business:'#4F8B73', Young:'#D8AE2E' };
   const sc = STATO_CFG[p.stato] || STATO_CFG['attivo'];
   const ac = AREA_COL[p.area] || '#1A5280';
+
+  // Clienti esistenti (non ancora in questo progetto) da collegare senza doppioni.
+  disponibili = disponibili || [];
+  const nDisponibili = disponibili.length;
+  const opzioniClienti = disponibili.map(c =>
+    `<option value="${esc(c.id)}">${esc(c.name || c.cognome || 'Senza nome')}${c.area ? ' — ' + esc(c.area) : ''}</option>`
+  ).join('');
 
   // Fase 3B — quota del progetto (pg restituisce i NUMERIC come stringa).
   const qTot     = p.quota_totale      != null ? Number(p.quota_totale)      : null;
@@ -2571,12 +2604,28 @@ function progettoDettaglioPage(p, coachee, req) {
   <div id="modal-coachee" class="modal-overlay">
     <div class="modal-box" style="width:440px">
       <h2 style="margin-bottom:16px">Aggiungi cliente</h2>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div class="form-group"><label>Nome</label><input id="k-nome" type="text"></div>
-        <div class="form-group"><label>Cognome *</label><input id="k-cognome" type="text"></div>
+      <div style="display:flex;gap:8px;margin-bottom:16px">
+        <button type="button" id="mode-new" onclick="setAddMode('new')" class="btn btn-primary btn-sm" style="flex:1">Cliente nuovo</button>
+        <button type="button" id="mode-existing" onclick="setAddMode('existing')" class="btn btn-neutral btn-sm" style="flex:1">Cliente esistente</button>
       </div>
-      <div class="form-group"><label>Email</label><input id="k-email" type="email"></div>
-      <p style="color:var(--muted);font-size:12px;margin-bottom:12px">Nasce come cliente con il suo link alla piattaforma. La cartella Drive si crea dopo, dalla sua scheda.</p>
+
+      <div id="add-new">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="form-group"><label>Nome</label><input id="k-nome" type="text"></div>
+          <div class="form-group"><label>Cognome *</label><input id="k-cognome" type="text"></div>
+        </div>
+        <div class="form-group"><label>Email</label><input id="k-email" type="email"></div>
+        <p style="color:var(--muted);font-size:12px;margin-bottom:12px">Nasce come cliente con il suo link alla piattaforma. La cartella Drive si crea dopo, dalla sua scheda.</p>
+      </div>
+
+      <div id="add-existing" style="display:none">
+        ${nDisponibili
+          ? `<div class="form-group"><label>Scegli un cliente già in anagrafica</label>
+               <select id="k-existing"><option value="">— seleziona —</option>${opzioniClienti}</select></div>
+             <p style="color:var(--muted);font-size:12px;margin-bottom:12px">Lo colleghi al progetto senza doppioni. I suoi dati non vengono toccati.</p>`
+          : `<p style="color:var(--muted);font-size:13px;margin-bottom:12px">Non ci sono altri clienti da collegare: o sono già tutti in questo progetto, o non ne hai ancora altri in anagrafica.</p>`}
+      </div>
+
       <div style="display:flex;gap:8px">
         <button onclick="closeAdd()" class="btn btn-neutral" style="flex:1">Annulla</button>
         <button onclick="saveCoachee()" class="btn btn-primary" style="flex:1">Aggiungi</button>
@@ -2724,15 +2773,33 @@ function progettoDettaglioPage(p, coachee, req) {
       renderPag();
     }
 
+    let addMode = 'new';
+    function setAddMode(m) {
+      addMode = m;
+      document.getElementById('add-new').style.display      = m === 'new'      ? 'block' : 'none';
+      document.getElementById('add-existing').style.display = m === 'existing' ? 'block' : 'none';
+      document.getElementById('mode-new').className      = 'btn btn-sm ' + (m === 'new'      ? 'btn-primary' : 'btn-neutral');
+      document.getElementById('mode-existing').className = 'btn btn-sm ' + (m === 'existing' ? 'btn-primary' : 'btn-neutral');
+    }
     function openAdd() {
       ['k-nome','k-cognome','k-email'].forEach(id=>document.getElementById(id).value='');
+      const sel = document.getElementById('k-existing'); if (sel) sel.value='';
+      setAddMode('new');
       document.getElementById('modal-coachee').style.display='flex';
     }
     function closeAdd() { document.getElementById('modal-coachee').style.display='none'; }
     async function saveCoachee() {
-      const cognome = document.getElementById('k-cognome').value.trim();
-      if (!cognome) { alert('Cognome obbligatorio'); return; }
-      const payload = { nome:document.getElementById('k-nome').value, cognome, email:document.getElementById('k-email').value };
+      let payload;
+      if (addMode === 'existing') {
+        const sel = document.getElementById('k-existing');
+        const clientId = sel ? sel.value : '';
+        if (!clientId) { alert('Scegli un cliente dalla lista.'); return; }
+        payload = { clientId };
+      } else {
+        const cognome = document.getElementById('k-cognome').value.trim();
+        if (!cognome) { alert('Cognome obbligatorio'); return; }
+        payload = { nome:document.getElementById('k-nome').value, cognome, email:document.getElementById('k-email').value };
+      }
       const r = await fetch('/dashboard/progetti/'+PID+'/coachee', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
       const d = await r.json();
       if (d.ok) location.reload(); else alert(d.error || 'Errore');
