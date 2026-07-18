@@ -66,10 +66,11 @@ router.get('/dashboard', requireCoach, async (req, res) => {
     const result = await db.query(`
       SELECT c.*,
         (SELECT COUNT(DISTINCT s.tool) FROM sessions s WHERE s.client_id = c.id) AS tool_count,
-        pp.tipo AS p_tipo, pp.n_sessioni_fatte AS p_sess, pp.ore_fatte AS p_ore, pp.stato AS p_stato
+        pp.tipo AS p_tipo, pp.n_sessioni_fatte AS p_sess, pp.ore_fatte AS p_ore, pp.stato AS p_stato,
+        pp.area AS p_area
       FROM clients c
       LEFT JOIN LATERAL (
-        SELECT p.tipo, p.n_sessioni_fatte, p.ore_fatte, p.stato
+        SELECT p.tipo, p.n_sessioni_fatte, p.ore_fatte, p.stato, p.area
         FROM percorsi p WHERE p.client_id = c.id
         ORDER BY (p.stato = 'attivo') DESC, p.created_at DESC LIMIT 1
       ) pp ON true
@@ -894,14 +895,35 @@ router.get('/dashboard/progetti/:id', requireCoach, async (req, res) => {
   }
 });
 
+// Fetta 2a — il percorso individuale NASCE DA SOLO dal progetto (tipo + partecipante),
+// come le schede cliente nascono dai partecipanti. Vale per i progetti individuale /
+// individuale-multiplo (N persone → N percorsi separati). Team/group NON generano qui:
+// usano la macchina percorso_partecipanti (fetta 2b). Guardia: niente doppioni se quel
+// cliente ha già un percorso per quel progetto. L'area del percorso = area del progetto.
+async function autoCreaPercorsoProgetto(progettoId, clientId, area, tipo) {
+  if (tipo !== 'individuale' && tipo !== 'individuale-multiplo') return;
+  const esiste = await db.query(
+    'SELECT 1 FROM percorsi WHERE client_id=$1 AND progetto_id=$2', [clientId, progettoId]
+  );
+  if (esiste.rows.length) return;
+  await db.query(
+    `INSERT INTO percorsi (id, client_id, tipo, area, progetto_id, stato)
+     VALUES ($1,$2,'Individuale',$3,$4,'attivo')`,
+    [uuidv4(), clientId, area || 'Business', progettoId]
+  );
+}
+
 // Aggiunge un cliente al progetto: o COLLEGANDO un cliente esistente (solo
 // partecipazione), o CREANDO la persona nuova (client + partecipazione).
+// In entrambi i casi, per i progetti individuali il percorso nasce da solo (2a).
 // NB: qui NON creiamo cartelle Drive (dove va la cartella nei progetti è deciso dopo):
 // il cliente nuovo nasce col suo token/link piattaforma, drive_url resta vuoto.
 router.post('/dashboard/progetti/:id/coachee', requireCoach, express.json(), async (req, res) => {
   try {
-    const pr = await db.query('SELECT area FROM progetti WHERE id=$1', [req.params.id]);
+    const pr = await db.query('SELECT area, tipo FROM progetti WHERE id=$1', [req.params.id]);
     if (!pr.rows.length) return res.status(404).json({ error: 'Progetto non trovato' });
+    const pArea = pr.rows[0].area || 'Business';
+    const pTipo = pr.rows[0].tipo;
 
     // Caso A — cliente ESISTENTE: si crea solo il collegamento (partecipazione),
     // senza toccare i dati della persona. Se è già nel progetto, lo diciamo.
@@ -918,6 +940,7 @@ router.post('/dashboard/progetti/:id/coachee', requireCoach, express.json(), asy
         `INSERT INTO partecipazioni (id,progetto_id,client_id) VALUES ($1,$2,$3)`,
         [uuidv4(), req.params.id, existingId]
       );
+      await autoCreaPercorsoProgetto(req.params.id, existingId, pArea, pTipo);
       return res.json({ ok: true, clientId: existingId });
     }
 
@@ -926,7 +949,7 @@ router.post('/dashboard/progetti/:id/coachee', requireCoach, express.json(), asy
     const nome    = (req.body.nome || '').trim();
     const email   = (req.body.email || '').trim();
     if (!cognome) return res.status(400).json({ error: 'Cognome obbligatorio' });
-    const area = pr.rows[0].area || 'Business';
+    const area = pArea;
     const name = [nome, cognome].filter(Boolean).join(' ');
     const clientId = uuidv4();
     const token    = uuidv4().replace(/-/g, '');
@@ -939,6 +962,7 @@ router.post('/dashboard/progetti/:id/coachee', requireCoach, express.json(), asy
       `INSERT INTO partecipazioni (id,progetto_id,client_id) VALUES ($1,$2,$3)`,
       [uuidv4(), req.params.id, clientId]
     );
+    await autoCreaPercorsoProgetto(req.params.id, clientId, pArea, pTipo);
     res.json({ ok: true, clientId, token });
   } catch (err) {
     console.error(err);
@@ -1201,7 +1225,7 @@ function dashboardPage(clients, req) {
   const rows = clients.length === 0
     ? `<tr><td colspan="6" class="empty">Nessun cliente. Crea il primo con il pulsante qui sopra.</td></tr>`
     : clients.map(c => {
-      const area = c.area || 'Personal';
+      const area = c.p_area || c.area || 'Personal';
       const ac = AREA_COLOR[area] || '#1A5280';
       const st = STATO_CLIENTE[c.stato_cliente] || STATO_CLIENTE.attivo;
       const recall = c.prossima_azione

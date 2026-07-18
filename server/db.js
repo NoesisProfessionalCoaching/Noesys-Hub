@@ -295,6 +295,38 @@ async function init() {
   // del documento parte da qui; i partecipanti multipli (team/group) arrivano in B2.
   await query(`ALTER TABLE percorsi ADD COLUMN IF NOT EXISTS progetto_id TEXT REFERENCES progetti(id) ON DELETE SET NULL`);
 
+  // Fetta 2a (2026-07-18) — l'AREA vive sul PERCORSO, non sulla persona: la stessa
+  // persona può avere percorsi in aree diverse (es. un Personal individuale + un
+  // Business dentro un progetto). `clients.area` resta come area di DEFAULT della
+  // persona (nuovo cliente, cartelle Drive, fallback per chi non ha percorsi).
+  await query(`ALTER TABLE percorsi ADD COLUMN IF NOT EXISTS area TEXT`);
+  // Backfill: percorso dentro un progetto → area del progetto; altrimenti → area
+  // della persona. Solo dove non ancora valorizzata (idempotente).
+  await query(`
+    UPDATE percorsi p SET area = COALESCE(
+      (SELECT g.area FROM progetti g WHERE g.id = p.progetto_id),
+      (SELECT c.area FROM clients c WHERE c.id = p.client_id),
+      'Personal'
+    ) WHERE p.area IS NULL
+  `);
+
+  // Fetta 2a — generazione automatica RETROATTIVA: i percorsi individuali nascono
+  // dal progetto (tipo + partecipante). Per i clienti GIÀ collegati a un progetto
+  // individuale/individuale-multiplo senza ancora un percorso, lo creo qui. Team e
+  // group NON generano nulla (usano la macchina percorso_partecipanti, fetta 2b).
+  // Idempotente: NOT EXISTS → dopo la prima volta è un no-op.
+  await query(`
+    INSERT INTO percorsi (id, client_id, tipo, area, progetto_id, stato)
+    SELECT gen_random_uuid()::text, pa.client_id, 'Individuale', g.area, g.id, 'attivo'
+    FROM partecipazioni pa
+    JOIN progetti g ON g.id = pa.progetto_id
+    WHERE g.tipo IN ('individuale','individuale-multiplo')
+      AND NOT EXISTS (
+        SELECT 1 FROM percorsi p
+        WHERE p.client_id = pa.client_id AND p.progetto_id = pa.progetto_id
+      )
+  `);
+
   // Fase 0 (2026-07-15) — stato del progetto = stato della relazione, 3 valori
   // come per il cliente individuale: attivo | in pausa | concluso. I vecchi stati
   // di pipeline (pre-intake/proposta/chiuso/perso) vengono rimappati una tantum.
