@@ -67,11 +67,14 @@ router.get('/dashboard', requireCoach, async (req, res) => {
       SELECT c.*,
         (SELECT COUNT(DISTINCT s.tool) FROM sessions s WHERE s.client_id = c.id) AS tool_count,
         pp.tipo AS p_tipo, pp.n_sessioni_fatte AS p_sess, pp.ore_fatte AS p_ore, pp.stato AS p_stato,
-        pp.area AS p_area
+        pp.area AS p_area, pp.progetto_id AS p_progetto_id, pp.progetto_titolo AS p_progetto_titolo
       FROM clients c
       LEFT JOIN LATERAL (
-        SELECT p.tipo, p.n_sessioni_fatte, p.ore_fatte, p.stato, p.area
-        FROM percorsi p WHERE p.client_id = c.id
+        SELECT p.tipo, p.n_sessioni_fatte, p.ore_fatte, p.stato, p.area, p.progetto_id,
+               (SELECT titolo FROM progetti g WHERE g.id = p.progetto_id) AS progetto_titolo
+        FROM percorsi p
+        WHERE p.client_id = c.id
+           OR EXISTS (SELECT 1 FROM percorso_partecipanti pp2 WHERE pp2.percorso_id = p.id AND pp2.client_id = c.id)
         ORDER BY (p.stato = 'attivo') DESC, p.created_at DESC LIMIT 1
       ) pp ON true
       ORDER BY c.created_at DESC
@@ -194,7 +197,9 @@ router.get('/dashboard/clients/:id', requireCoach, async (req, res) => {
       db.query('SELECT * FROM sessions WHERE client_id=$1 ORDER BY tool, created_at DESC', [req.params.id]),
       db.query(`SELECT p.*, prj.titolo AS progetto_titolo
                 FROM percorsi p LEFT JOIN progetti prj ON prj.id = p.progetto_id
-                WHERE p.client_id=$1 ORDER BY p.created_at ASC`, [req.params.id]),
+                WHERE p.client_id=$1
+                   OR EXISTS (SELECT 1 FROM percorso_partecipanti pp WHERE pp.percorso_id=p.id AND pp.client_id=$1)
+                ORDER BY p.created_at ASC`, [req.params.id]),
       db.query('SELECT * FROM payments WHERE client_id=$1 ORDER BY created_at DESC', [req.params.id]),
       db.query('SELECT * FROM sedute WHERE client_id=$1 ORDER BY data ASC NULLS LAST, created_at ASC', [req.params.id]),
       // Progetti di cui il coachee fa parte: SOLA LETTURA, per riflettere la sua
@@ -901,16 +906,45 @@ router.get('/dashboard/progetti/:id', requireCoach, async (req, res) => {
 // usano la macchina percorso_partecipanti (fetta 2b). Guardia: niente doppioni se quel
 // cliente ha già un percorso per quel progetto. L'area del percorso = area del progetto.
 async function autoCreaPercorsoProgetto(progettoId, clientId, area, tipo) {
-  if (tipo !== 'individuale' && tipo !== 'individuale-multiplo') return;
-  const esiste = await db.query(
-    'SELECT 1 FROM percorsi WHERE client_id=$1 AND progetto_id=$2', [clientId, progettoId]
-  );
-  if (esiste.rows.length) return;
-  await db.query(
-    `INSERT INTO percorsi (id, client_id, tipo, area, progetto_id, stato)
-     VALUES ($1,$2,'Individuale',$3,$4,'attivo')`,
-    [uuidv4(), clientId, area || 'Business', progettoId]
-  );
+  // Individuale / individuale-multiplo → 1 percorso individuale per partecipante (2a).
+  if (tipo === 'individuale' || tipo === 'individuale-multiplo') {
+    const esiste = await db.query(
+      'SELECT 1 FROM percorsi WHERE client_id=$1 AND progetto_id=$2', [clientId, progettoId]
+    );
+    if (esiste.rows.length) return;
+    await db.query(
+      `INSERT INTO percorsi (id, client_id, tipo, area, progetto_id, stato)
+       VALUES ($1,$2,'Individuale',$3,$4,'attivo')`,
+      [uuidv4(), clientId, area || 'Business', progettoId]
+    );
+    return;
+  }
+  // Team / group → UN solo percorso CONDIVISO per tutto il progetto (client_id NULL);
+  // i partecipanti stanno in percorso_partecipanti (fetta 2b). Trova-o-crea il percorso
+  // condiviso, poi aggancia la persona (guard: niente doppioni). La differenza team/group
+  // (contenuti in comune vs per-persona) arriva con la reportistica (fetta 4).
+  if (tipo === 'team' || tipo === 'group') {
+    const label = tipo === 'team' ? 'Team' : 'Group';
+    const cond = await db.query(
+      'SELECT id FROM percorsi WHERE progetto_id=$1 AND client_id IS NULL LIMIT 1', [progettoId]
+    );
+    let percorsoId;
+    if (cond.rows.length) {
+      percorsoId = cond.rows[0].id;
+    } else {
+      percorsoId = uuidv4();
+      await db.query(
+        `INSERT INTO percorsi (id, client_id, tipo, area, progetto_id, stato)
+         VALUES ($1,NULL,$2,$3,$4,'attivo')`,
+        [percorsoId, label, area || 'Business', progettoId]
+      );
+    }
+    await db.query(
+      `INSERT INTO percorso_partecipanti (id, percorso_id, client_id)
+       VALUES ($1,$2,$3) ON CONFLICT (percorso_id, client_id) DO NOTHING`,
+      [uuidv4(), percorsoId, clientId]
+    );
+  }
 }
 
 // Aggiunge un cliente al progetto: o COLLEGANDO un cliente esistente (solo
@@ -981,6 +1015,13 @@ router.delete('/dashboard/progetti/:id/coachee/:partId', requireCoach, async (re
     const pr = await db.query('SELECT client_id FROM partecipazioni WHERE id=$1 AND progetto_id=$2', [req.params.partId, req.params.id]);
     if (!pr.rows.length) return res.json({ ok: true }); // già rimosso
     const clientId = pr.rows[0].client_id;
+    // Esce dal percorso condiviso del progetto (team/group), se c'è: il percorso resta
+    // per gli altri. (Nei progetti individuali qui non c'è nulla da togliere.)
+    await db.query(
+      `DELETE FROM percorso_partecipanti WHERE client_id=$1
+        AND percorso_id IN (SELECT id FROM percorsi WHERE progetto_id=$2)`,
+      [clientId, req.params.id]
+    );
     const hist = await db.query(`
       SELECT (SELECT count(*) FROM sedute   WHERE client_id=$1)
            + (SELECT count(*) FROM percorsi WHERE client_id=$1)
@@ -1234,7 +1275,7 @@ function dashboardPage(clients, req) {
       const sess = Number(c.p_sess) || 0;
       const ore  = Number(c.p_ore) || 0;
       const percorso = c.p_tipo
-        ? `${esc(c.p_tipo)} · ${sess} ${sess === 1 ? 'sessione' : 'sessioni'}${ore > 0 ? ` · ${fmtOre(ore)} h` : ''}${c.p_stato !== 'attivo' ? ` · <span style="color:#999">concluso</span>` : ''}`
+        ? `${esc(c.p_tipo)} · ${sess} ${sess === 1 ? 'sessione' : 'sessioni'}${ore > 0 ? ` · ${fmtOre(ore)} h` : ''}${c.p_stato !== 'attivo' ? ` · <span style="color:#999">concluso</span>` : ''}${c.p_progetto_titolo ? `<br><span class="badge" style="background:#e8f4fd;color:#1A5280">📁 ${esc(c.p_progetto_titolo)}</span>` : ''}`
         : '<span style="color:#ccc">—</span>';
       return `<tr onclick="location.href='/dashboard/clients/${c.id}'" style="cursor:pointer">
         <td><strong>${esc(c.name)}</strong>${c.email ? `<br><span style="color:#aaa;font-size:11px">${esc(c.email)}</span>` : ''}</td>
@@ -1497,23 +1538,25 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, progetti
       <table>
         <thead><tr><th>Tipo</th><th>Sessioni</th><th>Ore</th><th>Modalità</th><th>Prezzo</th><th>Periodo</th><th>Stato</th><th></th></tr></thead>
         <tbody>
-          ${percorsi.map(p => `<tr>
-            <td><strong>${esc(p.tipo)}</strong>${p.progetto_titolo ? `<br><a href="/dashboard/progetti/${p.progetto_id}" class="badge" style="background:#e8f4fd;color:#1A5280;text-decoration:none">📁 ${esc(p.progetto_titolo)}</a>` : ''}</td>
+          ${percorsi.map(p => { const condiviso = !p.client_id; return `<tr>
+            <td><strong>${esc(p.tipo)}</strong>${condiviso ? ` <span class="badge" style="background:#eef1f5;color:#4a5568" title="Percorso di gruppo: gestito sulla pagina del progetto">condiviso</span>` : ''}${p.progetto_titolo ? `<br><a href="/dashboard/progetti/${p.progetto_id}" class="badge" style="background:#e8f4fd;color:#1A5280;text-decoration:none">📁 ${esc(p.progetto_titolo)}</a>` : ''}</td>
             <td>
               <span style="font-size:13px;font-weight:700;color:var(--blue)">${p.n_sessioni_fatte}</span>
               <span style="font-size:11px;color:#aaa"> ${p.n_sessioni_fatte === 1 ? 'sessione' : 'sessioni'}</span>
-              ${p.stato==='attivo' ? `
+              ${(!condiviso && p.stato==='attivo') ? `
               <button onclick="addSessione('${p.id}',1)" class="btn btn-neutral btn-sm" style="margin-left:6px" title="Aggiungi sessione">+1</button>
               ${p.n_sessioni_fatte > 0 ? `<button onclick="addSessione('${p.id}',-1)" class="btn btn-neutral btn-sm" title="Rimuovi sessione">-1</button>` : ''}` : ''}
             </td>
             <td style="white-space:nowrap"><span style="font-weight:700;color:var(--green)">${fmtOre(p.ore_fatte)}</span> <span style="font-size:11px;color:#aaa">h</span>
-              <button onclick="editOre('${p.id}', ${Number(p.ore_fatte||0)})" class="btn btn-neutral btn-sm" style="margin-left:4px" title="Correggi ore">✎</button></td>
+              ${!condiviso ? `<button onclick="editOre('${p.id}', ${Number(p.ore_fatte||0)})" class="btn btn-neutral btn-sm" style="margin-left:4px" title="Correggi ore">✎</button>` : ''}</td>
             <td>${p.modalita==='Scambio servizi' ? `<span class="badge" style="background:#e8f4fd;color:#1A5280">Scambio servizi</span>` : p.modalita==='Pro bono' ? `<span class="badge badge-pausa">Pro bono</span>` : `<span style="font-size:12px;color:#4a5568">Standard</span>`}</td>
             <td>${p.prezzo ? `€ ${Number(p.prezzo).toLocaleString('it-IT',{minimumFractionDigits:2})}` : '<span style="color:#aaa">—</span>'}${p.promo ? `<br><span class="badge badge-pausa">Promo</span>${p.sconto_note ? ` <span style="font-size:11px;color:#aaa">${esc(p.sconto_note)}</span>` : ''}` : ''}</td>
             <td style="font-size:12px;color:#aaa">${p.data_inizio ? itDate(p.data_inizio) : '—'}${p.data_fine ? `<br>→ ${itDate(p.data_fine)}` : ''}</td>
             <td><span class="badge ${p.stato==='attivo'?'badge-active':'badge-inactive'}">${p.stato==='attivo'?'Attivo':'Concluso'}</span></td>
-            <td style="white-space:nowrap">${p.stato==='attivo' ? `<button onclick="chiudiPercorso('${p.id}')" class="btn btn-neutral btn-sm">Chiudi</button> ` : ''}<button onclick="delPercorso('${p.id}')" class="btn btn-danger btn-sm" title="Elimina percorso">🗑</button></td>
-          </tr>`).join('')}
+            <td style="white-space:nowrap">${condiviso
+              ? `<a href="/dashboard/progetti/${p.progetto_id}" class="btn btn-neutral btn-sm">Gestisci nel progetto</a>`
+              : `${p.stato==='attivo' ? `<button onclick="chiudiPercorso('${p.id}')" class="btn btn-neutral btn-sm">Chiudi</button> ` : ''}<button onclick="delPercorso('${p.id}')" class="btn btn-danger btn-sm" title="Elimina percorso">🗑</button>`}</td>
+          </tr>`; }).join('')}
         </tbody>
       </table>`}
     </div>`;

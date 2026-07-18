@@ -327,6 +327,25 @@ async function init() {
       )
   `);
 
+  // Fetta 2b (2026-07-18) — TEAM/GROUP: un percorso CONDIVISO appartiene a più
+  // persone insieme. Serve una lista partecipanti agganciata al percorso (oggi il
+  // percorso è appeso a un solo client_id). percorso_partecipanti = (percorso ↔
+  // cliente). UNIQUE: stessa persona non due volte sullo stesso percorso. ON DELETE
+  // CASCADE: cancellare il percorso o la persona toglie il legame.
+  await query(`
+    CREATE TABLE IF NOT EXISTS percorso_partecipanti (
+      id          TEXT PRIMARY KEY,
+      percorso_id TEXT NOT NULL REFERENCES percorsi(id) ON DELETE CASCADE,
+      client_id   TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+      created_at  TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE (percorso_id, client_id)
+    )
+  `);
+  // Il percorso condiviso (team/group) NON ha un singolo proprietario: i partecipanti
+  // stanno in percorso_partecipanti, quindi il suo client_id è NULL. Perciò la colonna
+  // diventa NULLABILE (resta valorizzata per i percorsi individuali, mondo di oggi).
+  await query(`ALTER TABLE percorsi ALTER COLUMN client_id DROP NOT NULL`);
+
   // Fase 0 (2026-07-15) — stato del progetto = stato della relazione, 3 valori
   // come per il cliente individuale: attivo | in pausa | concluso. I vecchi stati
   // di pipeline (pre-intake/proposta/chiuso/perso) vengono rimappati una tantum.
