@@ -893,7 +893,19 @@ router.get('/dashboard/progetti/:id', requireCoach, async (req, res) => {
       SELECT id, name, cognome, area FROM clients
       WHERE id NOT IN (SELECT client_id FROM partecipazioni WHERE progetto_id=$1)
       ORDER BY cognome NULLS LAST, nome`, [req.params.id]);
-    res.send(progettoDettaglioPage(pr.rows[0], coachee.rows, req, disponibili.rows));
+    // Percorsi generati dal progetto (2b-2, panoramica sola lettura): per gli individuali
+    // uno per persona (client_id valorizzato); per team/group il percorso condiviso
+    // (client_id NULL) con i partecipanti aggregati da percorso_partecipanti.
+    const percorsi = await db.query(`
+      SELECT p.id, p.tipo, p.stato, p.n_sessioni_fatte, p.ore_fatte, p.client_id,
+             cl.name AS client_name,
+             (SELECT string_agg(c2.name, ', ' ORDER BY c2.cognome NULLS LAST, c2.nome)
+                FROM percorso_partecipanti pp JOIN clients c2 ON c2.id = pp.client_id
+               WHERE pp.percorso_id = p.id) AS partecipanti
+      FROM percorsi p LEFT JOIN clients cl ON cl.id = p.client_id
+      WHERE p.progetto_id = $1
+      ORDER BY p.created_at ASC`, [req.params.id]);
+    res.send(progettoDettaglioPage(pr.rows[0], coachee.rows, req, disponibili.rows, percorsi.rows));
   } catch (err) {
     console.error(err);
     res.status(500).send('Errore');
@@ -2514,7 +2526,7 @@ function progettiPage(progetti, committenti, req) {
 // ═══════════════════════════════════════════════════════
 // PAGINA DETTAGLIO PROGETTO (Fase 3a) — dati + coachee collegati
 // ═══════════════════════════════════════════════════════
-function progettoDettaglioPage(p, coachee, req, disponibili) {
+function progettoDettaglioPage(p, coachee, req, disponibili, percorsi) {
   const STATO_CFG = {
     'attivo':   { label:'Attivo',   bg:'#d1fae5', color:'#065f46' },
     'in pausa': { label:'In pausa', bg:'#fff8dc', color:'#7a5c00' },
@@ -2665,6 +2677,36 @@ function progettoDettaglioPage(p, coachee, req, disponibili) {
         <button onclick="dividiEqui()" class="btn btn-neutral btn-sm">Dividi in parti uguali</button>
         <button onclick="salvaTutto()" class="btn btn-primary btn-sm">Salva</button>
       </div>
+    </div>
+
+    <div class="card" style="margin-bottom:18px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <div class="field-label" style="margin:0">Percorsi</div>
+        <span style="font-size:12px;color:var(--muted)">nascono da soli dai clienti del progetto</span>
+      </div>
+      ${(percorsi && percorsi.length) ? `<div style="overflow-x:auto;margin:0 -4px"><table style="min-width:480px">
+        <thead><tr>
+          <th style="text-align:left;font-size:12px;color:var(--muted)">Tipo</th>
+          <th style="text-align:left;font-size:12px;color:var(--muted)">Cliente/i</th>
+          <th style="text-align:left;font-size:12px;color:var(--muted)">Sessioni</th>
+          <th style="text-align:left;font-size:12px;color:var(--muted)">Stato</th>
+        </tr></thead>
+        <tbody>${percorsi.map(pc => {
+          const condiviso = !pc.client_id;
+          const sess = Number(pc.n_sessioni_fatte) || 0;
+          const ore  = Number(pc.ore_fatte) || 0;
+          const chi = condiviso
+            ? (pc.partecipanti ? esc(pc.partecipanti) : `<span style="color:#aaa">nessun partecipante</span>`)
+            : `<a href="/dashboard/clients/${pc.client_id}" style="color:#1A5280;text-decoration:none">${esc(pc.client_name || '—')}</a>`;
+          return `<tr>
+            <td><strong>${esc(pc.tipo)}</strong>${condiviso ? ` <span class="badge" style="background:#eef1f5;color:#4a5568">condiviso</span>` : ''}</td>
+            <td style="font-size:13px">${chi}</td>
+            <td style="font-size:12px;white-space:nowrap">${sess} ${sess === 1 ? 'sessione' : 'sessioni'}${ore > 0 ? ` · ${fmtOre(ore)} h` : ''}</td>
+            <td><span class="badge ${pc.stato === 'attivo' ? 'badge-active' : 'badge-inactive'}">${pc.stato === 'attivo' ? 'Attivo' : 'Concluso'}</span></td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table></div>`
+      : `<div style="font-size:13px;color:var(--muted)">Nessun percorso ancora: si generano da soli quando aggiungi i clienti al progetto.</div>`}
     </div>
   </div>
 
