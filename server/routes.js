@@ -2571,50 +2571,56 @@ function progettiPage(progetti, committenti, req) {
 // PAGINA DETTAGLIO PROGETTO (Fase 3a) — dati + coachee collegati
 // ═══════════════════════════════════════════════════════
 function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi) {
-  // Fase 3a — la checklist guidata delle tappe con lo sponsor (ordine del documento).
+  // Fase 3a — le tappe con lo sponsor. La card parte VUOTA: si aggiungono a mano da
+  // una tendina ("+ Aggiungi fase"). In futuro l'automazione (report nella cartella
+  // Drive del progetto) le riconoscerà e le spunterà da sola, come già per le sessioni
+  // dei percorsi individuali. FASI_CFG = tipi previsti, in ordine; ORDER dà l'ordine
+  // di visualizzazione anche se aggiunte in un ordine diverso.
   const FASI_CFG = [
-    { tipo:'pre-intake',       label:'Pre-Intake',          desc:'con sponsor/referente · ripetibile', multi:true },
-    { tipo:'intake-sponsor',   label:'Intake con Sponsor',  desc:'definisce l’obiettivo di progetto' },
-    { tipo:'kick-off',         label:'Kick-Off',            desc:'sponsor + tutti i clienti' },
-    { tipo:'chiusura-open',    label:'Chiusura Open',       desc:'facoltativa', opt:true },
-    { tipo:'chiusura-sponsor', label:'Chiusura con Sponsor', desc:'' },
+    { tipo:'pre-intake',       label:'Pre-Intake',           opt:false },
+    { tipo:'intake-sponsor',   label:'Intake con Sponsor',   opt:false },
+    { tipo:'kick-off',         label:'Kick-Off',             opt:false },
+    { tipo:'chiusura-open',    label:'Chiusura Open',        opt:true  },
+    { tipo:'chiusura-sponsor', label:'Chiusura con Sponsor', opt:false },
   ];
-  const faseBlock = (tipo, f, removable) => {
+  const FASE_LABELS = {}, FASE_ORDER = {};
+  FASI_CFG.forEach((c, i) => { FASE_LABELS[c.tipo] = c.label; FASE_ORDER[c.tipo] = i; });
+  const faseRow = (tipo, f) => {
     const fid  = f ? f.id : '';
     const data = f && f.data ? f.data : '';
     const note = f ? (f.note || '') : '';
     const fatta = f ? !!f.fatta : false;
-    return `<div class="fase-block" data-tipo="${tipo}" data-fid="${esc(fid)}" style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 0 2px">
+    const ord = FASE_ORDER[tipo] != null ? FASE_ORDER[tipo] : 9;
+    return `<div class="fase-block" data-tipo="${tipo}" data-fid="${esc(fid)}" data-order="${ord}" style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:9px 0;border-top:1px solid #eef1f5">
+      <span class="fase-label" style="min-width:150px;font-weight:600;font-size:13px;color:var(--ink)">${esc(FASE_LABELS[tipo] || tipo)}</span>
       <input type="date" class="f-data" value="${esc(data)}" style="width:150px">
-      <input type="text" class="f-note" value="${esc(note)}" placeholder="note" style="flex:1;min-width:150px">
+      <input type="text" class="f-note" value="${esc(note)}" placeholder="note" style="flex:1;min-width:140px">
       <label style="font-size:12px;color:#4a5568;display:flex;align-items:center;gap:4px"><input type="checkbox" class="f-fatta" ${fatta ? 'checked' : ''}> fatta</label>
       <button onclick="salvaFase(this)" class="btn btn-neutral btn-sm">Salva</button>
-      ${removable ? `<button onclick="delFase(this)" class="btn btn-danger btn-sm" title="Rimuovi">🗑</button>` : ''}
+      <button onclick="delFase(this)" class="btn btn-danger btn-sm" title="Rimuovi">🗑</button>
     </div>`;
   };
-  const fasiByTipo = {};
-  (fasi || []).forEach(f => { (fasiByTipo[f.tipo] = fasiByTipo[f.tipo] || []).push(f); });
-  const fasiGroups = FASI_CFG.map(cfg => {
-    const list = fasiByTipo[cfg.tipo] || [];
-    let blocks;
-    if (cfg.multi) {
-      const base = list.length ? list.map(f => faseBlock(cfg.tipo, f, true)).join('') : faseBlock(cfg.tipo, null, true);
-      blocks = base + `<div style="padding-top:4px"><button onclick="addFase(this)" class="btn btn-neutral btn-sm">+ Aggiungi pre-intake</button></div>`;
-    } else {
-      blocks = faseBlock(cfg.tipo, list[0] || null, !!cfg.opt);
-    }
-    return `<div class="fase-group" data-group="${cfg.tipo}" style="margin-top:12px;padding-top:10px;border-top:1px solid #eef1f5">
-      <div style="font-weight:600;font-size:13px;color:var(--ink)">${cfg.label}${cfg.desc ? ` <span style="font-weight:400;color:#aaa;font-size:12px">· ${cfg.desc}</span>` : ''}${cfg.opt ? ` <span class="badge" style="background:#eef1f5;color:#7a8089;font-size:10px">facoltativa</span>` : ''}</div>
-      ${blocks}
-    </div>`;
-  }).join('');
+  const fasiSorted = (fasi || []).slice().sort((a, b) =>
+    (FASE_ORDER[a.tipo] != null ? FASE_ORDER[a.tipo] : 9) - (FASE_ORDER[b.tipo] != null ? FASE_ORDER[b.tipo] : 9));
+  const fasiRows = fasiSorted.map(f => faseRow(f.tipo, f)).join('');
+  const fasiMenuItems = FASI_CFG.map(c =>
+    `<button type="button" onclick="addFase('${c.tipo}')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:0;background:none;font-size:13px;color:var(--ink);cursor:pointer">${c.label}${c.opt ? ' <span style="color:#aaa;font-size:11px">(facoltativa)</span>' : ''}</button>`
+  ).join('');
   const fasiCard = `
     <div class="card" style="margin-bottom:18px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
         <div class="field-label" style="margin:0">Fasi del progetto</div>
-        <span style="font-size:12px;color:var(--muted)">le tappe con lo sponsor · data, note, fatta</span>
+        <span style="font-size:12px;color:var(--muted)">le tappe con lo sponsor · aggiungile quando servono</span>
       </div>
-      ${fasiGroups}
+      <div id="fasi-list">${fasiRows}</div>
+      <div id="fasi-empty" style="display:${fasiSorted.length ? 'none' : 'block'};font-size:13px;color:var(--muted);padding:6px 0">Nessuna fase ancora. Aggiungila con il pulsante qui sotto.</div>
+      <div style="position:relative;margin-top:12px">
+        <button type="button" onclick="toggleFaseMenu()" class="btn btn-neutral btn-sm">+ Aggiungi fase ▾</button>
+        <div id="fase-menu" style="display:none;position:absolute;left:0;top:100%;margin-top:4px;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.12);min-width:220px;z-index:50;overflow:hidden">
+          ${fasiMenuItems}
+        </div>
+      </div>
+      <div id="fase-template" style="display:none">${faseRow('pre-intake', null)}</div>
     </div>`;
   const STATO_CFG = {
     'attivo':   { label:'Attivo',   bg:'#d1fae5', color:'#065f46' },
@@ -3012,7 +3018,18 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi) {
       if (d.kept && d.message) alert(d.message);
       location.reload();
     }
-    // ── Fase 3a: le tappe del progetto ──
+    // ── Fase 3a: le tappe del progetto (aggiunte a mano da una tendina) ──
+    const FASE_LABELS = ${JSON.stringify(FASE_LABELS)};
+    const FASE_ORDER  = ${JSON.stringify(FASE_ORDER)};
+    function toggleFaseMenu() {
+      const m = document.getElementById('fase-menu');
+      m.style.display = (m.style.display === 'none' || !m.style.display) ? 'block' : 'none';
+    }
+    document.addEventListener('click', function(e) {
+      const m = document.getElementById('fase-menu');
+      if (!m || m.style.display !== 'block') return;
+      if (!m.contains(e.target) && !(e.target.getAttribute && e.target.getAttribute('onclick') === 'toggleFaseMenu()')) m.style.display = 'none';
+    });
     async function salvaFase(btn) {
       const b = btn.closest('.fase-block');
       const payload = {
@@ -3028,19 +3045,29 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi) {
       if (d.id) b.dataset.fid = d.id;
       showToast('Fase salvata');
     }
-    function addFase(btn) {
-      const group = btn.closest('.fase-group');
-      const base = group.querySelector('.fase-block');
-      const fresh = base.cloneNode(true);
-      fresh.dataset.fid = '';
-      fresh.querySelector('.f-data').value = '';
-      fresh.querySelector('.f-note').value = '';
-      fresh.querySelector('.f-fatta').checked = false;
-      btn.parentElement.insertAdjacentElement('beforebegin', fresh);
+    async function addFase(tipo) {
+      document.getElementById('fase-menu').style.display = 'none';
+      const r = await fetch('/dashboard/progetti/'+PID+'/fasi', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ tipo }) });
+      const d = await r.json();
+      if (!d.ok) { alert(d.error || 'Errore'); return; }
+      const el = document.getElementById('fase-template').firstElementChild.cloneNode(true);
+      el.dataset.tipo = tipo;
+      el.dataset.fid = d.id;
+      el.dataset.order = FASE_ORDER[tipo];
+      el.querySelector('.fase-label').textContent = FASE_LABELS[tipo];
+      el.querySelector('.f-data').value = '';
+      el.querySelector('.f-note').value = '';
+      el.querySelector('.f-fatta').checked = false;
+      const list = document.getElementById('fasi-list');
+      const rows = Array.prototype.slice.call(list.querySelectorAll('.fase-block'));
+      let ref = null;
+      for (let i = 0; i < rows.length; i++) { if (Number(rows[i].dataset.order) > Number(el.dataset.order)) { ref = rows[i]; break; } }
+      if (ref) list.insertBefore(el, ref); else list.appendChild(el);
+      document.getElementById('fasi-empty').style.display = 'none';
+      el.querySelector('.f-data').focus();
     }
     async function delFase(btn) {
       const b = btn.closest('.fase-block');
-      const group = b.closest('.fase-group');
       const fid = b.dataset.fid;
       if (fid && !confirm('Rimuovere questa tappa?')) return;
       if (fid) {
@@ -3048,9 +3075,9 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi) {
         const d = await r.json();
         if (!d.ok) { alert(d.error || 'Errore'); return; }
       }
-      const blocks = group.querySelectorAll('.fase-block');
-      if (blocks.length > 1) { b.remove(); }
-      else { b.dataset.fid=''; b.querySelector('.f-data').value=''; b.querySelector('.f-note').value=''; b.querySelector('.f-fatta').checked=false; }
+      b.remove();
+      const list = document.getElementById('fasi-list');
+      if (!list.querySelector('.fase-block')) document.getElementById('fasi-empty').style.display = 'block';
     }
     function showToast(msg) {
       const t=document.getElementById('toast'); t.textContent=msg; t.style.display='block'; setTimeout(()=>t.style.display='none',2000);
