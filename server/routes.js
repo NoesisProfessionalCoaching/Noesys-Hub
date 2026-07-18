@@ -905,7 +905,11 @@ router.get('/dashboard/progetti/:id', requireCoach, async (req, res) => {
       FROM percorsi p LEFT JOIN clients cl ON cl.id = p.client_id
       WHERE p.progetto_id = $1
       ORDER BY p.created_at ASC`, [req.params.id]);
-    res.send(progettoDettaglioPage(pr.rows[0], coachee.rows, req, disponibili.rows, percorsi.rows));
+    // Fasi del progetto (3a): la timeline delle tappe con lo sponsor.
+    const fasi = await db.query(
+      'SELECT id, tipo, data, note, fatta FROM fasi_progetto WHERE progetto_id=$1 ORDER BY created_at ASC',
+      [req.params.id]);
+    res.send(progettoDettaglioPage(pr.rows[0], coachee.rows, req, disponibili.rows, percorsi.rows, fasi.rows));
   } catch (err) {
     console.error(err);
     res.status(500).send('Errore');
@@ -1134,6 +1138,46 @@ router.post('/dashboard/progetti/:id/coachee/:partId/pagamento', requireCoach, e
        WHERE id=$2 AND progetto_id=$3`,
       [stato, req.params.partId, req.params.id]
     );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Errore' });
+  }
+});
+
+// Fase 3a — fasi del progetto. Un'unica POST fa create-o-update: senza `fid` crea una
+// nuova tappa (ritorna l'id, per i pre-intake ripetibili e per la prima volta di una
+// tappa singola); con `fid` aggiorna quella esistente. tipo accettato solo tra i 5.
+const FASI_TIPI = ['pre-intake','intake-sponsor','kick-off','chiusura-open','chiusura-sponsor'];
+router.post('/dashboard/progetti/:id/fasi', requireCoach, express.json(), async (req, res) => {
+  try {
+    const { fid, tipo } = req.body;
+    const data  = req.body.data || null;
+    const note  = (req.body.note || '').trim();
+    const fatta = !!req.body.fatta;
+    if (fid) {
+      await db.query(
+        'UPDATE fasi_progetto SET data=$1, note=$2, fatta=$3 WHERE id=$4 AND progetto_id=$5',
+        [data, note, fatta, fid, req.params.id]
+      );
+      return res.json({ ok: true, id: fid });
+    }
+    if (!FASI_TIPI.includes(tipo)) return res.status(400).json({ error: 'Tipo fase non valido' });
+    const id = uuidv4();
+    await db.query(
+      'INSERT INTO fasi_progetto (id, progetto_id, tipo, data, note, fatta) VALUES ($1,$2,$3,$4,$5,$6)',
+      [id, req.params.id, tipo, data, note, fatta]
+    );
+    res.json({ ok: true, id });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Errore' });
+  }
+});
+
+router.delete('/dashboard/progetti/:id/fasi/:fid', requireCoach, async (req, res) => {
+  try {
+    await db.query('DELETE FROM fasi_progetto WHERE id=$1 AND progetto_id=$2', [req.params.fid, req.params.id]);
     res.json({ ok: true });
   } catch (err) {
     console.error(err);
@@ -2526,7 +2570,52 @@ function progettiPage(progetti, committenti, req) {
 // ═══════════════════════════════════════════════════════
 // PAGINA DETTAGLIO PROGETTO (Fase 3a) — dati + coachee collegati
 // ═══════════════════════════════════════════════════════
-function progettoDettaglioPage(p, coachee, req, disponibili, percorsi) {
+function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi) {
+  // Fase 3a — la checklist guidata delle tappe con lo sponsor (ordine del documento).
+  const FASI_CFG = [
+    { tipo:'pre-intake',       label:'Pre-Intake',          desc:'con sponsor/referente · ripetibile', multi:true },
+    { tipo:'intake-sponsor',   label:'Intake con Sponsor',  desc:'definisce l’obiettivo di progetto' },
+    { tipo:'kick-off',         label:'Kick-Off',            desc:'sponsor + tutti i clienti' },
+    { tipo:'chiusura-open',    label:'Chiusura Open',       desc:'facoltativa', opt:true },
+    { tipo:'chiusura-sponsor', label:'Chiusura con Sponsor', desc:'' },
+  ];
+  const faseBlock = (tipo, f, removable) => {
+    const fid  = f ? f.id : '';
+    const data = f && f.data ? f.data : '';
+    const note = f ? (f.note || '') : '';
+    const fatta = f ? !!f.fatta : false;
+    return `<div class="fase-block" data-tipo="${tipo}" data-fid="${esc(fid)}" style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px 0 2px">
+      <input type="date" class="f-data" value="${esc(data)}" style="width:150px">
+      <input type="text" class="f-note" value="${esc(note)}" placeholder="note" style="flex:1;min-width:150px">
+      <label style="font-size:12px;color:#4a5568;display:flex;align-items:center;gap:4px"><input type="checkbox" class="f-fatta" ${fatta ? 'checked' : ''}> fatta</label>
+      <button onclick="salvaFase(this)" class="btn btn-neutral btn-sm">Salva</button>
+      ${removable ? `<button onclick="delFase(this)" class="btn btn-danger btn-sm" title="Rimuovi">🗑</button>` : ''}
+    </div>`;
+  };
+  const fasiByTipo = {};
+  (fasi || []).forEach(f => { (fasiByTipo[f.tipo] = fasiByTipo[f.tipo] || []).push(f); });
+  const fasiGroups = FASI_CFG.map(cfg => {
+    const list = fasiByTipo[cfg.tipo] || [];
+    let blocks;
+    if (cfg.multi) {
+      const base = list.length ? list.map(f => faseBlock(cfg.tipo, f, true)).join('') : faseBlock(cfg.tipo, null, true);
+      blocks = base + `<div style="padding-top:4px"><button onclick="addFase(this)" class="btn btn-neutral btn-sm">+ Aggiungi pre-intake</button></div>`;
+    } else {
+      blocks = faseBlock(cfg.tipo, list[0] || null, !!cfg.opt);
+    }
+    return `<div class="fase-group" data-group="${cfg.tipo}" style="margin-top:12px;padding-top:10px;border-top:1px solid #eef1f5">
+      <div style="font-weight:600;font-size:13px;color:var(--ink)">${cfg.label}${cfg.desc ? ` <span style="font-weight:400;color:#aaa;font-size:12px">· ${cfg.desc}</span>` : ''}${cfg.opt ? ` <span class="badge" style="background:#eef1f5;color:#7a8089;font-size:10px">facoltativa</span>` : ''}</div>
+      ${blocks}
+    </div>`;
+  }).join('');
+  const fasiCard = `
+    <div class="card" style="margin-bottom:18px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2px">
+        <div class="field-label" style="margin:0">Fasi del progetto</div>
+        <span style="font-size:12px;color:var(--muted)">le tappe con lo sponsor · data, note, fatta</span>
+      </div>
+      ${fasiGroups}
+    </div>`;
   const STATO_CFG = {
     'attivo':   { label:'Attivo',   bg:'#d1fae5', color:'#065f46' },
     'in pausa': { label:'In pausa', bg:'#fff8dc', color:'#7a5c00' },
@@ -2708,6 +2797,8 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi) {
       </table></div>`
       : `<div style="font-size:13px;color:var(--muted)">Nessun percorso ancora: si generano da soli quando aggiungi i clienti al progetto.</div>`}
     </div>
+
+    ${fasiCard}
   </div>
 
   <div id="modal-coachee" class="modal-overlay">
@@ -2920,6 +3011,46 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi) {
       if (!d.ok) { alert(d.error || 'Errore'); return; }
       if (d.kept && d.message) alert(d.message);
       location.reload();
+    }
+    // ── Fase 3a: le tappe del progetto ──
+    async function salvaFase(btn) {
+      const b = btn.closest('.fase-block');
+      const payload = {
+        tipo: b.dataset.tipo,
+        fid: b.dataset.fid || '',
+        data: b.querySelector('.f-data').value || null,
+        note: b.querySelector('.f-note').value || '',
+        fatta: b.querySelector('.f-fatta').checked
+      };
+      const r = await fetch('/dashboard/progetti/'+PID+'/fasi', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+      const d = await r.json();
+      if (!d.ok) { alert(d.error || 'Errore'); return; }
+      if (d.id) b.dataset.fid = d.id;
+      showToast('Fase salvata');
+    }
+    function addFase(btn) {
+      const group = btn.closest('.fase-group');
+      const base = group.querySelector('.fase-block');
+      const fresh = base.cloneNode(true);
+      fresh.dataset.fid = '';
+      fresh.querySelector('.f-data').value = '';
+      fresh.querySelector('.f-note').value = '';
+      fresh.querySelector('.f-fatta').checked = false;
+      btn.parentElement.insertAdjacentElement('beforebegin', fresh);
+    }
+    async function delFase(btn) {
+      const b = btn.closest('.fase-block');
+      const group = b.closest('.fase-group');
+      const fid = b.dataset.fid;
+      if (fid && !confirm('Rimuovere questa tappa?')) return;
+      if (fid) {
+        const r = await fetch('/dashboard/progetti/'+PID+'/fasi/'+fid, { method:'DELETE' });
+        const d = await r.json();
+        if (!d.ok) { alert(d.error || 'Errore'); return; }
+      }
+      const blocks = group.querySelectorAll('.fase-block');
+      if (blocks.length > 1) { b.remove(); }
+      else { b.dataset.fid=''; b.querySelector('.f-data').value=''; b.querySelector('.f-note').value=''; b.querySelector('.f-fatta').checked=false; }
     }
     function showToast(msg) {
       const t=document.getElementById('toast'); t.textContent=msg; t.style.display='block'; setTimeout(()=>t.style.display='none',2000);

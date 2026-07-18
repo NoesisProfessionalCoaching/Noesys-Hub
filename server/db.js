@@ -346,6 +346,24 @@ async function init() {
   // diventa NULLABILE (resta valorizzata per i percorsi individuali, mondo di oggi).
   await query(`ALTER TABLE percorsi ALTER COLUMN client_id DROP NOT NULL`);
 
+  // Fase 3a (2026-07-18) — le FASI del progetto (tappe con lo sponsor). Timeline a
+  // livello di PROGETTO, distinta dalle sessioni del percorso (Intake/Ongoing/Final).
+  // tipo = pre-intake | intake-sponsor | kick-off | chiusura-open | chiusura-sponsor.
+  // Pre-Intake è ripetibile (più righe); le altre di norma una sola; chiusura-open è
+  // facoltativa (0 o 1). Ogni tappa: data + note + fatta. I REPORT veri verso il
+  // committente sono la reportistica progetto (fetta 4), non qui.
+  await query(`
+    CREATE TABLE IF NOT EXISTS fasi_progetto (
+      id          TEXT PRIMARY KEY,
+      progetto_id TEXT NOT NULL REFERENCES progetti(id) ON DELETE CASCADE,
+      tipo        TEXT NOT NULL,
+      data        DATE,
+      note        TEXT DEFAULT '',
+      fatta       BOOLEAN DEFAULT FALSE,
+      created_at  TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
   // Fase 0 (2026-07-15) — stato del progetto = stato della relazione, 3 valori
   // come per il cliente individuale: attivo | in pausa | concluso. I vecchi stati
   // di pipeline (pre-intake/proposta/chiuso/perso) vengono rimappati una tantum.
