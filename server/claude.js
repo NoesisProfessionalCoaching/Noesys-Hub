@@ -178,6 +178,8 @@ async function generaRigaFase({ tipo, progetto, reportText }) {
 Regole ferme (rispettale alla lettera):
 - Attieniti ai fatti del report. NON inventare. Campo assente nel report → "—".
 - Voci a elenco (partecipanti, argomenti, next_steps, parametri, interventi, traguardi): ELENCO PUNTATO, un punto per riga con "- ". Punti brevi.
+- argomenti: per OGNI argomento specifica CHI lo ha trattato o introdotto — il coach oppure un committente (sponsor o referente) — iniziando il punto col ruolo (e il nome, se noto) in grassetto: "- **Coach:** …", "- **Sponsor (Nome):** …", "- **Referente (Nome):** …". Se il report non indica chi, lascia il punto senza grassetto.
+- ipotesi_partecipanti: riporta SOLO il numero (anche stimato) dei partecipanti previsti, gli eventuali nominativi e le caratteristiche dei loro profili così come condivise dai committenti. NIENT'ALTRO: obiettivi, richieste e argomenti vanno nelle rispettive voci, non qui.
 - obiettivo grezzo / obiettivo SMARTER: UNA-due frasi sintetiche, niente elenchi di valori.
 - note: conclusioni/considerazioni del coach, riportate fedelmente, testo scorrevole e conciso.
 
