@@ -174,6 +174,21 @@ async function createPercorsoFolders(clientFolderId, folderName) {
   return { id: percF.id, url: folderUrl(percF.id) };
 }
 
+// Crea (idempotente) l'albero cartelle di un PROGETTO e restituisce la sua cartella {id,url}.
+// Struttura: Noesys/Progetti/{Committente – Titolo}/ con dentro una sottocartella per fase
+// (Pre-Intake/Intake/Kick-Off/Final Open/Final). È dove il coach salva i report Zoom delle
+// fasi; l'automazione li leggerà da qui (come Intake/Ongoing/Final per il cliente).
+async function createProjectFolders({ committente, titolo }) {
+  const label = [committente, titolo].map(s => (s || '').trim()).filter(Boolean).join(' – ');
+  if (!label) throw new Error('Mancano committente/titolo: impossibile nominare la cartella del progetto');
+  const progetti = await findOrCreateFolder(NOESYS_ROOT_ID, 'Progetti');
+  const projF    = await findOrCreateFolder(progetti.id, label);
+  for (const sub of ['Pre-Intake', 'Intake', 'Kick-Off', 'Final Open', 'Final']) {
+    await findOrCreateFolder(projF.id, sub);
+  }
+  return { id: projF.id, url: folderUrl(projF.id) };
+}
+
 // Scarica i BYTE grezzi di un file (es. un .docx) per estrarne poi il testo.
 async function downloadFileBuffer(fileId) {
   const token = await getAccessToken();
@@ -214,4 +229,5 @@ module.exports = {
   folderUrl,
   createClientFolders,
   createPercorsoFolders,
+  createProjectFolders,
 };

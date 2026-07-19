@@ -288,6 +288,11 @@ async function init() {
   await query(`ALTER TABLE progetti ADD COLUMN IF NOT EXISTS referente_ruolo TEXT`);
   await query(`ALTER TABLE progetti ADD COLUMN IF NOT EXISTS referente_email TEXT`);
 
+  // Reportistica A (2026-07-19) — cartella Drive del progetto: dove il coach salva i
+  // report Zoom delle fasi (Pre-Intake/Intake/Kick-Off/Final). Punto d'ingresso
+  // dell'automazione report→riga-fase, come drive_url per il cliente.
+  await query(`ALTER TABLE progetti ADD COLUMN IF NOT EXISTS drive_url TEXT`);
+
   // B1 (2026-07-16) — un percorso può appartenere a un PROGETTO. Opzionale e nullo
   // per tutti i percorsi esistenti (individuali fuori progetto = mondo di oggi).
   // ON DELETE SET NULL: se si elimina il progetto, il percorso sopravvive e si

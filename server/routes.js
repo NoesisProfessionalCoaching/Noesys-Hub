@@ -817,7 +817,7 @@ router.post('/dashboard/progetti', requireCoach, express.json(), async (req, res
   const refRuolo = refModo === 'altra' ? (referente_ruolo||'').trim() : '';
   const refEmail = refModo === 'altra' ? (referente_email||'').trim() : '';
   try {
-    const c = await db.query('SELECT 1 FROM committenti WHERE id=$1', [committente_id]);
+    const c = await db.query('SELECT denominazione FROM committenti WHERE id=$1', [committente_id]);
     if (!c.rows.length) return res.status(400).json({ error: 'Committente non valido' });
     const id = uuidv4();
     await db.query(
@@ -830,10 +830,45 @@ router.post('/dashboard/progetti', requireCoach, express.json(), async (req, res
        (obiettivi||'').trim(), (note||'').trim(), data_inizio||null,
        refModo, refNome, refRuolo, refEmail]
     );
-    res.json({ ok: true, id });
+    // Cartelle Drive automatiche del progetto. Se Drive fallisce, il progetto resta creato
+    // lo stesso (drive_url vuoto): il coach riprova col pulsante «🔄 Crea cartelle Drive»
+    // nella pagina del progetto. Mirror del comportamento del cliente.
+    let driveOk = false;
+    try {
+      const f = await drive.createProjectFolders({ committente: c.rows[0].denominazione, titolo: titolo.trim() });
+      await db.query('UPDATE progetti SET drive_url=$1 WHERE id=$2', [f.url, id]);
+      driveOk = true;
+    } catch (e) {
+      console.error('[drive] creazione cartelle progetto fallita:', e.message);
+    }
+    res.json({ ok: true, id, driveOk });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Errore' });
+  }
+});
+
+// Crea (o ripristina) le cartelle Drive di un progetto esistente. Usato dal pulsante nella
+// pagina quando drive_url è vuoto (progetti nati prima di questa funzione, es. Flamingo).
+// Non tocca chi ha già un link, per non fare doppioni.
+router.post('/dashboard/progetti/:id/drive-folders', requireCoach, async (req, res) => {
+  try {
+    const pr = await db.query(
+      `SELECT p.titolo, p.drive_url, c.denominazione AS committente_nome
+         FROM progetti p JOIN committenti c ON c.id = p.committente_id WHERE p.id=$1`,
+      [req.params.id]
+    );
+    const p = pr.rows[0];
+    if (!p) return res.status(404).json({ error: 'Progetto non trovato' });
+    if (p.drive_url && p.drive_url.trim()) {
+      return res.status(400).json({ error: 'Questo progetto ha già una cartella Drive.' });
+    }
+    const f = await drive.createProjectFolders({ committente: p.committente_nome, titolo: p.titolo });
+    await db.query('UPDATE progetti SET drive_url=$1 WHERE id=$2', [f.url, req.params.id]);
+    res.json({ ok: true, drive_url: f.url });
+  } catch (e) {
+    console.error('[drive] cartelle progetto:', e.message);
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -2716,6 +2751,9 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi) {
         <span class="badge" style="background:${sc.bg};color:${sc.color}">${sc.label}</span>
         ${p.data_inizio ? `<span class="badge" style="background:#eef1f5;color:#7a8089">Inizio ${itDate(p.data_inizio)}</span>` : ''}
       </div>
+      ${p.drive_url
+        ? `<div style="margin-top:10px"><div class="field-label">Cartella Drive</div><a href="${esc(p.drive_url)}" target="_blank" style="font-size:13px;word-break:break-all">${esc(p.drive_url)}</a></div>`
+        : `<div style="margin-top:10px"><div class="field-label">Cartella Drive</div><button id="drive-folders-btn" onclick="creaCartelleProgetto()" class="btn btn-neutral btn-sm">🔄 Crea cartelle Drive</button><span id="drive-folders-msg" style="font-size:12px;color:#6B7280;margin-left:8px"></span></div>`}
     </div>
 
     ${(p.obiettivi || p.note) ? `<div class="card">
@@ -2843,6 +2881,19 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi) {
 
   <script>
     const PID = ${JSON.stringify(p.id)};
+
+    // Cartella Drive del progetto: crea (o ripristina) l'albero se drive_url è vuoto.
+    async function creaCartelleProgetto() {
+      const btn = document.getElementById('drive-folders-btn');
+      const msg = document.getElementById('drive-folders-msg');
+      btn.disabled = true; msg.style.color='#6B7280'; msg.textContent = 'Creazione in corso…';
+      try {
+        const r = await fetch('/dashboard/progetti/'+PID+'/drive-folders', { method:'POST' });
+        const d = await r.json();
+        if (d.error) { msg.style.color='#b45309'; msg.textContent = d.error; btn.disabled = false; return; }
+        location.reload();
+      } catch(e) { msg.style.color='#b45309'; msg.textContent = 'Errore di rete, riprova'; btn.disabled = false; }
+    }
 
     // ── Fase 3B: quota del progetto ──
     let pagStato = ${JSON.stringify(statoComm)};
