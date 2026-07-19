@@ -942,7 +942,7 @@ router.get('/dashboard/progetti/:id', requireCoach, async (req, res) => {
       ORDER BY p.created_at ASC`, [req.params.id]);
     // Fasi del progetto (3a): la timeline delle tappe con lo sponsor.
     const fasi = await db.query(
-      'SELECT id, tipo, data, note, fatta FROM fasi_progetto WHERE progetto_id=$1 ORDER BY created_at ASC',
+      'SELECT id, tipo, data, note, fatta, contenuto, stato, origine FROM fasi_progetto WHERE progetto_id=$1 ORDER BY created_at ASC',
       [req.params.id]);
     res.send(progettoDettaglioPage(pr.rows[0], coachee.rows, req, disponibili.rows, percorsi.rows, fasi.rows));
   } catch (err) {
@@ -1188,20 +1188,46 @@ router.post('/dashboard/progetti/:id/fasi', requireCoach, express.json(), async 
   try {
     const { fid, tipo } = req.body;
     const data  = req.body.data || null;
-    const note  = (req.body.note || '').trim();
     const fatta = !!req.body.fatta;
-    if (fid) {
+    const contenuto = (req.body.contenuto && typeof req.body.contenuto === 'object') ? req.body.contenuto : null;
+    const note  = contenuto ? (contenuto.note || '') : (req.body.note || '').trim();
+
+    // Approva una riga nata in BOZZA dall'automazione (mattone 3).
+    if (fid && req.body.approva) {
       await db.query(
-        'UPDATE fasi_progetto SET data=$1, note=$2, fatta=$3 WHERE id=$4 AND progetto_id=$5',
-        [data, note, fatta, fid, req.params.id]
+        "UPDATE fasi_progetto SET stato='confermata' WHERE id=$1 AND progetto_id=$2",
+        [fid, req.params.id]
       );
       return res.json({ ok: true, id: fid });
     }
+
+    if (fid) {
+      if (contenuto) {
+        await db.query(
+          'UPDATE fasi_progetto SET data=$1, note=$2, fatta=$3, contenuto=$4 WHERE id=$5 AND progetto_id=$6',
+          [data, note, fatta, JSON.stringify(contenuto), fid, req.params.id]
+        );
+      } else {
+        await db.query(
+          'UPDATE fasi_progetto SET data=$1, note=$2, fatta=$3 WHERE id=$4 AND progetto_id=$5',
+          [data, note, fatta, fid, req.params.id]
+        );
+      }
+      // Obiettivo SMARTER + Parametri (voci dell'Intake) = verità del PROGETTO, una sola.
+      if (req.body.obiettivo !== undefined || req.body.parametri !== undefined) {
+        await db.query(
+          'UPDATE progetti SET obiettivo_smarter=$1, parametri=$2, updated_at=NOW() WHERE id=$3',
+          [(req.body.obiettivo || '').trim(), (req.body.parametri || '').trim(), req.params.id]
+        );
+      }
+      return res.json({ ok: true, id: fid });
+    }
+
     if (!FASI_TIPI.includes(tipo)) return res.status(400).json({ error: 'Tipo fase non valido' });
     const id = uuidv4();
     await db.query(
-      'INSERT INTO fasi_progetto (id, progetto_id, tipo, data, note, fatta) VALUES ($1,$2,$3,$4,$5,$6)',
-      [id, req.params.id, tipo, data, note, fatta]
+      "INSERT INTO fasi_progetto (id, progetto_id, tipo, data, note, fatta, contenuto, stato, origine) VALUES ($1,$2,$3,$4,$5,$6,$7,'confermata','manuale')",
+      [id, req.params.id, tipo, data, note, fatta, JSON.stringify(contenuto || {})]
     );
     res.json({ ok: true, id });
   } catch (err) {
@@ -2532,7 +2558,6 @@ function progettiPage(progetti, committenti, req) {
         <div class="form-group"><label>Email referente</label><input id="p-ref-email" type="email" placeholder="referente@azienda.it"></div>
       </div>
       <div class="form-group"><label>Data inizio</label><input id="p-data" type="date"></div>
-      <div class="form-group"><label>Obiettivi (aziendali)</label><textarea id="p-obiettivi" placeholder="obiettivi del committente per questo progetto"></textarea></div>
       <div class="form-group"><label>Note</label><input id="p-note" type="text" placeholder="osservazioni libere"></div>
       <div style="display:flex;gap:8px;margin-top:4px">
         <button onclick="closeProgModal()" class="btn btn-neutral" style="flex:1">Annulla</button>
@@ -2542,9 +2567,9 @@ function progettiPage(progetti, committenti, req) {
   </div>
 
   <script>
-    const F = ['committente_id','titolo','area','tipo','stato','data_inizio','obiettivi','note','referente_modo','referente_nome','referente_ruolo','referente_email'];
+    const F = ['committente_id','titolo','area','tipo','stato','data_inizio','note','referente_modo','referente_nome','referente_ruolo','referente_email'];
     const ID = { committente_id:'p-committente', titolo:'p-titolo', area:'p-area', tipo:'p-tipo',
-      stato:'p-stato', data_inizio:'p-data', obiettivi:'p-obiettivi', note:'p-note',
+      stato:'p-stato', data_inizio:'p-data', note:'p-note',
       referente_modo:'p-ref-modo', referente_nome:'p-ref-nome', referente_ruolo:'p-ref-ruolo', referente_email:'p-ref-email' };
     function toggleRef() {
       var m = document.getElementById('p-ref-modo').value;
@@ -2620,24 +2645,100 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi) {
   ];
   const FASE_LABELS = {}, FASE_ORDER = {};
   FASI_CFG.forEach((c, i) => { FASE_LABELS[c.tipo] = c.label; FASE_ORDER[c.tipo] = i; });
-  const faseRow = (tipo, f) => {
+
+  // Voci del report per ciascun tipo di fase (mattone 2). key = campo nella scatola
+  // JSON `contenuto`; label = etichetta mostrata; proj = voce che è verità di PROGETTO
+  // (Intake) e va su `progetti`, non nel contenuto. Comuni a tutte: Partecipanti · Note.
+  const VOCI_FASE = {
+    'pre-intake': [
+      { key:'partecipanti', label:"Partecipanti all'incontro" },
+      { key:'argomenti', label:'Argomenti discussi' },
+      { key:'obiettivo_grezzo', label:'Obiettivo grezzo (pre-SMARTER)' },
+      { key:'ipotesi_partecipanti', label:'Ipotesi n° partecipanti e caratteristiche' },
+      { key:'richieste', label:'Eventuali richieste specifiche' },
+      { key:'next_steps', label:'Next steps' },
+      { key:'note', label:'Note' },
+    ],
+    'intake-sponsor': [
+      { key:'partecipanti', label:"Partecipanti all'incontro" },
+      { key:'argomenti', label:'Argomenti discussi' },
+      { key:'obiettivo_smarter', label:'Obiettivo di progetto (SMARTER)', proj:'obiettivo_smarter' },
+      { key:'parametri', label:'Parametri di verifica del successo', proj:'parametri' },
+      { key:'next_steps', label:'Next steps' },
+      { key:'note', label:'Note' },
+    ],
+    'kick-off': [
+      { key:'partecipanti', label:"Partecipanti all'incontro" },
+      { key:'argomenti', label:'Argomenti presentati (Sponsor/Coach)' },
+      { key:'interventi', label:'Interventi importanti dei partecipanti' },
+      { key:'next_steps', label:'Next steps' },
+      { key:'note', label:'Note' },
+    ],
+    'chiusura-open': [
+      { key:'partecipanti', label:"Partecipanti all'incontro" },
+      { key:'argomenti', label:'Argomenti trattati' },
+      { key:'traguardi', label:'Traguardi celebrati' },
+      { key:'note', label:'Note' },
+    ],
+    'chiusura-sponsor': [
+      { key:'partecipanti', label:"Partecipanti all'incontro" },
+      { key:'argomenti', label:'Argomenti trattati' },
+      { key:'feedback_sponsor', label:'Feedback Sponsor' },
+      { key:'note', label:'Note' },
+    ],
+  };
+  // Pre-Intake: dal #2 in poi due voci cambiano etichetta (conferma/modifica).
+  const PRE_SUCC_LABELS = {
+    obiettivo_grezzo: 'Obiettivo grezzo (conferma/modifica)',
+    ipotesi_partecipanti: 'Conferma/modifica n° partecipanti e caratteristiche',
+  };
+  const projVals = { obiettivo_smarter: p.obiettivo_smarter || '', parametri: p.parametri || '' };
+  const faseDetail = (tipo, contenuto, isPrimoPre) => {
+    const voci = VOCI_FASE[tipo] || [];
+    const c = contenuto || {};
+    return voci.map(v => {
+      let label = v.label;
+      if (tipo === 'pre-intake' && !isPrimoPre && PRE_SUCC_LABELS[v.key]) label = PRE_SUCC_LABELS[v.key];
+      const val = v.proj ? (projVals[v.proj] || '') : (c[v.key] != null ? c[v.key] : '');
+      return `<div style="margin-bottom:10px">
+        <label style="display:block;font-size:12px;font-weight:600;color:#4a5568;margin-bottom:3px">${esc(label)}${v.proj ? ' <span style="color:#2563eb;font-weight:400">· obiettivo di progetto</span>' : ''}</label>
+        <textarea class="f-voce" data-key="${esc(v.key)}"${v.proj ? ` data-proj="${esc(v.proj)}"` : ''} rows="2" style="width:100%;font-size:13px;resize:vertical">${esc(String(val))}</textarea>
+      </div>`;
+    }).join('');
+  };
+  const faseRow = (tipo, f, isPrimoPre, num) => {
     const fid  = f ? f.id : '';
     const data = f && f.data ? f.data : '';
-    const note = f ? (f.note || '') : '';
     const fatta = f ? !!f.fatta : false;
+    const stato = f ? (f.stato || 'confermata') : 'confermata';
+    const contenuto = f ? (f.contenuto || {}) : {};
     const ord = FASE_ORDER[tipo] != null ? FASE_ORDER[tipo] : 9;
-    return `<div class="fase-block" data-tipo="${tipo}" data-fid="${esc(fid)}" data-order="${ord}" style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:9px 0;border-top:1px solid #eef1f5">
-      <span class="fase-label" style="min-width:150px;font-weight:600;font-size:13px;color:var(--ink)">${esc(FASE_LABELS[tipo] || tipo)}</span>
-      <input type="date" class="f-data" value="${esc(data)}" style="width:150px">
-      <input type="text" class="f-note" value="${esc(note)}" placeholder="note" style="flex:1;min-width:140px">
-      <label style="font-size:12px;color:#4a5568;display:flex;align-items:center;gap:4px"><input type="checkbox" class="f-fatta" ${fatta ? 'checked' : ''}> fatta</label>
-      <button onclick="salvaFase(this)" class="btn btn-neutral btn-sm">Salva</button>
-      <button onclick="delFase(this)" class="btn btn-danger btn-sm" title="Rimuovi">🗑</button>
+    const label = (FASE_LABELS[tipo] || tipo) + (tipo === 'pre-intake' && num ? ' #' + num : '');
+    const isBozza = stato === 'bozza';
+    return `<div class="fase-block" data-tipo="${tipo}" data-fid="${esc(fid)}" data-order="${ord}" style="padding:10px 0;border-top:1px solid #eef1f5">
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px">
+        <span class="fase-label" style="min-width:150px;font-weight:600;font-size:13px;color:var(--ink)">${esc(label)}</span>
+        ${isBozza ? `<span style="background:#fef3c7;color:#92400e;font-size:11px;padding:2px 7px;border-radius:6px">bozza</span>` : ''}
+        <input type="date" class="f-data" value="${esc(data)}" style="width:150px">
+        <label style="font-size:12px;color:#4a5568;display:flex;align-items:center;gap:4px"><input type="checkbox" class="f-fatta" ${fatta ? 'checked' : ''}> fatta</label>
+        <button type="button" onclick="toggleDettaglio(this)" class="btn btn-neutral btn-sm">Dettaglio ▾</button>
+        ${isBozza ? `<button type="button" onclick="approvaFase(this)" class="btn btn-primary btn-sm">Approva</button>` : ''}
+        <button type="button" onclick="salvaFase(this)" class="btn btn-neutral btn-sm">Salva</button>
+        <button type="button" onclick="delFase(this)" class="btn btn-danger btn-sm" title="Rimuovi">🗑</button>
+      </div>
+      <div class="fase-dettaglio" style="display:none;margin-top:10px;padding:10px;background:#f9fafb;border-radius:8px">
+        ${faseDetail(tipo, contenuto, isPrimoPre)}
+      </div>
     </div>`;
   };
   const fasiSorted = (fasi || []).slice().sort((a, b) =>
     (FASE_ORDER[a.tipo] != null ? FASE_ORDER[a.tipo] : 9) - (FASE_ORDER[b.tipo] != null ? FASE_ORDER[b.tipo] : 9));
-  const fasiRows = fasiSorted.map(f => faseRow(f.tipo, f)).join('');
+  let preN = 0;
+  const fasiRows = fasiSorted.map(f => {
+    let num = 0, isPrimo = true;
+    if (f.tipo === 'pre-intake') { preN += 1; num = preN; isPrimo = (preN === 1); }
+    return faseRow(f.tipo, f, isPrimo, num);
+  }).join('');
   const fasiMenuItems = FASI_CFG.map(c =>
     `<button type="button" onclick="addFase('${c.tipo}')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:0;background:none;font-size:13px;color:var(--ink);cursor:pointer">${c.label}${c.opt ? ' <span style="color:#aaa;font-size:11px">(facoltativa)</span>' : ''}</button>`
   ).join('');
@@ -2655,7 +2756,6 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi) {
           ${fasiMenuItems}
         </div>
       </div>
-      <div id="fase-template" style="display:none">${faseRow('pre-intake', null)}</div>
     </div>`;
   const STATO_CFG = {
     'attivo':   { label:'Attivo',   bg:'#d1fae5', color:'#065f46' },
@@ -2756,8 +2856,9 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi) {
         : `<div style="margin-top:10px"><div class="field-label">Cartella Drive</div><button id="drive-folders-btn" onclick="creaCartelleProgetto()" class="btn btn-neutral btn-sm">🔄 Crea cartelle Drive</button><span id="drive-folders-msg" style="font-size:12px;color:#6B7280;margin-left:8px"></span></div>`}
     </div>
 
-    ${(p.obiettivi || p.note) ? `<div class="card">
-      ${p.obiettivi ? `<div style="margin-bottom:${p.note?'12px':'0'}"><div class="field-label">Obiettivi aziendali</div><div class="field-value" style="white-space:pre-wrap">${esc(p.obiettivi)}</div></div>` : ''}
+    ${(p.obiettivo_smarter || p.parametri || p.note) ? `<div class="card">
+      ${p.obiettivo_smarter ? `<div style="margin-bottom:10px"><div class="field-label">Obiettivo di progetto (SMARTER)</div><div class="field-value" style="white-space:pre-wrap">${esc(p.obiettivo_smarter)}</div></div>` : ''}
+      ${p.parametri ? `<div style="margin-bottom:10px"><div class="field-label">Parametri di verifica del successo</div><div class="field-value" style="white-space:pre-wrap">${esc(p.parametri)}</div></div>` : ''}
       ${p.note ? `<div><div class="field-label">Note</div><div class="field-value" style="white-space:pre-wrap">${esc(p.note)}</div></div>` : ''}
     </div>` : ''}
 
@@ -3081,41 +3182,51 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi) {
       if (!m || m.style.display !== 'block') return;
       if (!m.contains(e.target) && !(e.target.getAttribute && e.target.getAttribute('onclick') === 'toggleFaseMenu()')) m.style.display = 'none';
     });
+    function toggleDettaglio(btn) {
+      const b = btn.closest('.fase-block');
+      const d = b.querySelector('.fase-dettaglio');
+      const open = d.style.display !== 'none';
+      d.style.display = open ? 'none' : 'block';
+      btn.textContent = open ? 'Dettaglio ▾' : 'Dettaglio ▴';
+    }
     async function salvaFase(btn) {
       const b = btn.closest('.fase-block');
+      const contenuto = {};
+      let obiettivo, parametri;
+      b.querySelectorAll('.f-voce').forEach(function(el) {
+        const proj = el.dataset.proj || '';
+        if (proj === 'obiettivo_smarter') obiettivo = el.value;
+        else if (proj === 'parametri') parametri = el.value;
+        else contenuto[el.dataset.key] = el.value;
+      });
       const payload = {
         tipo: b.dataset.tipo,
         fid: b.dataset.fid || '',
         data: b.querySelector('.f-data').value || null,
-        note: b.querySelector('.f-note').value || '',
-        fatta: b.querySelector('.f-fatta').checked
+        fatta: b.querySelector('.f-fatta').checked,
+        contenuto: contenuto
       };
+      if (obiettivo !== undefined) payload.obiettivo = obiettivo;
+      if (parametri !== undefined) payload.parametri = parametri;
       const r = await fetch('/dashboard/progetti/'+PID+'/fasi', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
       const d = await r.json();
       if (!d.ok) { alert(d.error || 'Errore'); return; }
       if (d.id) b.dataset.fid = d.id;
       showToast('Fase salvata');
     }
+    async function approvaFase(btn) {
+      const b = btn.closest('.fase-block');
+      const r = await fetch('/dashboard/progetti/'+PID+'/fasi', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ fid:b.dataset.fid, tipo:b.dataset.tipo, approva:true }) });
+      const d = await r.json();
+      if (!d.ok) { alert(d.error || 'Errore'); return; }
+      location.reload();
+    }
     async function addFase(tipo) {
       document.getElementById('fase-menu').style.display = 'none';
       const r = await fetch('/dashboard/progetti/'+PID+'/fasi', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ tipo }) });
       const d = await r.json();
       if (!d.ok) { alert(d.error || 'Errore'); return; }
-      const el = document.getElementById('fase-template').firstElementChild.cloneNode(true);
-      el.dataset.tipo = tipo;
-      el.dataset.fid = d.id;
-      el.dataset.order = FASE_ORDER[tipo];
-      el.querySelector('.fase-label').textContent = FASE_LABELS[tipo];
-      el.querySelector('.f-data').value = '';
-      el.querySelector('.f-note').value = '';
-      el.querySelector('.f-fatta').checked = false;
-      const list = document.getElementById('fasi-list');
-      const rows = Array.prototype.slice.call(list.querySelectorAll('.fase-block'));
-      let ref = null;
-      for (let i = 0; i < rows.length; i++) { if (Number(rows[i].dataset.order) > Number(el.dataset.order)) { ref = rows[i]; break; } }
-      if (ref) list.insertBefore(el, ref); else list.appendChild(el);
-      document.getElementById('fasi-empty').style.display = 'none';
-      el.querySelector('.f-data').focus();
+      location.reload();
     }
     async function delFase(btn) {
       const b = btn.closest('.fase-block');

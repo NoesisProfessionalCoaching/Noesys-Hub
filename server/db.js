@@ -293,6 +293,13 @@ async function init() {
   // dell'automazione report→riga-fase, come drive_url per il cliente.
   await query(`ALTER TABLE progetti ADD COLUMN IF NOT EXISTS drive_url TEXT`);
 
+  // Reportistica A / mattone 2 — l'OBIETTIVO UFFICIALE del progetto (SMARTER) nasce
+  // dalla fase Intake (non più dall'anagrafica: il vecchio `obiettivi` esce di scena
+  // dalla UI). `parametri` = parametri di verifica del successo, sempre dall'Intake.
+  // Una sola verità sul progetto; a questi punteranno gli obiettivi di sessione.
+  await query(`ALTER TABLE progetti ADD COLUMN IF NOT EXISTS obiettivo_smarter TEXT`);
+  await query(`ALTER TABLE progetti ADD COLUMN IF NOT EXISTS parametri         TEXT`);
+
   // B1 (2026-07-16) — un percorso può appartenere a un PROGETTO. Opzionale e nullo
   // per tutti i percorsi esistenti (individuali fuori progetto = mondo di oggi).
   // ON DELETE SET NULL: se si elimina il progetto, il percorso sopravvive e si
@@ -368,6 +375,20 @@ async function init() {
       created_at  TIMESTAMPTZ DEFAULT NOW()
     )
   `);
+
+  // Reportistica A / mattone 2 — il CONTENUTO della fase (le voci del report, diverse
+  // per tipo) in una "scatola" flessibile JSON, così affinare l'elenco delle voci non
+  // richiede di rifare la tabella. stato/origine/source_file_id predispongono
+  // l'automazione (mattone 3): le righe da report nascono in BOZZA e si approvano con
+  // un clic, come le sedute dei percorsi individuali. Manuale = già confermata.
+  await query(`ALTER TABLE fasi_progetto ADD COLUMN IF NOT EXISTS contenuto      JSONB DEFAULT '{}'::jsonb`);
+  await query(`ALTER TABLE fasi_progetto ADD COLUMN IF NOT EXISTS stato          TEXT DEFAULT 'confermata'`);
+  await query(`ALTER TABLE fasi_progetto ADD COLUMN IF NOT EXISTS origine        TEXT DEFAULT 'manuale'`);
+  await query(`ALTER TABLE fasi_progetto ADD COLUMN IF NOT EXISTS source_file_id TEXT`);
+  // Travaso una-tantum del vecchio campo `note` (3a) nella nuova scatola, così le fasi
+  // già inserite non perdono la nota. Idempotente.
+  await query(`UPDATE fasi_progetto SET contenuto = jsonb_build_object('note', note)
+               WHERE COALESCE(note,'') <> '' AND (contenuto IS NULL OR contenuto = '{}'::jsonb)`);
 
   // Fase 0 (2026-07-15) — stato del progetto = stato della relazione, 3 valori
   // come per il cliente individuale: attivo | in pausa | concluso. I vecchi stati
