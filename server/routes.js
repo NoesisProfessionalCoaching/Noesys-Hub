@@ -475,6 +475,15 @@ router.post('/dashboard/scan-drive', requireCoach, express.json(), async (req, r
   } catch (err) { console.error('[scan-drive]', err); res.status(500).json({ error: err.message }); }
 });
 
+// Reportistica A / mattone 3 — scan dei report di PROGETTO: legge le sottocartelle di fase
+// (Pre-Intake/Intake/Kick-Off/Final Open/Final) e crea le righe-fase in bozza.
+router.post('/dashboard/progetti/:id/scan-drive', requireCoach, express.json(), async (req, res) => {
+  try {
+    const out = await scan.scanProjectReports({ onlyProjectId: req.params.id });
+    res.json({ ok: true, ...out });
+  } catch (err) { console.error('[scan-progetto]', err); res.status(500).json({ error: err.message }); }
+});
+
 // Gancio per l'automazione (report → scheda). Disattivo finché AUTOMATION_SECRET
 // non è configurato: è il canale che userà il flusso automatico (Parte 2 / OAuth).
 router.post('/api/sedute', express.json(), async (req, res) => {
@@ -2746,7 +2755,9 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi) {
     <div class="card" style="margin-bottom:18px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
         <div class="field-label" style="margin:0">Fasi del progetto</div>
-        <span style="font-size:12px;color:var(--muted)">le tappe con lo sponsor · aggiungile quando servono</span>
+        ${p.drive_url
+          ? `<button id="scan-fasi-btn" onclick="scanProgetto()" class="btn btn-neutral btn-sm" title="Legge i report nuovi dalle sottocartelle di fase su Drive e ne crea la riga in bozza">⟳ Cerca nuovi report</button>`
+          : `<span style="font-size:12px;color:var(--muted)">crea la cartella Drive per l'automazione</span>`}
       </div>
       <div id="fasi-list">${fasiRows}</div>
       <div id="fasi-empty" style="display:${fasiSorted.length ? 'none' : 'block'};font-size:13px;color:var(--muted);padding:6px 0">Nessuna fase ancora. Aggiungila con il pulsante qui sotto.</div>
@@ -3227,6 +3238,24 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi) {
       const d = await r.json();
       if (!d.ok) { alert(d.error || 'Errore'); return; }
       location.reload();
+    }
+    async function scanProgetto() {
+      const btn = document.getElementById('scan-fasi-btn');
+      if (btn) { btn.disabled = true; btn.textContent = '⟳ Cerco… (qualche secondo)'; }
+      const reset = () => { if (btn) { btn.disabled = false; btn.textContent = '⟳ Cerca nuovi report'; } };
+      try {
+        const r = await fetch('/dashboard/progetti/'+PID+'/scan-drive', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
+        const d = await r.json();
+        if (!r.ok || d.error) { alert('Errore: ' + (d.error || r.status)); reset(); return; }
+        const n = (d.processed || []).length;
+        if (n === 0) {
+          const errs = (d.errors || []).map(e => e.err).join('; ');
+          alert('Nessun nuovo report da lavorare' + (errs ? ('. Nota: ' + errs) : '. Controlla che il file inizi con "Report" e sia nella sottocartella di fase giusta.'));
+          reset(); return;
+        }
+        alert(n + (n === 1 ? ' bozza creata' : ' bozze create') + '. La trovi qui sotto: apri il Dettaglio e approva.');
+        location.reload();
+      } catch (e) { alert('Errore di rete: ' + e.message); reset(); }
     }
     async function delFase(btn) {
       const b = btn.closest('.fase-block');

@@ -106,4 +106,109 @@ Estrai i 6 campi della riga (obiettivo, argomenti, attivita, scadenza, eseguita,
   };
 }
 
-module.exports = { MODEL, hasApiKey, generaRiga };
+// ═══════════════════════════════════════════════════════
+// Scheda PROGETTO (mattone 3): estrazione delle voci di UNA fase dal report dell'incontro
+// con committente/sponsor. Stesso meccanismo di generaRiga, ma le voci cambiano col tipo.
+// FASE_SPEC deve restare allineato con VOCI_FASE in routes.js (stesse chiavi, per il render).
+// proj:true = voce che è verità di PROGETTO (Intake): lo scanner la scrive su `progetti`.
+// ═══════════════════════════════════════════════════════
+const FASE_SPEC = {
+  'pre-intake': [
+    { key:'partecipanti', label:"Partecipanti all'incontro" },
+    { key:'argomenti', label:'Argomenti discussi' },
+    { key:'obiettivo_grezzo', label:'Obiettivo di progetto grezzo (provvisorio, pre-SMARTER)' },
+    { key:'ipotesi_partecipanti', label:'Ipotesi sul numero di partecipanti e le loro caratteristiche' },
+    { key:'richieste', label:'Eventuali richieste specifiche del committente' },
+    { key:'next_steps', label:'Next steps / prossimi passi concordati' },
+    { key:'note', label:'Note del coach' },
+  ],
+  'intake-sponsor': [
+    { key:'partecipanti', label:"Partecipanti all'incontro" },
+    { key:'argomenti', label:'Argomenti discussi' },
+    { key:'obiettivo_smarter', label:'Obiettivo di progetto in forma SMARTER (definitivo)', proj:true },
+    { key:'parametri', label:'Parametri di verifica del successo del progetto', proj:true },
+    { key:'next_steps', label:'Next steps / prossimi passi concordati' },
+    { key:'note', label:'Note del coach' },
+  ],
+  'kick-off': [
+    { key:'partecipanti', label:"Partecipanti all'incontro" },
+    { key:'argomenti', label:'Argomenti presentati da Sponsor/Coach' },
+    { key:'interventi', label:'Interventi importanti dei partecipanti (se presenti)' },
+    { key:'next_steps', label:'Next steps / prossimi passi concordati' },
+    { key:'note', label:'Note del coach' },
+  ],
+  'chiusura-open': [
+    { key:'partecipanti', label:"Partecipanti all'incontro" },
+    { key:'argomenti', label:'Argomenti trattati' },
+    { key:'traguardi', label:'Traguardi celebrati' },
+    { key:'note', label:'Note del coach' },
+  ],
+  'chiusura-sponsor': [
+    { key:'partecipanti', label:"Partecipanti all'incontro" },
+    { key:'argomenti', label:'Argomenti trattati' },
+    { key:'feedback_sponsor', label:'Feedback dello Sponsor' },
+    { key:'note', label:'Note del coach' },
+  ],
+};
+const FASE_LABEL_UMANO = {
+  'pre-intake':'Pre-Intake', 'intake-sponsor':'Intake con lo Sponsor', 'kick-off':'Kick-Off',
+  'chiusura-open':'Sessione di chiusura aperta (Final Open)', 'chiusura-sponsor':'Sessione di chiusura con lo Sponsor (Final)',
+};
+
+async function generaRigaFase({ tipo, progetto, reportText }) {
+  if (!hasApiKey()) throw new Error('ANTHROPIC_API_KEY non configurata su Railway');
+  const voci = FASE_SPEC[tipo];
+  if (!voci) throw new Error('Tipo fase non gestito: ' + tipo);
+  const client = new Anthropic();
+
+  const props = {}, required = [];
+  voci.forEach(v => { props[v.key] = { type: 'string' }; required.push(v.key); });
+  const schema = { type: 'object', properties: props, required, additionalProperties: false };
+  const elenco = voci.map(v => `- ${v.key}: ${v.label}`).join('\n');
+
+  const p = progetto || {};
+  const intestazione = [
+    `Progetto: ${p.titolo || '(senza titolo)'}`,
+    p.committente_nome ? `Committente: ${p.committente_nome}` : null,
+    `Fase: ${FASE_LABEL_UMANO[tipo] || tipo}`,
+  ].filter(Boolean).join('\n');
+
+  const system = `Sei l'assistente di un coach professionista (Noesys). Dal report di UN incontro di PROGETTO con il committente/sponsor (riassunto Zoom, già rivisto dal coach) ESTRAI le voci della "Scheda Progetto" per questa fase. Solo i campi, nessuna prosa introduttiva.
+
+Regole ferme (rispettale alla lettera):
+- Attieniti ai fatti del report. NON inventare. Campo assente nel report → "—".
+- Voci a elenco (partecipanti, argomenti, next_steps, parametri, interventi, traguardi): ELENCO PUNTATO, un punto per riga con "- ". Punti brevi.
+- obiettivo grezzo / obiettivo SMARTER: UNA-due frasi sintetiche, niente elenchi di valori.
+- note: conclusioni/considerazioni del coach, riportate fedelmente, testo scorrevole e conciso.
+
+Italiano. Rispondi SOLO con un oggetto JSON con ESATTAMENTE queste chiavi:
+${elenco}`;
+
+  const user = `${intestazione}
+
+=== REPORT DELL'INCONTRO (fonte principale) ===
+${(reportText || '').trim() || '(report vuoto)'}
+
+Estrai le voci elencate secondo le regole. Rispondi SOLO con l'oggetto JSON.`;
+
+  const resp = await client.messages.create({
+    model: MODEL,
+    max_tokens: 4000,
+    output_config: { format: { type: 'json_schema', schema } },
+    system,
+    messages: [{ role: 'user', content: user }],
+  });
+
+  if (resp.stop_reason === 'refusal') {
+    throw new Error('Richiesta rifiutata dal classificatore di sicurezza (fase non generata)');
+  }
+  const txt = (resp.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
+  const data = parseJsonLoose(txt);
+  if (!data) throw new Error('Risposta non in formato atteso (stop_reason: ' + resp.stop_reason + '): ' + txt.slice(0, 160));
+
+  const out = {};
+  voci.forEach(v => { const val = data[v.key]; out[v.key] = (val == null || String(val).trim() === '') ? '—' : String(val).trim(); });
+  return out;
+}
+
+module.exports = { MODEL, hasApiKey, generaRiga, generaRigaFase, FASE_SPEC };

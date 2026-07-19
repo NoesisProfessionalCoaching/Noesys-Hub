@@ -161,4 +161,105 @@ async function scanClientReports({ onlyClientId } = {}) {
   return result;
 }
 
-module.exports = { scanClientReports };
+// ═══════════════════════════════════════════════════════
+// Scheda PROGETTO (mattone 3): stessa tubatura, ma sulla cartella del PROGETTO.
+// Sottocartelle di fase (Pre-Intake/Intake/Kick-Off/Final Open/Final) → report "Report…"
+// → Claude estrae le voci → riga in fasi_progetto (BOZZA, origine 'auto'). L'Intake porta
+// anche Obiettivo SMARTER + Parametri, che sono verità di PROGETTO → vanno su `progetti`.
+// ═══════════════════════════════════════════════════════
+
+// Nome della sottocartella (com'è creata da createProjectFolders) → tipo della fase.
+// Match ESATTO (case-insensitive) per non confondere "Final" con "Final Open".
+function folderNameToTipo(name) {
+  const n = (name || '').trim().toLowerCase();
+  if (n === 'pre-intake') return 'pre-intake';
+  if (n === 'intake') return 'intake-sponsor';
+  if (n === 'kick-off') return 'kick-off';
+  if (n === 'final open') return 'chiusura-open';
+  if (n === 'final') return 'chiusura-sponsor';
+  return null;
+}
+
+async function reportsForProject(folderId) {
+  const out = [];
+  const subs = await drive.listChildren(folderId);
+  for (const s of subs) {
+    if (!drive.isFolder(s)) continue;
+    const tipo = folderNameToTipo(s.name);
+    if (tipo) await collectDocx(s.id, tipo, out, s.name);
+  }
+  return out;
+}
+
+async function scanProjectReports({ onlyProjectId } = {}) {
+  const result = { progetti: 0, processed: [], skipped: 0, errors: [] };
+
+  const missing = drive.missingEnv();
+  if (missing.length) throw new Error('Chiavi Google mancanti: ' + missing.join(', '));
+  if (!claude.hasApiKey()) throw new Error('ANTHROPIC_API_KEY mancante su Railway');
+
+  const base = `SELECT p.*, c.denominazione AS committente_nome
+               FROM progetti p JOIN committenti c ON c.id = p.committente_id
+               WHERE COALESCE(p.drive_url,'') <> ''`;
+  const pq = onlyProjectId
+    ? await db.query(base + ' AND p.id=$1', [onlyProjectId])
+    : await db.query(base);
+
+  const doneq = await db.query('SELECT source_file_id FROM fasi_progetto WHERE source_file_id IS NOT NULL');
+  const done = new Set(doneq.rows.map(r => r.source_file_id));
+  let budget = MAX_PER_RUN;
+
+  for (const prog of pq.rows) {
+    result.progetti++;
+    const folderId = drive.folderIdFromUrl(prog.drive_url);
+    if (!folderId) { result.errors.push({ progetto: prog.titolo, err: 'link Drive non valido' }); continue; }
+
+    let reports;
+    try { reports = await reportsForProject(folderId); }
+    catch (e) { result.errors.push({ progetto: prog.titolo, err: 'lettura Drive: ' + e.message }); continue; }
+
+    const nuovi = reports.filter(r => !done.has(r.id));
+    if (!nuovi.length) { result.skipped += reports.length; continue; }
+
+    for (const rep of nuovi) {
+      if (budget <= 0) { result.errors.push({ progetto: prog.titolo, file: rep.name, err: 'limite per passata raggiunto' }); break; }
+      budget--;
+      try {
+        const buf = await drive.downloadFileBuffer(rep.id);
+        const { value: reportText } = await mammoth.extractRawText({ buffer: buf });
+        if (!reportText || !reportText.trim()) throw new Error('Word vuoto o illeggibile');
+        const voci = await claude.generaRigaFase({ tipo: rep.tipo, progetto: prog, reportText });
+
+        // Separa le voci: quelle di PROGETTO (Intake) vanno su `progetti`, il resto nel contenuto.
+        const spec = claude.FASE_SPEC[rep.tipo] || [];
+        const contenuto = {};
+        let projObiettivo = null, projParametri = null;
+        spec.forEach(v => {
+          if (v.proj && v.key === 'obiettivo_smarter') projObiettivo = voci[v.key];
+          else if (v.proj && v.key === 'parametri') projParametri = voci[v.key];
+          else contenuto[v.key] = voci[v.key];
+        });
+
+        const fid = uuidv4();
+        await db.query(
+          `INSERT INTO fasi_progetto (id, progetto_id, tipo, data, note, fatta, contenuto, stato, origine, source_file_id)
+           VALUES ($1,$2,$3,$4,$5,false,$6,'bozza','auto',$7)`,
+          [fid, prog.id, rep.tipo, dataDaReport(rep), contenuto.note || '', JSON.stringify(contenuto), rep.id]);
+
+        if (projObiettivo != null || projParametri != null) {
+          await db.query(
+            `UPDATE progetti SET obiettivo_smarter=COALESCE($1,obiettivo_smarter),
+                                 parametri=COALESCE($2,parametri), updated_at=NOW() WHERE id=$3`,
+            [projObiettivo, projParametri, prog.id]);
+        }
+        done.add(rep.id);
+        result.processed.push({ progetto: prog.titolo, tipo: rep.tipo, file: rep.name, fid });
+      } catch (e) {
+        result.errors.push({ progetto: prog.titolo, file: rep.name, err: e.message });
+      }
+    }
+  }
+  return result;
+}
+
+module.exports = { scanClientReports, scanProjectReports };

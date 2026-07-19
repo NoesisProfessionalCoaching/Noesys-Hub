@@ -56,6 +56,9 @@ db.init().then(() => {
       const out = await scan.scanClientReports();
       console.log(`[scan] ${new Date().toISOString()} — bozze:${out.processed.length} saltati:${out.skipped} clienti:${out.clients} errori:${out.errors.length}`);
       if (out.errors.length) console.log('[scan] dettaglio errori:', JSON.stringify(out.errors));
+      const outP = await scan.scanProjectReports();
+      console.log(`[scan-progetti] ${new Date().toISOString()} — bozze:${outP.processed.length} saltati:${outP.skipped} progetti:${outP.progetti} errori:${outP.errors.length}`);
+      if (outP.errors.length) console.log('[scan-progetti] dettaglio errori:', JSON.stringify(outP.errors));
     } catch (e) {
       console.error('[scan] passata non eseguita:', e.message);
     }
