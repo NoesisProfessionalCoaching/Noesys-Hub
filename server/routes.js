@@ -323,11 +323,47 @@ router.post('/dashboard/clients/:id/percorsi', requireCoach, express.json(), asy
       console.error('[drive] cartelle percorso fallite:', e.message);
       driveWarning = 'Percorso creato, ma le cartelle Drive non sono state create: ' + e.message;
     }
+    // Fetta 1a — documentazione nuovo cliente: copia i modelli "uguali per tutti"
+    // (Scheda Anagrafica + Codice Etico ICF) nella cartella Documentazione del cliente.
+    // Idempotente: se ci sono già, non li duplica (percorsi successivi = nessun doppione).
+    try {
+      const cr2 = await db.query('SELECT drive_url FROM clients WHERE id=$1', [req.params.id]);
+      const clientFolderId = drive.folderIdFromUrl(cr2.rows[0] && cr2.rows[0].drive_url);
+      if (clientFolderId) {
+        const r = await drive.copiaModelliBase(clientFolderId);
+        if (r.mancanti.length) {
+          driveWarning = (driveWarning ? driveWarning + ' · ' : '')
+            + 'Documenti non copiati (nomi non trovati in Modelli): ' + r.mancanti.join(', ');
+        }
+      }
+    } catch (e) {
+      console.error('[drive] copia modelli fallita:', e.message);
+      driveWarning = (driveWarning ? driveWarning + ' · ' : '')
+        + 'Copia documenti non riuscita: ' + e.message;
+    }
     res.json({ ok: true, id: pid, driveWarning });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Errore' });
   }
+});
+
+// Diagnostica: elenca i file dentro Noesys/Modelli (nome + tipo). Serve a confermare
+// i nomi ESATTI dei modelli e che l'Hub raggiunga la cartella. Apri l'URL da loggato.
+router.get('/dashboard/diag/modelli', requireCoach, async (req, res) => {
+  try {
+    const modelli = await drive.findModelliFolder();
+    if (!modelli) return res.json({ ok: false, error: 'Cartella "Modelli" non trovata sotto la radice Noesys.' });
+    const top = await drive.listChildren(modelli.id);
+    const fileRientri = top.filter(f => !drive.isFolder(f)).map(f => ({ name: f.name, mimeType: f.mimeType }));
+    // Sbircia UN livello dentro le sottocartelle (es. "Per Claude").
+    const sottocartelle = [];
+    for (const f of top.filter(drive.isFolder)) {
+      const kids = await drive.listChildren(f.id);
+      sottocartelle.push({ cartella: f.name, files: kids.filter(k => !drive.isFolder(k)).map(k => ({ name: k.name, mimeType: k.mimeType })) });
+    }
+    res.json({ ok: true, attesi: drive.MODELLI_BASE, in_modelli: fileRientri, sottocartelle });
+  } catch (err) { console.error('[diag/modelli]', err); res.status(500).json({ error: err.message }); }
 });
 
 router.post('/dashboard/clients/:id/percorsi/:pid/sessione', requireCoach, express.json(), async (req, res) => {

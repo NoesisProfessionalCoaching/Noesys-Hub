@@ -189,6 +189,65 @@ async function createProjectFolders({ committente, titolo }) {
   return { id: projF.id, url: folderUrl(projF.id) };
 }
 
+// ── Modelli → Documentazione del cliente (creazione documentazione nuovo cliente) ──
+// Nomi ESATTI dei documenti "uguali per tutti" da copiare nella Documentazione del
+// nuovo cliente. DEVONO coincidere col nome reale del file dentro Noesys/Modelli
+// (estensione compresa). Se un nome non combacia, il file viene segnalato come
+// "mancante" e la copia NON fallisce (gli altri vengono copiati lo stesso).
+const MODELLI_BASE = ['Scheda Anagrafica OK.pdf', 'Codice Etico ICF 2025.pdf'];
+
+// Trova la cartella "Modelli" sotto la radice Noesys. null se non esiste.
+async function findModelliFolder() {
+  return findFolderByName(NOESYS_ROOT_ID, 'Modelli');
+}
+
+// Elenca i file dentro Modelli (diagnostica: verificare nomi esatti + raggiungibilità).
+// null se la cartella Modelli non è raggiungibile.
+async function listModelli() {
+  const m = await findModelliFolder();
+  if (!m) return null;
+  return listChildren(m.id);
+}
+
+// Cerca UN file (non cartella) con nome esatto dentro `parentId`. null se non c'è.
+async function findFileByName(parentId, name) {
+  const q = `'${parentId}' in parents and name = '${escapeQ(name)}' `
+          + `and mimeType != '${FOLDER_MIME}' and trashed = false`;
+  const params = new URLSearchParams({ q, fields: 'files(id,name,mimeType)', pageSize: '5' });
+  const data = await driveFetch('/files?' + params.toString());
+  return (data.files || [])[0] || null;
+}
+
+// Copia un file dentro una cartella di destinazione, col suo stesso nome.
+// IDEMPOTENTE: se in destinazione c'è già un file con quel nome, NON ricopia
+// (così un secondo percorso dello stesso cliente non duplica i documenti).
+// Restituisce { id, name, skipped }.
+async function copyFileToFolder(fileId, targetFolderId, name) {
+  const existing = await findFileByName(targetFolderId, name);
+  if (existing) return { id: existing.id, name, skipped: true };
+  const data = await driveFetchPost('/files/' + fileId + '/copy?fields=id,name',
+    { name, parents: [targetFolderId] });
+  return { id: data.id, name: data.name, skipped: false };
+}
+
+// Copia i documenti-modello "uguali per tutti" (MODELLI_BASE) da Noesys/Modelli alla
+// cartella Documentazione del cliente. `clientFolderId` = id cartella cliente (da drive_url).
+// Non fallisce se un modello non c'è: lo elenca in `mancanti`. Restituisce
+// { copiati:[nomi], saltati:[nomi già presenti], mancanti:[nomi non trovati in Modelli] }.
+async function copiaModelliBase(clientFolderId) {
+  const out = { copiati: [], saltati: [], mancanti: [] };
+  const modelli = await findModelliFolder();
+  if (!modelli) throw new Error('Cartella "Modelli" non trovata sotto la radice Noesys');
+  const docFolder = await findOrCreateFolder(clientFolderId, 'Documentazione');
+  for (const nome of MODELLI_BASE) {
+    const src = await findFileByName(modelli.id, nome);
+    if (!src) { out.mancanti.push(nome); continue; }
+    const r = await copyFileToFolder(src.id, docFolder.id, nome);
+    (r.skipped ? out.saltati : out.copiati).push(nome);
+  }
+  return out;
+}
+
 // Scarica i BYTE grezzi di un file (es. un .docx) per estrarne poi il testo.
 async function downloadFileBuffer(fileId) {
   const token = await getAccessToken();
@@ -230,4 +289,10 @@ module.exports = {
   createClientFolders,
   createPercorsoFolders,
   createProjectFolders,
+  MODELLI_BASE,
+  findModelliFolder,
+  listModelli,
+  findFileByName,
+  copyFileToFolder,
+  copiaModelliBase,
 };
