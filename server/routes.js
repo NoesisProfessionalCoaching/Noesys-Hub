@@ -6,6 +6,7 @@ const { signToken, requireCoach, COOKIE_NAME } = require('./auth');
 const { logoCompact } = require('./logo');
 const drive = require('./google-drive');
 const scan = require('./scan');
+const documenti = require('./documenti');
 
 const router = express.Router();
 
@@ -340,6 +341,23 @@ router.post('/dashboard/clients/:id/percorsi', requireCoach, express.json(), asy
       console.error('[drive] copia modelli fallita:', e.message);
       driveWarning = (driveWarning ? driveWarning + ' · ' : '')
         + 'Copia documenti non riuscita: ' + e.message;
+    }
+    // Fetta 1b — lettera di benvenuto personalizzata: genera il PDF (nome nel saluto,
+    // scelta Benvenuto/Benvenuta dal nome) e lo salva nella Documentazione del cliente.
+    try {
+      const cr3 = await db.query('SELECT nome, name, drive_url FROM clients WHERE id=$1', [req.params.id]);
+      const row = cr3.rows[0] || {};
+      const clientFolderId = drive.folderIdFromUrl(row.drive_url);
+      const nome = (row.nome && row.nome.trim()) || String(row.name || '').trim().split(/\s+/)[0];
+      if (clientFolderId && nome) {
+        const docFolder = await drive.findOrCreateFolder(clientFolderId, 'Documentazione');
+        const letter = await documenti.generaLetteraBenvenuto({ nome });
+        await drive.uploadFileToFolder(letter.fileName, 'application/pdf', letter.bytes, docFolder.id);
+      }
+    } catch (e) {
+      console.error('[lettera] generazione fallita:', e.message);
+      driveWarning = (driveWarning ? driveWarning + ' · ' : '')
+        + 'Lettera di benvenuto non creata: ' + e.message;
     }
     res.json({ ok: true, id: pid, driveWarning });
   } catch (err) {

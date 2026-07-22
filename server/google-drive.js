@@ -248,6 +248,30 @@ async function copiaModelliBase(clientFolderId) {
   return out;
 }
 
+// Carica un file (byte grezzi) DENTRO una cartella di destinazione, via upload multipart.
+// IDEMPOTENTE sul nome: se in destinazione c'è già un file con quel nome, NON ricarica
+// (restituisce quello esistente con skipped:true). Usato per la lettera generata.
+async function uploadFileToFolder(name, mimeType, buffer, targetFolderId) {
+  const existing = await findFileByName(targetFolderId, name);
+  if (existing) return { id: existing.id, name, skipped: true };
+  const token = await getAccessToken();
+  const boundary = 'noesys' + Date.now();
+  const meta = JSON.stringify({ name, parents: [targetFolderId] });
+  const body = Buffer.concat([
+    Buffer.from(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: ${mimeType}\r\n\r\n`),
+    Buffer.from(buffer),
+    Buffer.from(`\r\n--${boundary}--`),
+  ]);
+  const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name', {
+    method: 'POST',
+    headers: { Authorization: 'Bearer ' + token, 'Content-Type': `multipart/related; boundary=${boundary}` },
+    body,
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error('Upload Drive ' + res.status + ': ' + (data.error?.message || 'errore'));
+  return { id: data.id, name: data.name, skipped: false };
+}
+
 // Scarica i BYTE grezzi di un file (es. un .docx) per estrarne poi il testo.
 async function downloadFileBuffer(fileId) {
   const token = await getAccessToken();
@@ -295,4 +319,5 @@ module.exports = {
   findFileByName,
   copyFileToFolder,
   copiaModelliBase,
+  uploadFileToFolder,
 };
