@@ -189,6 +189,20 @@ async function createProjectFolders({ committente, titolo }) {
   return { id: projF.id, url: folderUrl(projF.id) };
 }
 
+// Fetta B — crea (idempotente) la cartella del PERCORSO CONDIVISO (team/group) dentro
+// la cartella del progetto: {Progetto}/Percorso {Team|Group}/{Intake,Ongoing,Final}.
+// `projectFolderId` = id cartella progetto (dal suo drive_url). `tipoLabel` = 'Team'|'Group'
+// (= percorsi.tipo del condiviso). È dove il coach salva i report Zoom delle sessioni di
+// gruppo; l'automazione li leggerà da qui. Distinta dalle sottocartelle di FASE sponsor.
+async function createPercorsoCondivisoFolders(projectFolderId, tipoLabel) {
+  const label = 'Percorso ' + (String(tipoLabel || '').trim() || 'Gruppo');
+  const percF = await findOrCreateFolder(projectFolderId, label);
+  await findOrCreateFolder(percF.id, 'Intake');
+  await findOrCreateFolder(percF.id, 'Ongoing');
+  await findOrCreateFolder(percF.id, 'Final');
+  return { id: percF.id, url: folderUrl(percF.id) };
+}
+
 // ── Modelli → Documentazione del cliente (creazione documentazione nuovo cliente) ──
 // Nomi ESATTI dei documenti "uguali per tutti" da copiare nella Documentazione del
 // nuovo cliente. DEVONO coincidere col nome reale del file dentro Noesys/Modelli
@@ -313,6 +327,7 @@ module.exports = {
   createClientFolders,
   createPercorsoFolders,
   createProjectFolders,
+  createPercorsoCondivisoFolders,
   MODELLI_BASE,
   findModelliFolder,
   listModelli,

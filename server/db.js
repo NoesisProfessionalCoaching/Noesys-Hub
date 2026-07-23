@@ -187,6 +187,12 @@ async function init() {
   await query(`ALTER TABLE sedute ADD COLUMN IF NOT EXISTS eseguita   TEXT`);
   await query(`ALTER TABLE sedute ADD COLUMN IF NOT EXISTS note       TEXT`);
 
+  // Fetta B (2026-07-23) — sessioni COLLETTIVE (team/group). La riga di una sessione
+  // di gruppo appartiene al percorso CONDIVISO, non a un singolo cliente: il titolare
+  // della reportistica è il progetto. Perciò client_id diventa NULLABILE (resta
+  // valorizzato per le sedute individuali, mondo di oggi: nessun dato toccato).
+  await query(`ALTER TABLE sedute ALTER COLUMN client_id DROP NOT NULL`);
+
   await query(`
     CREATE TABLE IF NOT EXISTS payments (
       id             TEXT PRIMARY KEY,
@@ -362,6 +368,12 @@ async function init() {
   // stanno in percorso_partecipanti, quindi il suo client_id è NULL. Perciò la colonna
   // diventa NULLABILE (resta valorizzata per i percorsi individuali, mondo di oggi).
   await query(`ALTER TABLE percorsi ALTER COLUMN client_id DROP NOT NULL`);
+
+  // Fetta B (2026-07-23) — il percorso CONDIVISO (team/group) ha una SUA cartella Drive
+  // dentro il progetto ({Progetto}/Percorso Team|Group/{Intake,Ongoing,Final}), da cui
+  // l'automazione leggerà i report di sessione collettiva. Gli individuali NON la usano
+  // (ancorati alla cartella del cliente). Additiva, nullabile.
+  await query(`ALTER TABLE percorsi ADD COLUMN IF NOT EXISTS drive_url TEXT`);
 
   // Fase 3a (2026-07-18) — le FASI del progetto (tappe con lo sponsor). Timeline a
   // livello di PROGETTO, distinta dalle sessioni del percorso (Intake/Ongoing/Final).

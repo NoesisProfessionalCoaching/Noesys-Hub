@@ -1028,6 +1028,47 @@ router.post('/dashboard/progetti/:id/drive-folders', requireCoach, async (req, r
   }
 });
 
+// Fetta B / Mattone 1 — crea la cartella Drive del PERCORSO CONDIVISO (team/group) dentro
+// la cartella del progetto: {Progetto}/Percorso {Team|Group}/{Intake,Ongoing,Final}. È la
+// casa dei report delle sessioni collettive (da lì leggerà l'automazione, Mattone 2). Se il
+// progetto non ha ancora la sua cartella, la crea prima. Idempotente: se il percorso ha già
+// un drive_url, non fa doppioni. Pulsante sulla card "Percorsi" della pagina progetto.
+router.post('/dashboard/progetti/:id/percorsi/:pid/drive-folders', requireCoach, async (req, res) => {
+  try {
+    const pr = await db.query(
+      `SELECT p.titolo, p.drive_url, c.denominazione AS committente_nome
+         FROM progetti p JOIN committenti c ON c.id = p.committente_id WHERE p.id=$1`,
+      [req.params.id]
+    );
+    if (!pr.rows.length) return res.status(404).json({ error: 'Progetto non trovato' });
+    const prog = pr.rows[0];
+
+    const pc = await db.query(
+      'SELECT id, tipo, drive_url FROM percorsi WHERE id=$1 AND progetto_id=$2 AND client_id IS NULL',
+      [req.params.pid, req.params.id]
+    );
+    if (!pc.rows.length) return res.status(404).json({ error: 'Percorso condiviso non trovato' });
+    if (pc.rows[0].drive_url && pc.rows[0].drive_url.trim()) {
+      return res.json({ ok: true, drive_url: pc.rows[0].drive_url, already: true });
+    }
+
+    // La cartella del progetto deve esistere: se manca (progetto vecchio), creala prima.
+    let projFolderId = drive.folderIdFromUrl(prog.drive_url);
+    if (!projFolderId) {
+      const pf = await drive.createProjectFolders({ committente: prog.committente_nome, titolo: prog.titolo });
+      await db.query('UPDATE progetti SET drive_url=$1 WHERE id=$2', [pf.url, req.params.id]);
+      projFolderId = pf.id;
+    }
+
+    const f = await drive.createPercorsoCondivisoFolders(projFolderId, pc.rows[0].tipo);
+    await db.query('UPDATE percorsi SET drive_url=$1 WHERE id=$2', [f.url, req.params.pid]);
+    res.json({ ok: true, drive_url: f.url });
+  } catch (e) {
+    console.error('[drive] cartelle percorso condiviso:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 router.post('/dashboard/progetti/:id', requireCoach, express.json(), async (req, res) => {
   const { committente_id, titolo, area, tipo, stato, obiettivi, note, data_inizio,
           referente_modo, referente_nome, referente_ruolo, referente_email } = req.body;
@@ -1088,7 +1129,7 @@ router.get('/dashboard/progetti/:id', requireCoach, async (req, res) => {
     // uno per persona (client_id valorizzato); per team/group il percorso condiviso
     // (client_id NULL) con i partecipanti aggregati da percorso_partecipanti.
     const percorsi = await db.query(`
-      SELECT p.id, p.tipo, p.stato, p.n_sessioni_fatte, p.ore_fatte, p.client_id,
+      SELECT p.id, p.tipo, p.stato, p.n_sessioni_fatte, p.ore_fatte, p.client_id, p.drive_url,
              cl.name AS client_name,
              (SELECT string_agg(c2.name, ', ' ORDER BY c2.cognome NULLS LAST, c2.nome)
                 FROM percorso_partecipanti pp JOIN clients c2 ON c2.id = pp.client_id
@@ -3238,6 +3279,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi) {
           <th style="text-align:left;font-size:12px;color:var(--muted)">Cliente/i</th>
           <th style="text-align:left;font-size:12px;color:var(--muted)">Sessioni</th>
           <th style="text-align:left;font-size:12px;color:var(--muted)">Stato</th>
+          <th style="text-align:left;font-size:12px;color:var(--muted)">Cartella sessioni</th>
         </tr></thead>
         <tbody>${percorsi.map(pc => {
           const condiviso = !pc.client_id;
@@ -3246,11 +3288,19 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi) {
           const chi = condiviso
             ? (pc.partecipanti ? esc(pc.partecipanti) : `<span style="color:#aaa">nessun partecipante</span>`)
             : `<a href="/dashboard/clients/${pc.client_id}" style="color:#1A5280;text-decoration:none">${esc(pc.client_name || '—')}</a>`;
+          // Cartella Drive: solo per il percorso CONDIVISO (i report di sessione collettiva
+          // vivono lì). Gli individuali usano la cartella del cliente → '—'.
+          const drive = !condiviso
+            ? `<span style="color:#aaa">—</span>`
+            : (pc.drive_url
+                ? `<a href="${esc(pc.drive_url)}" target="_blank" style="font-size:12px;color:#1A5280">apri ↗</a>`
+                : `<button onclick="creaCartelleSessioni('${pc.id}', this)" class="btn btn-neutral btn-sm">🔄 Crea cartelle</button>`);
           return `<tr>
             <td><strong>${esc(pc.tipo)}</strong>${condiviso ? ` <span class="badge" style="background:#eef1f5;color:#4a5568">condiviso</span>` : ''}</td>
             <td style="font-size:13px">${chi}</td>
             <td style="font-size:12px;white-space:nowrap">${sess} ${sess === 1 ? 'sessione' : 'sessioni'}${ore > 0 ? ` · ${fmtOre(ore)} h` : ''}</td>
             <td><span class="badge ${pc.stato === 'attivo' ? 'badge-active' : 'badge-inactive'}">${pc.stato === 'attivo' ? 'Attivo' : 'Concluso'}</span></td>
+            <td style="white-space:nowrap">${drive}</td>
           </tr>`;
         }).join('')}</tbody>
       </table></div>`
@@ -3308,6 +3358,18 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi) {
         if (d.error) { msg.style.color='#b45309'; msg.textContent = d.error; btn.disabled = false; return; }
         location.reload();
       } catch(e) { msg.style.color='#b45309'; msg.textContent = 'Errore di rete, riprova'; btn.disabled = false; }
+    }
+
+    // Fetta B / Mattone 1 — crea la cartella Drive del percorso CONDIVISO (team/group)
+    // dentro il progetto (sottocartelle Intake/Ongoing/Final). Poi ricarica per mostrare il link.
+    async function creaCartelleSessioni(pid, btn) {
+      const old = btn.textContent; btn.disabled = true; btn.textContent = 'Creo…';
+      try {
+        const r = await fetch('/dashboard/progetti/'+PID+'/percorsi/'+pid+'/drive-folders', { method:'POST' });
+        const d = await r.json();
+        if (!r.ok || d.error) throw new Error(d.error || 'Errore');
+        location.reload();
+      } catch(e) { alert('Errore: '+e.message); btn.disabled = false; btn.textContent = old; }
     }
 
     // ── Fase 3B: quota del progetto ──
