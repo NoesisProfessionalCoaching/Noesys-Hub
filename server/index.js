@@ -59,6 +59,9 @@ db.init().then(() => {
       const outP = await scan.scanProjectReports();
       console.log(`[scan-progetti] ${new Date().toISOString()} — bozze:${outP.processed.length} saltati:${outP.skipped} progetti:${outP.progetti} errori:${outP.errors.length}`);
       if (outP.errors.length) console.log('[scan-progetti] dettaglio errori:', JSON.stringify(outP.errors));
+      const outC = await scan.scanCollectiveReports();
+      console.log(`[scan-collettivo] ${new Date().toISOString()} — bozze:${outC.processed.length} saltati:${outC.skipped} percorsi:${outC.percorsi} errori:${outC.errors.length}`);
+      if (outC.errors.length) console.log('[scan-collettivo] dettaglio errori:', JSON.stringify(outC.errors));
     } catch (e) {
       console.error('[scan] passata non eseguita:', e.message);
     }

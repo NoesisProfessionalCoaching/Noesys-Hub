@@ -107,6 +107,56 @@ Estrai i 6 campi della riga (obiettivo, argomenti, attivita, scadenza, eseguita,
 }
 
 // ═══════════════════════════════════════════════════════
+// Fetta B (sessioni COLLETTIVE team/group): stessa Scheda Cliente (stessi 6 campi e stesse
+// regole), ma la sessione è di GRUPPO. Obiettivo e attività sono COMUNI; i contributi dei
+// singoli vanno citati per NOME. Passiamo l'elenco partecipanti così l'estrazione attribuisce.
+// ═══════════════════════════════════════════════════════
+async function generaRigaCollettiva({ tipo, percorsoTipo, partecipanti, reportText }) {
+  if (!hasApiKey()) throw new Error('ANTHROPIC_API_KEY non configurata su Railway');
+  const client = new Anthropic();
+
+  const nomi = (partecipanti || []).filter(Boolean);
+  const intestazione = [
+    `Sessione di coaching COLLETTIVA (${percorsoTipo || 'gruppo'}): più partecipanti nella stessa stanza.`,
+    nomi.length ? `Partecipanti: ${nomi.join(', ')}.` : null,
+    `Tipo di sessione: ${tipo}`,
+  ].filter(Boolean).join('\n');
+
+  const user =
+`${intestazione}
+
+=== REPORT DELLA SESSIONE (fonte principale) ===
+${(reportText || '').trim() || '(report vuoto)'}
+
+Questa è una sessione COLLETTIVA: l'obiettivo e le attività sono COMUNI al gruppo. Quando un intervento, un contributo o un'attività riguarda una persona PRECISA tra i partecipanti, CITALA per nome (in argomenti/attivita/note usa "**Nome:** ..." oppure "(Nome)"). Non attribuire a nessuno ciò che è del gruppo. Estrai i 6 campi (obiettivo, argomenti, attivita, scadenza, eseguita, note) secondo le regole. Rispondi SOLO con l'oggetto JSON.`;
+
+  const resp = await client.messages.create({
+    model: MODEL,
+    max_tokens: 4000,
+    output_config: { format: { type: 'json_schema', schema: SCHEMA } },
+    system: SYSTEM,
+    messages: [{ role: 'user', content: user }],
+  });
+
+  if (resp.stop_reason === 'refusal') {
+    throw new Error('Richiesta rifiutata dal classificatore di sicurezza (riga non generata)');
+  }
+  const txt = (resp.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
+  const data = parseJsonLoose(txt);
+  if (!data) throw new Error('Risposta non in formato atteso (stop_reason: ' + resp.stop_reason + '): ' + txt.slice(0, 160));
+
+  const pick = k => { const v = data[k]; return (v == null || String(v).trim() === '') ? '—' : String(v).trim(); };
+  return {
+    obiettivo: pick('obiettivo'),
+    argomenti: pick('argomenti'),
+    attivita:  pick('attivita'),
+    scadenza:  pick('scadenza'),
+    eseguita:  pick('eseguita'),
+    note:      pick('note'),
+  };
+}
+
+// ═══════════════════════════════════════════════════════
 // Scheda PROGETTO (mattone 3): estrazione delle voci di UNA fase dal report dell'incontro
 // con committente/sponsor. Stesso meccanismo di generaRiga, ma le voci cambiano col tipo.
 // FASE_SPEC deve restare allineato con VOCI_FASE in routes.js (stesse chiavi, per il render).
@@ -213,4 +263,4 @@ Estrai le voci elencate secondo le regole. Rispondi SOLO con l'oggetto JSON.`;
   return out;
 }
 
-module.exports = { MODEL, hasApiKey, generaRiga, generaRigaFase, FASE_SPEC };
+module.exports = { MODEL, hasApiKey, generaRiga, generaRigaCollettiva, generaRigaFase, FASE_SPEC };

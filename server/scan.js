@@ -262,4 +262,70 @@ async function scanProjectReports({ onlyProjectId } = {}) {
   return result;
 }
 
-module.exports = { scanClientReports, scanProjectReports };
+// ═══════════════════════════════════════════════════════
+// Fetta B (Mattone 2) — scan dei report delle SESSIONI COLLETTIVE (team/group). Stessa
+// tubatura del cliente, ma sul percorso CONDIVISO (client_id NULL): legge Intake/Ongoing/Final
+// sotto la sua cartella Drive dedicata, passa l'elenco partecipanti a Claude per l'attribuzione
+// per nome, e crea una riga `sedute` in BOZZA di proprietà del progetto (client_id NULL).
+// ═══════════════════════════════════════════════════════
+async function scanCollectiveReports({ onlyProjectId } = {}) {
+  const result = { percorsi: 0, processed: [], skipped: 0, errors: [] };
+
+  const missing = drive.missingEnv();
+  if (missing.length) throw new Error('Chiavi Google mancanti: ' + missing.join(', '));
+  if (!claude.hasApiKey()) throw new Error('ANTHROPIC_API_KEY mancante su Railway');
+
+  const base = `
+    SELECT p.id, p.tipo, p.drive_url, p.progetto_id,
+           (SELECT string_agg(c.name, ', ' ORDER BY c.cognome NULLS LAST, c.nome)
+              FROM percorso_partecipanti pp JOIN clients c ON c.id = pp.client_id
+             WHERE pp.percorso_id = p.id) AS partecipanti
+      FROM percorsi p
+     WHERE p.client_id IS NULL AND COALESCE(p.drive_url,'') <> ''`;
+  const pq = onlyProjectId
+    ? await db.query(base + ' AND p.progetto_id = $1', [onlyProjectId])
+    : await db.query(base);
+
+  const doneq = await db.query('SELECT source_file_id FROM sedute WHERE source_file_id IS NOT NULL');
+  const done = new Set(doneq.rows.map(r => r.source_file_id));
+  let budget = MAX_PER_RUN;
+
+  for (const perc of pq.rows) {
+    result.percorsi++;
+    const folderId = drive.folderIdFromUrl(perc.drive_url);
+    if (!folderId) { result.errors.push({ percorso: perc.tipo, err: 'link Drive non valido' }); continue; }
+
+    let reports = [];
+    try { await findReportsInPercorso(folderId, reports); }
+    catch (e) { result.errors.push({ percorso: perc.tipo, err: 'lettura Drive: ' + e.message }); continue; }
+
+    const nuovi = reports.filter(r => !done.has(r.id));
+    if (!nuovi.length) { result.skipped += reports.length; continue; }
+
+    const partecipanti = (perc.partecipanti || '').split(',').map(s => s.trim()).filter(Boolean);
+
+    for (const rep of nuovi) {
+      if (budget <= 0) { result.errors.push({ percorso: perc.tipo, file: rep.name, err: 'limite per passata raggiunto' }); break; }
+      budget--;
+      try {
+        const buf = await drive.downloadFileBuffer(rep.id);
+        const { value: reportText } = await mammoth.extractRawText({ buffer: buf });
+        if (!reportText || !reportText.trim()) throw new Error('Word vuoto o illeggibile');
+        const riga = await claude.generaRigaCollettiva({ tipo: rep.tipo, percorsoTipo: perc.tipo, partecipanti, reportText });
+        const sid = uuidv4();
+        await db.query(
+          `INSERT INTO sedute (id, percorso_id, client_id, tipo, data, ore, obiettivo, argomenti, attivita, scadenza, eseguita, note, stato, origine, source_file_id)
+           VALUES ($1,$2,NULL,$3,$4,$5,$6,$7,$8,$9,$10,$11,'bozza','auto',$12)`,
+          [sid, perc.id, rep.tipo, dataDaReport(rep), oreDefault(rep.tipo),
+           riga.obiettivo, riga.argomenti, riga.attivita, riga.scadenza, riga.eseguita, riga.note, rep.id]);
+        done.add(rep.id);
+        result.processed.push({ percorso: perc.tipo, tipo: rep.tipo, file: rep.name, sid });
+      } catch (e) {
+        result.errors.push({ percorso: perc.tipo, file: rep.name, err: e.message });
+      }
+    }
+  }
+  return result;
+}
+
+module.exports = { scanClientReports, scanProjectReports, scanCollectiveReports };

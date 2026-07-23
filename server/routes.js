@@ -631,6 +631,68 @@ router.post('/dashboard/progetti/:id/scan-drive', requireCoach, express.json(), 
   } catch (err) { console.error('[scan-progetto]', err); res.status(500).json({ error: err.message }); }
 });
 
+// ═══════════════════════════════════════════════════════
+// Fetta B (Mattone 2) — SESSIONI COLLETTIVE (team/group). Le sedute del percorso CONDIVISO
+// (client_id NULL) sono di proprietà del progetto: stesse operazioni della Scheda Cliente
+// (crea/modifica/elimina/approva/scan) ma su rotte lato-progetto. Riusano recomputePercorso,
+// sedutaFields, oreForTipo, normTipo. Le bozze non contano le ore ICF finché non approvate.
+// ═══════════════════════════════════════════════════════
+router.post('/dashboard/progetti/:id/scan-collettivo', requireCoach, express.json(), async (req, res) => {
+  try {
+    const out = await scan.scanCollectiveReports({ onlyProjectId: req.params.id });
+    res.json({ ok: true, ...out });
+  } catch (err) { console.error('[scan-collettivo]', err); res.status(500).json({ error: err.message }); }
+});
+
+// Crea una sessione collettiva (riga a mano). client_id NULL (proprietà del progetto).
+router.post('/dashboard/progetti/:id/percorsi/:pid/sedute', requireCoach, express.json(), async (req, res) => {
+  try {
+    const t = normTipo(req.body.tipo);
+    const f = sedutaFields(req.body);
+    const sid = uuidv4();
+    await db.query(
+      `INSERT INTO sedute (id, percorso_id, client_id, tipo, data, ore, obiettivo, argomenti, attivita, scadenza, eseguita, note)
+       VALUES ($1,$2,NULL,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [sid, req.params.pid, t, req.body.data || null, oreForTipo(t, req.body.ore),
+       f.obiettivo, f.argomenti, f.attivita, f.scadenza, f.eseguita, f.note]
+    );
+    await recomputePercorso(req.params.pid);
+    res.json({ ok: true, id: sid });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Errore' }); }
+});
+
+router.post('/dashboard/progetti/:id/percorsi/:pid/sedute/:sid', requireCoach, express.json(), async (req, res) => {
+  try {
+    const t = normTipo(req.body.tipo);
+    const f = sedutaFields(req.body);
+    await db.query(
+      `UPDATE sedute SET tipo=$1, data=$2, ore=$3, obiettivo=$4, argomenti=$5, attivita=$6, scadenza=$7, eseguita=$8, note=$9
+       WHERE id=$10 AND percorso_id=$11`,
+      [t, req.body.data || null, oreForTipo(t, req.body.ore),
+       f.obiettivo, f.argomenti, f.attivita, f.scadenza, f.eseguita, f.note, req.params.sid, req.params.pid]
+    );
+    await recomputePercorso(req.params.pid);
+    res.json({ ok: true });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Errore' }); }
+});
+
+router.delete('/dashboard/progetti/:id/percorsi/:pid/sedute/:sid', requireCoach, async (req, res) => {
+  try {
+    await db.query('DELETE FROM sedute WHERE id=$1 AND percorso_id=$2', [req.params.sid, req.params.pid]);
+    await recomputePercorso(req.params.pid);
+    res.json({ ok: true });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Errore' }); }
+});
+
+router.post('/dashboard/progetti/:id/percorsi/:pid/sedute/:sid/approva', requireCoach, async (req, res) => {
+  try {
+    await db.query("UPDATE sedute SET stato='confermata' WHERE id=$1 AND percorso_id=$2",
+      [req.params.sid, req.params.pid]);
+    await recomputePercorso(req.params.pid);
+    res.json({ ok: true });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Errore' }); }
+});
+
 // Gancio per l'automazione (report → scheda). Disattivo finché AUTOMATION_SECRET
 // non è configurato: è il canale che userà il flusso automatico (Parte 2 / OAuth).
 router.post('/api/sedute', express.json(), async (req, res) => {
@@ -1141,7 +1203,12 @@ router.get('/dashboard/progetti/:id', requireCoach, async (req, res) => {
     const fasi = await db.query(
       'SELECT id, tipo, data, note, fatta, contenuto, stato, origine FROM fasi_progetto WHERE progetto_id=$1 ORDER BY created_at ASC',
       [req.params.id]);
-    res.send(progettoDettaglioPage(pr.rows[0], coachee.rows, req, disponibili.rows, percorsi.rows, fasi.rows));
+    // Fetta B (Mattone 2): le sessioni COLLETTIVE del percorso condiviso (team/group).
+    const seduteColl = await db.query(
+      `SELECT s.* FROM sedute s JOIN percorsi p ON p.id = s.percorso_id
+        WHERE p.progetto_id=$1 AND p.client_id IS NULL
+        ORDER BY s.data ASC NULLS LAST, s.created_at ASC`, [req.params.id]);
+    res.send(progettoDettaglioPage(pr.rows[0], coachee.rows, req, disponibili.rows, percorsi.rows, fasi.rows, seduteColl.rows));
   } catch (err) {
     console.error(err);
     res.status(500).send('Errore');
@@ -2983,7 +3050,41 @@ function progettiPage(progetti, committenti, req) {
 // ═══════════════════════════════════════════════════════
 // PAGINA DETTAGLIO PROGETTO (Fase 3a) — dati + coachee collegati
 // ═══════════════════════════════════════════════════════
-function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi) {
+function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, seduteColl) {
+  // Fetta B (Mattone 2) — il percorso CONDIVISO (team/group) e le sue sessioni collettive.
+  seduteColl = seduteColl || [];
+  const percCond = (percorsi || []).find(x => !x.client_id) || null;
+  const collCard = !percCond ? '' : (() => {
+    const hasDrive = !!(percCond.drive_url && percCond.drive_url.trim());
+    const body = seduteColl.length === 0
+      ? `<div style="font-size:13px;color:var(--muted)">Nessuna sessione ancora. Salva i report (file "Report… .docx") nelle sottocartelle Intake/Ongoing/Final della cartella del percorso, poi premi "Cerca nuovi report".</div>`
+      : `<div style="overflow-x:auto;margin:0 -4px"><table style="min-width:760px">
+          <thead><tr>
+            <th style="text-align:left;font-size:12px;color:var(--muted)">Data</th>
+            <th style="text-align:left;font-size:12px;color:var(--muted)">Sessione</th>
+            <th style="text-align:left;font-size:12px;color:var(--muted)">Obiettivo</th>
+            <th style="text-align:left;font-size:12px;color:var(--muted)">Argomenti</th>
+            <th style="text-align:left;font-size:12px;color:var(--muted)">Attività</th>
+            <th style="text-align:left;font-size:12px;color:var(--muted)">Scadenza</th>
+            <th style="text-align:center;font-size:12px;color:var(--muted)">Eseg.</th>
+            <th style="text-align:left;font-size:12px;color:var(--muted)">Note</th>
+            <th></th>
+          </tr></thead>
+          <tbody>${seduteColl.map(renderSedutaRow).join('')}</tbody>
+        </table></div>`;
+    return `
+    <div class="card" style="margin-bottom:18px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:10px;flex-wrap:wrap">
+        <div class="field-label" style="margin:0">Sessioni del percorso ${esc(percCond.tipo)} <span style="font-weight:400;font-size:12px;color:var(--muted)">(condiviso · ore contate una volta, categoria ${esc(percCond.tipo)})</span></div>
+        <div style="display:flex;gap:6px">
+          <button onclick="openSeduta()" class="btn btn-neutral btn-sm">+ Aggiungi a mano</button>
+          ${hasDrive ? `<button id="scan-coll-btn" onclick="scanCollettivo()" class="btn btn-neutral btn-sm" title="Legge i report Word nuovi dalla cartella del percorso e ne crea la bozza">⟳ Cerca nuovi report</button>` : ''}
+        </div>
+      </div>
+      ${!hasDrive ? `<div style="font-size:12px;color:#b45309;margin-bottom:10px">Crea prima la cartella Drive del percorso (colonna "Cartella sessioni" qui sopra) per l'automazione dei report.</div>` : ''}
+      ${body}
+    </div>`;
+  })();
   // Fase 3a — le tappe con lo sponsor. La card parte VUOTA: si aggiungono a mano da
   // una tendina ("+ Aggiungi fase"). In futuro l'automazione (report nella cartella
   // Drive del progetto) le riconoscerà e le spunterà da sola, come già per le sessioni
@@ -3307,6 +3408,8 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi) {
       : `<div style="font-size:13px;color:var(--muted)">Nessun percorso ancora: si generano da soli quando aggiungi i clienti al progetto.</div>`}
     </div>
 
+    ${collCard}
+
     ${fasiCard}
   </div>
 
@@ -3342,10 +3445,106 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi) {
     </div>
   </div>
 
+  <!-- Fetta B (Mattone 2) — modale sessione collettiva (crea/modifica) -->
+  <div id="modal-seduta" class="modal-overlay">
+    <div class="modal-box" style="width:600px;max-width:94vw">
+      <h2 id="seduta-title" style="margin-bottom:16px">Aggiungi sessione</h2>
+      <input id="s-id" type="hidden">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group"><label>Tipo</label>
+          <select id="s-tipo" onchange="oreAuto()"><option value="Intake">Intake</option><option value="Ongoing" selected>Ongoing</option><option value="Final">Final</option></select></div>
+        <div class="form-group"><label>Data</label><input id="s-data" type="date"></div>
+      </div>
+      <div class="form-group" style="max-width:220px"><label>Ore <span id="s-ore-hint" style="font-size:11px;color:#aaa;text-transform:none;letter-spacing:0"></span></label><input id="s-ore" type="number" step="0.5" min="0"></div>
+      <div class="form-group"><label>Obiettivo <span style="font-size:11px;color:#aaa;text-transform:none;letter-spacing:0">(comune al gruppo, una frase)</span></label><textarea id="s-obiettivo" style="min-height:54px"></textarea></div>
+      <div class="form-group"><label>Argomenti trattati <span style="font-size:11px;color:#aaa;text-transform:none;letter-spacing:0">(un punto per riga; cita i nomi dei singoli dove serve)</span></label><textarea id="s-argomenti" style="min-height:72px" placeholder="- primo argomento&#10;- **Marco:** ha portato…"></textarea></div>
+      <div class="form-group"><label>Attività concordate <span style="font-size:11px;color:#aaa;text-transform:none;letter-spacing:0">(un punto per riga)</span></label><textarea id="s-attivita" style="min-height:60px" placeholder="- attività comune&#10;- **Anna:** attività individuale"></textarea></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group"><label>Scadenza <span style="font-size:11px;color:#aaa;text-transform:none;letter-spacing:0">(data)</span></label><input id="s-scadenza" type="date"></div>
+        <div class="form-group"><label>Eseguita</label><select id="s-eseguita"><option value="">—</option><option value="✓">✓ fatta</option><option value="✗">✗ non fatta</option></select></div>
+      </div>
+      <div class="form-group"><label>Note</label><textarea id="s-note" style="min-height:60px"></textarea></div>
+      <div style="display:flex;gap:8px;margin-top:4px">
+        <button onclick="document.getElementById('modal-seduta').style.display='none'" class="btn btn-neutral" style="flex:1">Annulla</button>
+        <button onclick="saveSeduta()" class="btn btn-primary" style="flex:1">Salva</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" style="display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#223B6E;color:#fff;padding:10px 18px;border-radius:22px;font-size:13px;z-index:200">Link copiato!</div>
 
   <script>
     const PID = ${JSON.stringify(p.id)};
+    // Fetta B (Mattone 2) — sessioni collettive del percorso condiviso.
+    const COLL_PID = ${JSON.stringify(percCond ? percCond.id : '')};
+    const SEDUTE = ${JSON.stringify(Object.fromEntries(seduteColl.map(s => [s.id, { id: s.id, percorso_id: s.percorso_id, tipo: s.tipo, data: s.data, ore: Number(s.ore), obiettivo: s.obiettivo || '', argomenti: s.argomenti || '', attivita: s.attivita || '', scadenza: s.scadenza || '', eseguita: s.eseguita || '', note: s.note || '' }]))).replace(/</g, '\\u003c')};
+    const ORE_TIPO_COLL = { Intake: 2, Ongoing: 1, Final: null };
+    function oreAuto() {
+      const t = document.getElementById('s-tipo').value;
+      const auto = ORE_TIPO_COLL[t];
+      const ore = document.getElementById('s-ore'), hint = document.getElementById('s-ore-hint');
+      if (auto != null) { ore.value = auto; hint.textContent = '(preimpostate per ' + t + ', modificabili)'; }
+      else { hint.textContent = '(Final: a mano)'; }
+    }
+    function openSeduta() {
+      document.getElementById('seduta-title').textContent = 'Aggiungi sessione';
+      document.getElementById('s-id').value = '';
+      document.getElementById('s-tipo').value = 'Ongoing';
+      document.getElementById('s-data').value = new Date().toISOString().slice(0, 10);
+      ['s-obiettivo','s-argomenti','s-attivita','s-scadenza','s-eseguita','s-note'].forEach(id => document.getElementById(id).value = '');
+      oreAuto();
+      document.getElementById('modal-seduta').style.display = 'flex';
+    }
+    function editSeduta(sid) {
+      const s = SEDUTE[sid]; if (!s) return;
+      document.getElementById('seduta-title').textContent = 'Modifica sessione';
+      document.getElementById('s-id').value = s.id;
+      document.getElementById('s-tipo').value = s.tipo;
+      document.getElementById('s-data').value = s.data ? String(s.data).slice(0, 10) : '';
+      document.getElementById('s-obiettivo').value = s.obiettivo || '';
+      document.getElementById('s-argomenti').value = s.argomenti || '';
+      document.getElementById('s-attivita').value = s.attivita || '';
+      document.getElementById('s-scadenza').value = s.scadenza || '';
+      document.getElementById('s-eseguita').value = s.eseguita || '';
+      document.getElementById('s-note').value = s.note || '';
+      oreAuto();
+      document.getElementById('s-ore').value = s.ore;
+      document.getElementById('modal-seduta').style.display = 'flex';
+    }
+    async function saveSeduta() {
+      const sid = document.getElementById('s-id').value;
+      const g = id => document.getElementById(id).value;
+      const body = { tipo: g('s-tipo'), data: g('s-data') || null, ore: g('s-ore') || 0, obiettivo: g('s-obiettivo'), argomenti: g('s-argomenti'), attivita: g('s-attivita'), scadenza: g('s-scadenza'), eseguita: g('s-eseguita'), note: g('s-note') };
+      const url = '/dashboard/progetti/' + PID + '/percorsi/' + COLL_PID + '/sedute' + (sid ? ('/' + sid) : '');
+      await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      location.reload();
+    }
+    async function delSeduta(sid, pid) {
+      if (!confirm('Eliminare questa sessione? Le ore si ricalcolano.')) return;
+      await fetch('/dashboard/progetti/' + PID + '/percorsi/' + pid + '/sedute/' + sid, { method: 'DELETE' }); location.reload();
+    }
+    async function approvaSeduta(sid, pid) {
+      if (!confirm('Approvare questa scheda? Da bozza diventa una sessione confermata e le ore entrano nel conteggio (categoria Team/Group).')) return;
+      await fetch('/dashboard/progetti/' + PID + '/percorsi/' + pid + '/sedute/' + sid + '/approva', { method: 'POST' }); location.reload();
+    }
+    async function scanCollettivo() {
+      const btn = document.getElementById('scan-coll-btn');
+      if (btn) { btn.disabled = true; btn.textContent = '⟳ Cerco… (qualche secondo)'; }
+      const reset = () => { if (btn) { btn.disabled = false; btn.textContent = '⟳ Cerca nuovi report'; } };
+      try {
+        const r = await fetch('/dashboard/progetti/' + PID + '/scan-collettivo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        const d = await r.json();
+        if (!r.ok || d.error) { alert('Errore: ' + (d.error || r.status)); reset(); return; }
+        const n = (d.processed || []).length;
+        if (n === 0) {
+          const errs = (d.errors || []).map(e => e.err).join('; ');
+          alert('Nessun nuovo report da lavorare' + (errs ? ('. Nota: ' + errs) : '. Controlla che il file inizi con "Report" e sia nelle sottocartelle Intake/Ongoing/Final del percorso.'));
+          reset(); return;
+        }
+        alert(n + (n === 1 ? ' bozza creata' : ' bozze create') + '. La trovi qui sotto, da approvare.');
+        location.reload();
+      } catch (e) { alert('Errore di rete: ' + e.message); reset(); }
+    }
 
     // Cartella Drive del progetto: crea (o ripristina) l'albero se drive_url è vuoto.
     async function creaCartelleProgetto() {
