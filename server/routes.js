@@ -3058,20 +3058,12 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
     const hasDrive = !!(percCond.drive_url && percCond.drive_url.trim());
     const body = seduteColl.length === 0
       ? `<div style="font-size:13px;color:var(--muted)">Nessuna sessione ancora. Salva i report (file "Report… .docx") nelle sottocartelle Intake/Ongoing/Final della cartella del percorso, poi premi "Cerca nuovi report".</div>`
-      : `<div style="overflow-x:auto;margin:0 -4px"><table style="min-width:760px">
-          <thead><tr>
-            <th style="text-align:left;font-size:12px;color:var(--muted)">Data</th>
-            <th style="text-align:left;font-size:12px;color:var(--muted)">Sessione</th>
-            <th style="text-align:left;font-size:12px;color:var(--muted)">Obiettivo</th>
-            <th style="text-align:left;font-size:12px;color:var(--muted)">Argomenti</th>
-            <th style="text-align:left;font-size:12px;color:var(--muted)">Attività</th>
-            <th style="text-align:left;font-size:12px;color:var(--muted)">Scadenza</th>
-            <th style="text-align:center;font-size:12px;color:var(--muted)">Eseg.</th>
-            <th style="text-align:left;font-size:12px;color:var(--muted)">Note</th>
-            <th></th>
-          </tr></thead>
-          <tbody>${seduteColl.map(renderSedutaRow).join('')}</tbody>
-        </table></div>`;
+      : `<div style="overflow-x:auto">
+          <table class="scheda-cliente">
+            <thead><tr><th>Data</th><th>Sessione</th><th>Obiettivo</th><th>Argomenti trattati</th><th>Attività concordate</th><th>Scadenza</th><th>Eseg.</th><th>Note</th><th></th></tr></thead>
+            <tbody>${seduteColl.map(renderSedutaRow).join('')}</tbody>
+          </table>
+        </div>`;
     return `
     <div class="card" style="margin-bottom:18px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:10px;flex-wrap:wrap">
