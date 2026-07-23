@@ -367,6 +367,28 @@ router.post('/dashboard/clients/:id/percorsi', requireCoach, express.json(), asy
   }
 });
 
+// DIAGNOSI TEMPORANEA (rimuovere): verifica se il container Railway può aprire
+// connessioni SMTP in uscita (Gmail 465/587) e HTTPS (443). Nessun dato sensibile.
+router.get('/diag/smtp-egress', async (req, res) => {
+  const net = require('net');
+  const tryConnect = (host, port) => new Promise((resolve) => {
+    const started = Date.now();
+    const sock = net.connect({ host, port });
+    const done = (result) => { try { sock.destroy(); } catch (e) {} resolve({ host, port, result, ms: Date.now() - started }); };
+    sock.setTimeout(8000);
+    sock.once('connect', () => done('OPEN'));
+    sock.once('timeout', () => done('TIMEOUT'));
+    sock.once('error', (e) => done('ERR:' + e.code));
+  });
+  const out = await Promise.all([
+    tryConnect('smtp.gmail.com', 465),
+    tryConnect('smtp.gmail.com', 587),
+    tryConnect('smtp.gmail.com', 2525),
+    tryConnect('www.googleapis.com', 443),
+  ]);
+  res.json({ egress: out });
+});
+
 // Fetta 1c — invio Mail 1 di benvenuto (lettera + scheda anagrafica + Codice Etico ICF).
 // Azionata dal coach dal pannello "Rivedi e invia" nella scheda cliente. Rigenera la
 // lettera col genere scelto (così l'allegato è coerente con la scelta del pannello) e
