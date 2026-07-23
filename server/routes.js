@@ -3356,7 +3356,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi) {
         const r = await fetch('/dashboard/progetti/'+PID+'/drive-folders', { method:'POST' });
         const d = await r.json();
         if (d.error) { msg.style.color='#b45309'; msg.textContent = d.error; btn.disabled = false; return; }
-        location.reload();
+        ricaricaConservando();
       } catch(e) { msg.style.color='#b45309'; msg.textContent = 'Errore di rete, riprova'; btn.disabled = false; }
     }
 
@@ -3368,7 +3368,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi) {
         const r = await fetch('/dashboard/progetti/'+PID+'/percorsi/'+pid+'/drive-folders', { method:'POST' });
         const d = await r.json();
         if (!r.ok || d.error) throw new Error(d.error || 'Errore');
-        location.reload();
+        ricaricaConservando();
       } catch(e) { alert('Errore: '+e.message); btn.disabled = false; btn.textContent = old; }
     }
 
@@ -3461,6 +3461,28 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi) {
       if (!dc.ok) { alert(dc.error || 'Errore nel salvataggio delle quote dei Clienti'); return; }
       showToast('Salvato');
     }
+    // Fetta B fix (2026-07-23) — salva in silenzio (best-effort) i valori dell'Amministrazione
+    // già in pagina (quota totale/committente + quote dei clienti), SENZA avvisi. Serve prima
+    // di una ricarica strutturale (aggiungi/togli partecipante, crea cartelle, fasi): la
+    // ricarica ripesca i valori dal DB, quindi senza questo le modifiche non ancora salvate
+    // col pulsante "Salva" sparirebbero (era il bug segnalato).
+    async function salvaAmmSilenzioso() {
+      try {
+        const qt = document.getElementById('q-totale');
+        if (qt) {
+          const qc = document.getElementById('q-comm');
+          await fetch('/dashboard/progetti/'+PID+'/quota', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ quota_totale: qt.value, quota_committente: qc ? qc.value : '' }) });
+        }
+        const quote = coacheeInputs().map(i => ({ part_id: i.getAttribute('data-part'), quota: i.value }));
+        if (quote.length) {
+          await fetch('/dashboard/progetti/'+PID+'/quote-coachee', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ quote }) });
+        }
+      } catch (e) { /* best-effort: non deve bloccare la ricarica */ }
+    }
+    // Ricarica la pagina conservando le modifiche non salvate dell'Amministrazione.
+    function ricaricaConservando() {
+      salvaAmmSilenzioso().finally(function(){ location.reload(); });
+    }
     function paintPagCoachee(partId, stato) {
       const ric = stato === 'ricevuto';
       const badge = document.getElementById('badge-'+partId);
@@ -3536,7 +3558,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi) {
       }
       const r = await fetch('/dashboard/progetti/'+PID+'/coachee', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
       const d = await r.json();
-      if (d.ok) location.reload(); else alert(d.error || 'Errore');
+      if (d.ok) ricaricaConservando(); else alert(d.error || 'Errore');
     }
     async function removeCoachee(partId) {
       if (!confirm('Togliere questo cliente dal progetto? Se non ha ancora dati, viene eliminato anche dall\\'anagrafica.')) return;
@@ -3544,7 +3566,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi) {
       const d = await r.json();
       if (!d.ok) { alert(d.error || 'Errore'); return; }
       if (d.kept && d.message) alert(d.message);
-      location.reload();
+      ricaricaConservando();
     }
     // ── Fase 3a: le tappe del progetto (aggiunte a mano da una tendina) ──
     const FASE_LABELS = ${JSON.stringify(FASE_LABELS)};
@@ -3595,14 +3617,14 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi) {
       const r = await fetch('/dashboard/progetti/'+PID+'/fasi', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ fid:b.dataset.fid, tipo:b.dataset.tipo, approva:true }) });
       const d = await r.json();
       if (!d.ok) { alert(d.error || 'Errore'); return; }
-      location.reload();
+      ricaricaConservando();
     }
     async function addFase(tipo) {
       document.getElementById('fase-menu').style.display = 'none';
       const r = await fetch('/dashboard/progetti/'+PID+'/fasi', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ tipo }) });
       const d = await r.json();
       if (!d.ok) { alert(d.error || 'Errore'); return; }
-      location.reload();
+      ricaricaConservando();
     }
     async function scanProgetto() {
       const btn = document.getElementById('scan-fasi-btn');
@@ -3619,7 +3641,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi) {
           reset(); return;
         }
         alert(n + (n === 1 ? ' bozza creata' : ' bozze create') + '. La trovi qui sotto: apri il Dettaglio e approva.');
-        location.reload();
+        ricaricaConservando();
       } catch (e) { alert('Errore di rete: ' + e.message); reset(); }
     }
     async function delFase(btn) {
