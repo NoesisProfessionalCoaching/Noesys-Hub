@@ -88,6 +88,9 @@ async function init() {
   await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS drive_url TEXT`);
   await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS consenso_privacy BOOLEAN DEFAULT FALSE`);
   await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS consenso_data DATE`);
+  // Documentazione nuovo cliente (Fetta 1c): quando è stata inviata la Mail 1 di
+  // benvenuto (lettera + scheda anagrafica + Codice ICF). NULL = non ancora inviata.
+  await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS mail1_inviata_data TIMESTAMPTZ`);
 
   // Nome/Cognome separati (A6): servono per nominare le cartelle Drive "Cognome Nome"
   // e in generale per un'anagrafica pulita. Il campo unico `name` resta (lo legge anche

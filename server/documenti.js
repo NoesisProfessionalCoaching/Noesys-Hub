@@ -1,21 +1,34 @@
 // Generazione documenti personalizzati del cliente (Fetta 1b — lettera di benvenuto).
 // Modello LEGGERO: la firma del coach è già DENTRO il PDF-modello; l'unica cosa che
-// l'Hub scrive è il NOME di battesimo, nello spazio del saluto ("Caro ___, benvenuto.").
-// Niente conversioni Word→PDF: si sovrascrive solo il testo con pdf-lib sul PDF-modello.
+// l'Hub scrive è il saluto personalizzato ("Caro ___, benvenuto.").
+// Niente conversioni Word→PDF: si scrive solo il saluto con pdf-lib sul PDF-modello.
+//
+// Come combacia con la lettera (rifinitura 23/07):
+//  - font = EB Garamond incorporato (il modello usa Garamond; EB Garamond è la
+//    versione libera che gli somiglia), corpo ~12.96 come il testo della lettera;
+//  - invece di scrivere solo il nome (che lasciava un brutto vuoto dopo "Caro"),
+//    si scrive TUTTO il pezzo "{Nome}, benvenuto." subito dopo "Caro" (spaziatura
+//    naturale) e si copre con un rettangolo bianco il ", benvenuto." già stampato.
 
-const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
+const fs = require('fs');
+const path = require('path');
+const { PDFDocument, rgb } = require('pdf-lib');
+const fontkit = require('@pdf-lib/fontkit');
 const drive = require('./google-drive');
 
-// Coordinate ESATTE estratte dai due PDF-modello (pdfjs, 22/07): la virgola del saluto
-// ("Caro ___, benvenuto.") e la linea di base del testo. Il nome è allineato a DESTRA
-// contro la virgola (così "Nome," resta sempre attaccato, per qualsiasi lunghezza).
+// TTF EB Garamond incorporato nel repo (server/assets/fonts). Caricato una volta.
+const GARAMOND_TTF = fs.readFileSync(path.join(__dirname, 'assets', 'fonts', 'EBGaramond-Regular.ttf'));
+
+// Coordinate ESATTE estratte dai due PDF-modello (pdfjs, 22-23/07).
+//  - caroEndX = fine della parola "Caro"/"Cara" (dove attacca il saluto nuovo);
+//  - clearX/clearW = rettangolo bianco che copre il vecchio ", benvenuto."/", benvenuta.";
+//  - baseY = linea di base del saluto; word = parola giusta per genere.
 const LETTERE = {
-  maschile:  { file: 'Lettera Benvenuto OK.pdf', commaX: 160.6, baseY: 687.3 },
-  femminile: { file: 'Lettera Benvenuta OK.pdf', commaX: 165.8, baseY: 687.8 },
+  maschile:  { file: 'Lettera Benvenuto OK.pdf', caroEndX: 95.6, clearX: 156, clearW: 76, baseY: 687.3, word: 'benvenuto' },
+  femminile: { file: 'Lettera Benvenuta OK.pdf', caroEndX: 94.2, clearX: 161, clearW: 72, baseY: 687.8, word: 'benvenuta' },
 };
-const NAME_SIZE = 12.6;                 // combacia col corpo della lettera (serif ~Times)
+const NAME_SIZE = 12.96;                // combacia col corpo della lettera
 const NAME_COLOR = rgb(0.13, 0.13, 0.13);
-const GAP_VIRGOLA = 1.5;                // stacco minimo tra nome e virgola
 
 // Euristica italiana per scegliere Benvenuto/Benvenuta dal nome: finale in -a → femminile.
 // È solo un default: nel pannello "Rivedi e invia" il coach potrà cambiare lettera.
@@ -25,7 +38,7 @@ function genereFromNome(nome) {
   return primo.endsWith('a') ? 'femminile' : 'maschile';
 }
 
-// Genera il PDF della lettera di benvenuto col nome scritto al punto giusto.
+// Genera il PDF della lettera di benvenuto col saluto personalizzato.
 // `nome` = nome di battesimo (usa solo la prima parola). `genere` opzionale forza M/F.
 // Restituisce { bytes:Buffer, genere, fileName }.
 async function generaLetteraBenvenuto({ nome, genere }) {
@@ -40,11 +53,21 @@ async function generaLetteraBenvenuto({ nome, genere }) {
   if (!src) throw new Error('Modello lettera non trovato in Modelli: ' + cfg.file);
 
   const pdf = await PDFDocument.load(await drive.downloadFileBuffer(src.id));
+  pdf.registerFontkit(fontkit);
+  const font = await pdf.embedFont(GARAMOND_TTF, { subset: true });
   const page = pdf.getPages()[0];
-  const font = await pdf.embedFont(StandardFonts.TimesRoman);
-  const w = font.widthOfTextAtSize(nomeBattesimo, NAME_SIZE);
-  page.drawText(nomeBattesimo, {
-    x: cfg.commaX - GAP_VIRGOLA - w, y: cfg.baseY, size: NAME_SIZE, font, color: NAME_COLOR,
+
+  // 1) Copro il vecchio ", benvenuto." con un rettangolo bianco (la riga del saluto
+  //    è isolata: sopra c'è l'intestazione, sotto una riga vuota, quindi c'è spazio).
+  page.drawRectangle({
+    x: cfg.clearX, y: cfg.baseY - 4, width: cfg.clearW, height: 17,
+    color: rgb(1, 1, 1),
+  });
+
+  // 2) Scrivo "{Nome}, benvenuto." subito dopo "Caro" (spazio iniziale = spaziatura naturale).
+  const testo = ' ' + nomeBattesimo + ', ' + cfg.word + '.';
+  page.drawText(testo, {
+    x: cfg.caroEndX, y: cfg.baseY, size: NAME_SIZE, font, color: NAME_COLOR,
   });
 
   const bytes = Buffer.from(await pdf.save());

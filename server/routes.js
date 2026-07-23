@@ -7,6 +7,7 @@ const { logoCompact } = require('./logo');
 const drive = require('./google-drive');
 const scan = require('./scan');
 const documenti = require('./documenti');
+const mailer = require('./mailer');
 
 const router = express.Router();
 
@@ -363,6 +364,55 @@ router.post('/dashboard/clients/:id/percorsi', requireCoach, express.json(), asy
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Errore' });
+  }
+});
+
+// Fetta 1c — invio Mail 1 di benvenuto (lettera + scheda anagrafica + Codice Etico ICF).
+// Azionata dal coach dal pannello "Rivedi e invia" nella scheda cliente. Rigenera la
+// lettera col genere scelto (così l'allegato è coerente con la scelta del pannello) e
+// allega i due modelli base scaricati da Drive. Alla riuscita segna la data in anagrafica.
+router.post('/dashboard/clients/:id/mail1/invia', requireCoach, express.json(), async (req, res) => {
+  try {
+    if (!mailer.mailerReady()) {
+      return res.status(400).json({ error: 'Invio email non configurato sul server (GMAIL_USER/GMAIL_PASS).' });
+    }
+    const to = String(req.body.to || '').trim();
+    const subject = String(req.body.subject || '').trim();
+    const body = String(req.body.body || '');
+    const genere = req.body.genere === 'femminile' ? 'femminile'
+                 : req.body.genere === 'maschile' ? 'maschile' : null;
+    if (!to) return res.status(400).json({ error: 'Manca il destinatario.' });
+    if (!subject) return res.status(400).json({ error: "Manca l'oggetto." });
+
+    const cr = await db.query('SELECT nome, name FROM clients WHERE id=$1', [req.params.id]);
+    const row = cr.rows[0];
+    if (!row) return res.status(404).json({ error: 'Cliente non trovato.' });
+    const nome = (row.nome && row.nome.trim()) || String(row.name || '').trim().split(/\s+/)[0];
+    if (!nome) return res.status(400).json({ error: 'Il cliente non ha un nome per la lettera.' });
+
+    // Allegati: lettera personalizzata (rigenerata col genere scelto) + i 2 modelli base.
+    const attachments = [];
+    const letter = await documenti.generaLetteraBenvenuto({ nome, genere });
+    attachments.push({ filename: letter.fileName, content: letter.bytes, contentType: 'application/pdf' });
+
+    const modelli = await drive.findModelliFolder();
+    if (!modelli) return res.status(500).json({ error: 'Cartella "Modelli" non trovata su Drive.' });
+    const mancanti = [];
+    for (const nomeFile of drive.MODELLI_BASE) {
+      const f = await drive.findFileByName(modelli.id, nomeFile);
+      if (!f) { mancanti.push(nomeFile); continue; }
+      const buf = await drive.downloadFileBuffer(f.id);
+      // Nome allegato pulito per il cliente: togli il " OK" tecnico dai modelli.
+      attachments.push({ filename: nomeFile.replace(/ OK\.pdf$/i, '.pdf'), content: buf, contentType: 'application/pdf' });
+    }
+    if (mancanti.length) return res.status(500).json({ error: 'Modelli non trovati su Drive: ' + mancanti.join(', ') });
+
+    await mailer.sendMail({ to, subject, text: body, attachments });
+    await db.query('UPDATE clients SET mail1_inviata_data = NOW() WHERE id=$1', [req.params.id]);
+    res.json({ ok: true, to, allegati: attachments.map(a => a.filename) });
+  } catch (err) {
+    console.error('[mail1]', err);
+    res.status(500).json({ error: 'Invio non riuscito: ' + err.message });
   }
 });
 
@@ -1707,6 +1757,30 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, progetti
   const st = STATO_CLIENTE[client.stato_cliente] || STATO_CLIENTE.attivo;
   const val = v => v ? esc(v) : '<span style="color:#ccc">—</span>';
 
+  // ── Mail 1 di benvenuto (Fetta 1c): bozza + stato ────
+  // Nome di battesimo per il saluto e per scegliere la lettera M/F di default.
+  const mailNome = (client.nome && client.nome.trim()) || String(client.name || '').trim().split(/\s+/)[0] || '';
+  const mail1Genere = documenti.genereFromNome(mailNome);
+  const mail1Subject = 'Il tuo percorso di Coaching sta per iniziare';
+  // Testo di default modificabile nel pannello. Neutro rispetto al genere (la lettera
+  // allegata gestisce Caro/Cara), unica variabile il nome, nessuna data (concordata a parte).
+  const mail1Body =
+`Ciao ${mailNome},
+
+sono felice di darti il benvenuto in questo percorso.
+
+In allegato a questa email trovi tre documenti: la lettera di benvenuto, la scheda anagrafica da compilare e il Codice Etico ICF a cui mi attengo.
+
+Se hai voglia e tempo, dai un'occhiata ai documenti e prova a compilare la scheda anagrafica. Se non riesci, la vediamo con calma insieme al nostro primo incontro.
+
+Per qualsiasi cosa, rispondi pure a questa email.
+
+A presto,
+Germano Guerriero
+Noesys Professional Coaching`;
+  const mail1SentTxt = client.mail1_inviata_data
+    ? itDate(new Date(client.mail1_inviata_data).toISOString()) : '';
+
   // ── Percorsi ────────────────────────────────────────
   const percorsiHtml = `
     <div class="card">
@@ -1901,6 +1975,10 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, progetti
         </div>
         <div style="text-align:right;min-width:210px">
           <button onclick="openEdit()" class="btn btn-primary btn-sm" style="margin-bottom:10px">✎ Modifica dati</button>
+          <div style="margin-bottom:10px">
+            <button onclick="openMail1()" class="btn btn-gold btn-sm">✉️ Rivedi e invia Mail 1</button>
+            ${mail1SentTxt ? `<div style="font-size:11px;color:#4F8B73;margin-top:5px">✓ Mail 1 inviata il ${mail1SentTxt}</div>` : ''}
+          </div>
           <div class="field-label" style="margin-top:6px">Link accesso strumenti</div>
           <code style="display:block;font-size:10px;background:#f5f5f5;padding:5px 8px;border-radius:5px;word-break:break-all;margin-bottom:8px">${link}</code>
           <div style="display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap">
@@ -1971,6 +2049,34 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, progetti
       <div style="display:flex;gap:8px;margin-top:4px">
         <button onclick="document.getElementById('modal-edit').style.display='none'" class="btn btn-neutral" style="flex:1">Annulla</button>
         <button onclick="saveClient()" class="btn btn-primary" style="flex:1">Salva</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL MAIL 1 — RIVEDI E INVIA -->
+  <div id="modal-mail1" class="modal-overlay">
+    <div class="modal-box" style="width:560px">
+      <h2 style="margin-bottom:4px">Rivedi e invia — Mail 1 di benvenuto</h2>
+      <p style="margin:0 0 14px;font-size:12px;color:#8a94a6">L'invio è reale: la mail parte davvero al destinatario qui sotto.</p>
+      <div class="form-group"><label>A (destinatario)</label><input id="m1-to" type="email" value="${attr(client.email)}" placeholder="email del cliente"></div>
+      <div class="form-group"><label>Oggetto</label><input id="m1-subject" type="text" value="${attr(mail1Subject)}"></div>
+      <div class="form-group">
+        <label>Lettera allegata</label>
+        <div style="display:flex;gap:18px;align-items:center;font-size:13px">
+          <label style="display:flex;align-items:center;gap:6px;margin:0;text-transform:none;letter-spacing:0;font-weight:400">
+            <input type="radio" name="m1-genere" value="maschile" style="width:auto;margin:0" ${mail1Genere==='maschile'?'checked':''}> Maschile (Caro… benvenuto)</label>
+          <label style="display:flex;align-items:center;gap:6px;margin:0;text-transform:none;letter-spacing:0;font-weight:400">
+            <input type="radio" name="m1-genere" value="femminile" style="width:auto;margin:0" ${mail1Genere==='femminile'?'checked':''}> Femminile (Cara… benvenuta)</label>
+        </div>
+      </div>
+      <div class="form-group"><label>Testo della mail</label><textarea id="m1-body" style="min-height:230px;font-family:inherit">${esc(mail1Body)}</textarea></div>
+      <div style="font-size:12px;color:#6B7280;background:#f7f9fc;border-radius:8px;padding:9px 12px;margin-bottom:12px">
+        📎 Allegati (3): <strong>Lettera di Benvenuto</strong> · <strong>Scheda Anagrafica</strong> · <strong>Codice Etico ICF 2025</strong>
+      </div>
+      <div id="mail1-error" style="display:none" class="flash-error"></div>
+      <div style="display:flex;gap:8px;margin-top:4px">
+        <button onclick="document.getElementById('modal-mail1').style.display='none'" class="btn btn-neutral" style="flex:1">Annulla</button>
+        <button id="m1-send" onclick="sendMail1()" class="btn btn-primary" style="flex:1">✉️ Invia adesso</button>
       </div>
     </div>
   </div>
@@ -2132,6 +2238,32 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, progetti
     }
     function copyLink(url) { navigator.clipboard.writeText(url).then(() => { const t=document.getElementById('toast'); t.textContent='Link copiato!'; t.style.display='block'; setTimeout(()=>t.style.display='none',2000); }); }
     function openEdit() { document.getElementById('modal-edit').style.display='flex'; }
+    function openMail1() {
+      document.getElementById('mail1-error').style.display='none';
+      document.getElementById('modal-mail1').style.display='flex';
+    }
+    async function sendMail1() {
+      const err = document.getElementById('mail1-error');
+      const to = document.getElementById('m1-to').value.trim();
+      if (!to) { err.textContent='Serve un indirizzo destinatario.'; err.style.display='block'; return; }
+      const gEl = document.querySelector('input[name="m1-genere"]:checked');
+      const payload = {
+        to,
+        subject: document.getElementById('m1-subject').value,
+        body: document.getElementById('m1-body').value,
+        genere: gEl ? gEl.value : null,
+      };
+      if (!confirm('Invio la Mail 1 a ' + to + ' con i 3 allegati?')) return;
+      const btn = document.getElementById('m1-send');
+      btn.disabled = true; btn.textContent = 'Invio in corso…'; err.style.display='none';
+      try {
+        const r = await fetch('/dashboard/clients/'+CID+'/mail1/invia',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+        const d = await r.json().catch(()=>({}));
+        if (!r.ok || d.error) { err.textContent = d.error || ('Errore ' + r.status); err.style.display='block'; btn.disabled=false; btn.textContent='✉️ Invia adesso'; return; }
+        alert('Mail inviata a ' + d.to + '.\\nAllegati: ' + (d.allegati||[]).join(', '));
+        location.reload();
+      } catch(e) { err.textContent='Errore di rete: ' + e.message; err.style.display='block'; btn.disabled=false; btn.textContent='✉️ Invia adesso'; }
+    }
     async function createDriveFolders() {
       const btn = document.getElementById('drive-folders-btn');
       const msg = document.getElementById('drive-folders-msg');
