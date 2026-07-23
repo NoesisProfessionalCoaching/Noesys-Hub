@@ -30,6 +30,15 @@ const LETTERE = {
 const NAME_SIZE = 12.96;                // combacia col corpo della lettera
 const NAME_COLOR = rgb(0.13, 0.13, 0.13);
 
+// Agenda di sessione (Fetta 2): intestazione "Agenda di ___ | Sessione del ___".
+// Come la lettera, si scrive SOLO il nome di battesimo, dopo "Agenda di" (che
+// finisce a x≈165.6) e prima della barra "|" (x=325.5). Corpo 24 come l'header,
+// colore grigio come il titolo. maxW = spazio disponibile prima della barra.
+const AGENDA = {
+  file: 'Agenda Cliente OK.pdf',
+  nameX: 172, baseY: 678.4, size: 24, maxW: 148, color: rgb(0.35, 0.35, 0.35),
+};
+
 // Euristica italiana per scegliere Benvenuto/Benvenuta dal nome: finale in -a → femminile.
 // È solo un default: nel pannello "Rivedi e invia" il coach potrà cambiare lettera.
 function genereFromNome(nome) {
@@ -74,4 +83,29 @@ async function generaLetteraBenvenuto({ nome, genere }) {
   return { bytes, genere: g, fileName: 'Lettera di Benvenuto - ' + nomeBattesimo + '.pdf' };
 }
 
-module.exports = { generaLetteraBenvenuto, genereFromNome };
+// Genera il PDF dell'agenda col nome di battesimo scritto nell'intestazione.
+// `nome` = usa solo la prima parola. Restituisce { bytes:Buffer, fileName }.
+async function generaAgenda({ nome }) {
+  const nomeBattesimo = String(nome || '').trim().split(/\s+/)[0];
+  if (!nomeBattesimo) throw new Error("Manca il nome del cliente per l'agenda");
+
+  const modelli = await drive.findModelliFolder();
+  if (!modelli) throw new Error('Cartella "Modelli" non trovata su Drive');
+  const src = await drive.findFileByName(modelli.id, AGENDA.file);
+  if (!src) throw new Error('Modello agenda non trovato in Modelli: ' + AGENDA.file);
+
+  const pdf = await PDFDocument.load(await drive.downloadFileBuffer(src.id));
+  pdf.registerFontkit(fontkit);
+  const font = await pdf.embedFont(GARAMOND_TTF, { subset: true });
+  const page = pdf.getPages()[0];
+
+  // Riduce il corpo se il nome è molto lungo, per non toccare la barra "|".
+  let size = AGENDA.size;
+  while (size > 13 && font.widthOfTextAtSize(nomeBattesimo, size) > AGENDA.maxW) size -= 0.5;
+  page.drawText(nomeBattesimo, { x: AGENDA.nameX, y: AGENDA.baseY, size, font, color: AGENDA.color });
+
+  const bytes = Buffer.from(await pdf.save());
+  return { bytes, fileName: 'Agenda - ' + nomeBattesimo + '.pdf' };
+}
+
+module.exports = { generaLetteraBenvenuto, genereFromNome, generaAgenda };

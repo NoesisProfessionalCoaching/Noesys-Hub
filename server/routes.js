@@ -416,6 +416,49 @@ router.post('/dashboard/clients/:id/mail1/invia', requireCoach, express.json(), 
   }
 });
 
+// Fetta 2 — invio Mail 2 (contratto + agenda), dopo la seduta di Intake.
+// Il CONTRATTO si allega tale e quale (il cliente compila i dati a mano e firma);
+// l'AGENDA viene personalizzata col solo nome di battesimo. Invio via Gmail API.
+router.post('/dashboard/clients/:id/mail2/invia', requireCoach, express.json(), async (req, res) => {
+  try {
+    if (!mailer.mailerReady()) {
+      return res.status(400).json({ error: 'Invio email non configurato sul server.' });
+    }
+    const to = String(req.body.to || '').trim();
+    const subject = String(req.body.subject || '').trim();
+    const body = String(req.body.body || '');
+    if (!to) return res.status(400).json({ error: 'Manca il destinatario.' });
+    if (!subject) return res.status(400).json({ error: "Manca l'oggetto." });
+
+    const cr = await db.query('SELECT nome, name FROM clients WHERE id=$1', [req.params.id]);
+    const row = cr.rows[0];
+    if (!row) return res.status(404).json({ error: 'Cliente non trovato.' });
+    const nome = (row.nome && row.nome.trim()) || String(row.name || '').trim().split(/\s+/)[0];
+    if (!nome) return res.status(400).json({ error: "Il cliente non ha un nome per l'agenda." });
+
+    const modelli = await drive.findModelliFolder();
+    if (!modelli) return res.status(500).json({ error: 'Cartella "Modelli" non trovata su Drive.' });
+
+    const attachments = [];
+    // Contratto: allegato tale e quale dal modello.
+    const contrModel = 'Contratto Coaching OK.pdf';
+    const cf = await drive.findFileByName(modelli.id, contrModel);
+    if (!cf) return res.status(500).json({ error: 'Modello contratto non trovato su Drive: ' + contrModel });
+    const cbuf = await drive.downloadFileBuffer(cf.id);
+    attachments.push({ filename: 'Contratto per Servizi di Coaching.pdf', content: cbuf, contentType: 'application/pdf' });
+    // Agenda: personalizzata col nome.
+    const agenda = await documenti.generaAgenda({ nome });
+    attachments.push({ filename: 'Agenda di sessione.pdf', content: agenda.bytes, contentType: 'application/pdf' });
+
+    await mailer.sendMail({ to, subject, text: body, attachments });
+    await db.query('UPDATE clients SET mail2_inviata_data = NOW() WHERE id=$1', [req.params.id]);
+    res.json({ ok: true, to, allegati: attachments.map(a => a.filename) });
+  } catch (err) {
+    console.error('[mail2]', err);
+    res.status(500).json({ error: 'Invio non riuscito: ' + err.message });
+  }
+});
+
 // Diagnostica: elenca i file dentro Noesys/Modelli (nome + tipo). Serve a confermare
 // i nomi ESATTI dei modelli e che l'Hub raggiunga la cartella. Apri l'URL da loggato.
 router.get('/dashboard/diag/modelli', requireCoach, async (req, res) => {
@@ -1788,6 +1831,26 @@ Germano`;
   const mail1SentTxt = client.mail1_inviata_data
     ? itDate(new Date(client.mail1_inviata_data).toISOString()) : '';
 
+  // ── Mail 2 (Fetta 2): contratto + agenda, dopo l'Intake ──
+  const mail2Subject = 'Contratto per Servizi di Coaching e Agenda di sessione';
+  const mail2Body =
+`Buongiorno ${mailNome},
+
+come anticipato, ti invio i documenti per formalizzare e accompagnare il tuo percorso di Coaching. In allegato a questa mail trovi:
+• il Contratto per Servizi di Coaching
+• l'Agenda di sessione
+
+Ti chiederei di leggere con attenzione il contratto, firmarlo e rimandarmelo a questo stesso indirizzo.
+
+L'Agenda è uno strumento prezioso per monitorare il tuo percorso: ti aiuta a mettere a fuoco gli impegni presi e a dare continuità al lavoro tra una sessione e l'altra. Ti chiederei di compilarla e inviarmela entro la sera prima del giorno della sessione successiva, così potrò arrivare preparato al nostro incontro.
+
+Per qualsiasi cosa, rispondi pure a questa mail.
+
+A presto,
+Germano`;
+  const mail2SentTxt = client.mail2_inviata_data
+    ? itDate(new Date(client.mail2_inviata_data).toISOString()) : '';
+
   // ── Percorsi ────────────────────────────────────────
   const percorsiHtml = `
     <div class="card">
@@ -1985,6 +2048,10 @@ Germano`;
           <div style="margin-bottom:10px">
             <button onclick="openMail1()" class="btn btn-gold btn-sm">✉️ Rivedi e invia Mail 1</button>
             ${mail1SentTxt ? `<div style="font-size:11px;color:#4F8B73;margin-top:5px">✓ Mail 1 inviata il ${mail1SentTxt}</div>` : ''}
+            <div style="margin-top:8px">
+              <button onclick="openMail2()" class="btn btn-gold btn-sm">✉️ Rivedi e invia Mail 2</button>
+              ${mail2SentTxt ? `<div style="font-size:11px;color:#4F8B73;margin-top:5px">✓ Mail 2 inviata il ${mail2SentTxt}</div>` : ''}
+            </div>
           </div>
           <div class="field-label" style="margin-top:6px">Link accesso strumenti</div>
           <code style="display:block;font-size:10px;background:#f5f5f5;padding:5px 8px;border-radius:5px;word-break:break-all;margin-bottom:8px">${link}</code>
@@ -2084,6 +2151,25 @@ Germano`;
       <div style="display:flex;gap:8px;margin-top:4px">
         <button onclick="document.getElementById('modal-mail1').style.display='none'" class="btn btn-neutral" style="flex:1">Annulla</button>
         <button id="m1-send" onclick="sendMail1()" class="btn btn-primary" style="flex:1">✉️ Invia adesso</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL MAIL 2 — RIVEDI E INVIA -->
+  <div id="modal-mail2" class="modal-overlay">
+    <div class="modal-box" style="width:560px">
+      <h2 style="margin-bottom:4px">Rivedi e invia — Mail 2 (contratto + agenda)</h2>
+      <p style="margin:0 0 14px;font-size:12px;color:#8a94a6">L'invio è reale: la mail parte davvero al destinatario qui sotto.</p>
+      <div class="form-group"><label>A (destinatario)</label><input id="m2-to" type="email" value="${attr(client.email)}" placeholder="email del cliente"></div>
+      <div class="form-group"><label>Oggetto</label><input id="m2-subject" type="text" value="${attr(mail2Subject)}"></div>
+      <div class="form-group"><label>Testo della mail</label><textarea id="m2-body" style="min-height:230px;font-family:inherit">${esc(mail2Body)}</textarea></div>
+      <div style="font-size:12px;color:#6B7280;background:#f7f9fc;border-radius:8px;padding:9px 12px;margin-bottom:12px">
+        📎 Allegati (2): <strong>Contratto per Servizi di Coaching</strong> · <strong>Agenda di sessione</strong> <span style="color:#aaa">(l'agenda riporta il nome del cliente)</span>
+      </div>
+      <div id="mail2-error" style="display:none" class="flash-error"></div>
+      <div style="display:flex;gap:8px;margin-top:4px">
+        <button onclick="document.getElementById('modal-mail2').style.display='none'" class="btn btn-neutral" style="flex:1">Annulla</button>
+        <button id="m2-send" onclick="sendMail2()" class="btn btn-primary" style="flex:1">✉️ Invia adesso</button>
       </div>
     </div>
   </div>
@@ -2281,6 +2367,30 @@ Germano`;
         if (d.error) { msg.style.color='#b45309'; msg.textContent = d.error; btn.disabled = false; return; }
         location.reload();
       } catch(e) { msg.style.color='#b45309'; msg.textContent = 'Errore di rete, riprova'; btn.disabled = false; }
+    }
+    function openMail2() {
+      document.getElementById('mail2-error').style.display='none';
+      document.getElementById('modal-mail2').style.display='flex';
+    }
+    async function sendMail2() {
+      const err = document.getElementById('mail2-error');
+      const to = document.getElementById('m2-to').value.trim();
+      if (!to) { err.textContent='Serve un indirizzo destinatario.'; err.style.display='block'; return; }
+      const payload = {
+        to,
+        subject: document.getElementById('m2-subject').value,
+        body: document.getElementById('m2-body').value,
+      };
+      if (!confirm('Invio la Mail 2 (contratto + agenda) a ' + to + '?')) return;
+      const btn = document.getElementById('m2-send');
+      btn.disabled = true; btn.textContent = 'Invio in corso…'; err.style.display='none';
+      try {
+        const r = await fetch('/dashboard/clients/'+CID+'/mail2/invia',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+        const d = await r.json().catch(()=>({}));
+        if (!r.ok || d.error) { err.textContent = d.error || ('Errore ' + r.status); err.style.display='block'; btn.disabled=false; btn.textContent='✉️ Invia adesso'; return; }
+        alert('Mail inviata a ' + d.to + '.\\nAllegati: ' + (d.allegati||[]).join(', '));
+        location.reload();
+      } catch(e) { err.textContent='Errore di rete: ' + e.message; err.style.display='block'; btn.disabled=false; btn.textContent='✉️ Invia adesso'; }
     }
     async function saveClient() {
       const nome    = document.getElementById('e-nome').value.trim();
