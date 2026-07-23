@@ -1762,22 +1762,29 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, progetti
   const mailNome = (client.nome && client.nome.trim()) || String(client.name || '').trim().split(/\s+/)[0] || '';
   const mail1Genere = documenti.genereFromNome(mailNome);
   const mail1Subject = 'Il tuo percorso di Coaching sta per iniziare';
-  // Testo di default modificabile nel pannello. Neutro rispetto al genere (la lettera
-  // allegata gestisce Caro/Cara), unica variabile il nome, nessuna data (concordata a parte).
+  // Testo di default modificabile nel pannello (finalizzato da Germano, valido per i
+  // percorsi individuali; i Progetti Strutturati avranno varianti). Neutro rispetto al
+  // genere (la lettera allegata gestisce Caro/Cara), unica variabile il nome.
   const mail1Body =
-`Ciao ${mailNome},
+`Buongiorno ${mailNome},
 
-sono felice di darti il benvenuto in questo percorso.
+ti scrivo perché a breve inizieremo la prima fase del tuo percorso di Coaching.
 
-In allegato a questa email trovi tre documenti: la lettera di benvenuto, la scheda anagrafica da compilare e il Codice Etico ICF a cui mi attengo.
+Prima di tutto desidero ringraziarti per la fiducia che mi stai accordando: sono certo che, con l'impegno di entrambi, potremo ottenere ottimi risultati.
 
-Se hai voglia e tempo, dai un'occhiata ai documenti e prova a compilare la scheda anagrafica. Se non riesci, la vediamo con calma insieme al nostro primo incontro.
+Per rendere la sessione più proficua e confortevole, ti chiederei di tenere a portata di mano dei fogli e una penna, nel caso possano servire.
 
-Per qualsiasi cosa, rispondi pure a questa email.
+In allegato a questa mail troverai i seguenti materiali:
+• Lettera di benvenuto
+• Scheda anagrafica
+• Codice Etico di ICF
 
-A presto,
-Germano Guerriero
-Noesys Professional Coaching`;
+Se ne hai tempo e modo, ti chiederei di leggere la lettera, compilare l'anagrafica e rimandarmela a questo indirizzo.
+
+Il Codice Etico di ICF è lo strumento utile qualora volessi avere rassicurazioni su ciò che è alla base del Coaching di ICF.
+
+Per ora è tutto. Grazie ancora e a presto.
+Germano`;
   const mail1SentTxt = client.mail1_inviata_data
     ? itDate(new Date(client.mail1_inviata_data).toISOString()) : '';
 
