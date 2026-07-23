@@ -4,3 +4,4 @@ node_modules/
 .env.reale
 .google-oauth.json
 .google-token.json
+.gmail-token.json
