@@ -693,6 +693,16 @@ router.post('/dashboard/progetti/:id/percorsi/:pid/sedute/:sid/approva', require
   } catch (err) { console.error(err); res.status(500).json({ error: 'Errore' }); }
 });
 
+// Chiudi/concludi il percorso CONDIVISO (team/group). Come l'individuale: una via, stato→concluso.
+router.post('/dashboard/progetti/:id/percorsi/:pid/chiudi', requireCoach, async (req, res) => {
+  try {
+    await db.query(
+      "UPDATE percorsi SET stato='concluso', data_fine=COALESCE(data_fine, CURRENT_DATE) WHERE id=$1 AND progetto_id=$2 AND client_id IS NULL",
+      [req.params.pid, req.params.id]);
+    res.json({ ok: true });
+  } catch (err) { console.error(err); res.status(500).json({ error: 'Errore' }); }
+});
+
 // Gancio per l'automazione (report → scheda). Disattivo finché AUTOMATION_SECRET
 // non è configurato: è il canale che userà il flusso automatico (Parte 2 / OAuth).
 router.post('/api/sedute', express.json(), async (req, res) => {
@@ -3067,8 +3077,11 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
     return `
     <div class="card" style="margin-bottom:18px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:10px;flex-wrap:wrap">
-        <div class="field-label" style="margin:0">Sessioni del percorso ${esc(percCond.tipo)} <span style="font-weight:400;font-size:12px;color:var(--muted)">(condiviso · ore contate una volta, categoria ${esc(percCond.tipo)})</span></div>
-        <div style="display:flex;gap:6px">
+        <div class="field-label" style="margin:0">Sessioni del percorso ${esc(percCond.tipo)} <span style="font-weight:400;font-size:12px;color:var(--muted)">(${(Number(percCond.n_sessioni_fatte)||0)} ${(Number(percCond.n_sessioni_fatte)||0)===1?'sessione confermata':'sessioni confermate'} · ${fmtOre(percCond.ore_fatte)} h · categoria ${esc(percCond.tipo)})</span></div>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          ${percCond.stato === 'attivo'
+            ? `<button onclick="chiudiPercorsoColl()" class="btn btn-neutral btn-sm" title="Concludi il percorso di gruppo">Chiudi percorso</button>`
+            : `<span class="badge badge-inactive">Percorso concluso</span>`}
           <button onclick="openSeduta()" class="btn btn-neutral btn-sm">+ Aggiungi a mano</button>
           ${hasDrive ? `<button id="scan-coll-btn" onclick="scanCollettivo()" class="btn btn-neutral btn-sm" title="Legge i report Word nuovi dalla cartella del percorso e ne crea la bozza">⟳ Cerca nuovi report</button>` : ''}
         </div>
@@ -3509,15 +3522,19 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
       const body = { tipo: g('s-tipo'), data: g('s-data') || null, ore: g('s-ore') || 0, obiettivo: g('s-obiettivo'), argomenti: g('s-argomenti'), attivita: g('s-attivita'), scadenza: g('s-scadenza'), eseguita: g('s-eseguita'), note: g('s-note') };
       const url = '/dashboard/progetti/' + PID + '/percorsi/' + COLL_PID + '/sedute' + (sid ? ('/' + sid) : '');
       await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      location.reload();
+      ricaricaConservando();
     }
     async function delSeduta(sid, pid) {
       if (!confirm('Eliminare questa sessione? Le ore si ricalcolano.')) return;
-      await fetch('/dashboard/progetti/' + PID + '/percorsi/' + pid + '/sedute/' + sid, { method: 'DELETE' }); location.reload();
+      await fetch('/dashboard/progetti/' + PID + '/percorsi/' + pid + '/sedute/' + sid, { method: 'DELETE' }); ricaricaConservando();
     }
     async function approvaSeduta(sid, pid) {
       if (!confirm('Approvare questa scheda? Da bozza diventa una sessione confermata e le ore entrano nel conteggio (categoria Team/Group).')) return;
-      await fetch('/dashboard/progetti/' + PID + '/percorsi/' + pid + '/sedute/' + sid + '/approva', { method: 'POST' }); location.reload();
+      await fetch('/dashboard/progetti/' + PID + '/percorsi/' + pid + '/sedute/' + sid + '/approva', { method: 'POST' }); ricaricaConservando();
+    }
+    async function chiudiPercorsoColl() {
+      if (!confirm('Concludere il percorso di gruppo? Lo stato passa a "concluso".')) return;
+      await fetch('/dashboard/progetti/' + PID + '/percorsi/' + COLL_PID + '/chiudi', { method: 'POST' }); ricaricaConservando();
     }
     async function scanCollettivo() {
       const btn = document.getElementById('scan-coll-btn');
@@ -3534,7 +3551,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
           reset(); return;
         }
         alert(n + (n === 1 ? ' bozza creata' : ' bozze create') + '. La trovi qui sotto, da approvare.');
-        location.reload();
+        ricaricaConservando();
       } catch (e) { alert('Errore di rete: ' + e.message); reset(); }
     }
 
