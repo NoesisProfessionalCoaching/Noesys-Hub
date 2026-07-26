@@ -1653,6 +1653,9 @@ function appBar({ home = '#', right = '' } = {}) {
 //   mondo    → 'individuali' | 'progetti' | 'lead' | '' (funzione trasversale)
 //   sub      → sotto-voce attiva del mondo (i Committenti vivono dentro Progetti)
 //   briciole → [{label, href}] dalla radice alla pagina; l'ultima non è un link
+// Il descrittore "Professional Coaching" è TESTO accanto al logo, non dentro
+// l'SVG: scelta di Germano 26/07 — nel marchio esteso, alle misure da header,
+// il descrittore scende sotto i 6px e diventa illeggibile.
 function headerNoesys({ mondo = '', sub = '', briciole = [] } = {}) {
   const MONDI = [
     { key: 'individuali', label: 'Percorsi Individuali', href: '/dashboard' },
@@ -1771,7 +1774,7 @@ function dashboardPage(clients, req) {
     }).join('');
 
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Clienti</title>${baseStyle()}</head><body>
-  ${appBar({ home: '/dashboard', right: `<a href="/dashboard/leads" class="btn btn-neutral btn-sm">Lead</a><a href="/dashboard/committenti" class="btn btn-neutral btn-sm">Committenti</a><a href="/dashboard/progetti" class="btn btn-neutral btn-sm">Progetti</a><a href="/dashboard/icf" class="btn btn-neutral btn-sm">Estratto ICF</a><a href="/logout" class="btn btn-neutral btn-sm">Esci</a>` })}
+  ${headerNoesys({ mondo: 'individuali' })}
   <div class="container" style="max-width:980px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px">
       <div><h1>Clienti</h1><p style="color:#aaa;font-size:13px">${clients.length} clienti registrati</p></div>
@@ -2216,7 +2219,10 @@ Germano`;
     </div>` : '';
 
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — ${esc(client.name)}</title>${baseStyle()}</head><body>
-  ${appBar({ home: '/dashboard', right: `<a href="/dashboard" class="btn btn-neutral btn-sm">← Clienti</a><a href="/dashboard/leads" class="btn btn-neutral btn-sm">Lead</a><a href="/logout" class="btn btn-neutral btn-sm">Esci</a>` })}
+  ${headerNoesys({ mondo: 'individuali', briciole: [
+    { label: 'Percorsi Individuali', href: '/dashboard' },
+    { label: client.name },
+  ] })}
   <div class="container" style="max-width:980px">
 
     <!-- SCHEDA CLIENTE -->
