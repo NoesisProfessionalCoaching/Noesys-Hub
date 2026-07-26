@@ -1602,6 +1602,40 @@ function baseStyle() {
       .scheda-cliente td:nth-child(7) { width: 42px; }
       .scheda-cliente td:nth-child(8) { min-width: 260px; }
       .scheda-cliente ul { margin: 0; padding-left: 16px; }
+      /* ── Header brandizzato Noesys (Fase 1) — namespace nh-, convive con .appbar ── */
+      .nh { position: sticky; top: 0; z-index: 60; background: #fff; border-bottom: 1px solid var(--line); }
+      .nh-row { max-width: 980px; margin: 0 auto; padding: 0 18px; }
+      .nh-top { display: flex; align-items: center; gap: 14px; padding-top: 9px; padding-bottom: 9px; }
+      .nh-brand { display: flex; align-items: center; gap: 12px; text-decoration: none; flex: 0 0 auto; line-height: 0; }
+      .nh-payoff { font-size: 9.5px; letter-spacing: 0.17em; text-transform: uppercase; color: #5A5A5A; font-weight: 700; line-height: 1.35; border-left: 1px solid var(--line); padding-left: 12px; }
+      .nh-spacer { flex: 1 1 auto; }
+      .nh-search { position: relative; flex: 0 1 290px; }
+      .nh-search input { padding: 7px 13px; font-size: 12.5px; border-radius: 20px; background: #f7f9fb; }
+      .nh-search input:disabled { color: #B9BFC7; cursor: not-allowed; }
+      .nh-soon { position: absolute; right: 13px; top: 50%; transform: translateY(-50%); font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; color: #B9BFC7; font-weight: 700; pointer-events: none; }
+      .nh-menu { position: relative; flex: 0 0 auto; }
+      .nh-menu > summary { cursor: pointer; width: 34px; height: 34px; border-radius: 50%; background: #eef1f5; display: flex; align-items: center; justify-content: center; font-size: 15px; color: #4a5568; }
+      .nh-menu > summary:hover { background: #e2e7ee; }
+      .nh-menu-box { position: absolute; right: 0; top: 42px; background: #fff; border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 28px rgba(16,33,60,0.12); padding: 6px; min-width: 215px; z-index: 70; }
+      .nh-menu-box a, .nh-menu-box .nh-off { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 12px; border-radius: 8px; font-size: 13px; text-decoration: none; color: var(--ink); }
+      .nh-menu-box a:hover { background: #f4f7fa; }
+      .nh-menu-box .nh-off { color: #B9BFC7; cursor: not-allowed; }
+      .nh-tag { font-size: 9px; text-transform: uppercase; letter-spacing: 0.07em; font-weight: 700; color: #C4C9D0; }
+      .nh-sep { height: 1px; background: var(--line); margin: 5px 8px; }
+      .nh-band { border-top: 1px solid #f1f3f6; }
+      .nh-mondi { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+      .nh-mondo { padding: 9px 14px; font-size: 13px; font-weight: 600; color: var(--muted); text-decoration: none; border-bottom: 2.5px solid transparent; white-space: nowrap; }
+      .nh-mondo:hover { color: var(--ink); }
+      .nh-mondo.on { color: var(--blue); border-bottom-color: var(--blue); }
+      .nh-sub { display: flex; align-items: center; gap: 3px; margin-left: auto; }
+      .nh-sub a { font-size: 12px; color: var(--muted); text-decoration: none; padding: 5px 11px; border-radius: 16px; white-space: nowrap; }
+      .nh-sub a.on { background: #eef4f9; color: var(--blue); font-weight: 600; }
+      .nh-bric { display: flex; align-items: center; gap: 7px; padding: 7px 0; font-size: 12px; color: var(--hint); flex-wrap: wrap; }
+      .nh-bric a { color: var(--muted); text-decoration: none; }
+      .nh-bric a:hover { color: var(--blue); text-decoration: underline; }
+      .nh-bric b { color: var(--ink); font-weight: 600; }
+      .nh-accent { height: 3px; background: var(--grad); }
+      @media (max-width: 640px) { .nh-search, .nh-payoff { display: none; } }
     </style>
   `;
 }
@@ -1611,6 +1645,61 @@ function appBar({ home = '#', right = '' } = {}) {
     <a class="appbar-brand" href="${home}" aria-label="Noesys">${logoCompact(52)}</a>
     <div class="appbar-actions">${right}</div>
   </div><div class="appbar-accent"></div></header>`;
+}
+
+// Header brandizzato Noesys (Fase 1 del riordino, 26/07).
+// Convive con appBar(): le pagine ci passano UNA PER VOLTA, appBar resta finché
+// l'ultima non è migrata. Tre fasce: identità · i tre mondi · dove sei.
+//   mondo    → 'individuali' | 'progetti' | 'lead' | '' (funzione trasversale)
+//   sub      → sotto-voce attiva del mondo (i Committenti vivono dentro Progetti)
+//   briciole → [{label, href}] dalla radice alla pagina; l'ultima non è un link
+function headerNoesys({ mondo = '', sub = '', briciole = [] } = {}) {
+  const MONDI = [
+    { key: 'individuali', label: 'Percorsi Individuali', href: '/dashboard' },
+    { key: 'progetti',    label: 'Progetti Strutturati', href: '/dashboard/progetti' },
+    { key: 'lead',        label: 'Lead',                 href: '/dashboard/leads' },
+  ];
+  const SOTTOVOCI = {
+    progetti: [
+      { key: 'progetti',    label: 'Progetti',    href: '/dashboard/progetti' },
+      { key: 'committenti', label: 'Committenti', href: '/dashboard/committenti' },
+    ],
+  };
+  const mondiHtml = MONDI.map(m =>
+    `<a class="nh-mondo${m.key === mondo ? ' on' : ''}" href="${m.href}">${m.label}</a>`).join('');
+  const sottoHtml = (SOTTOVOCI[mondo] || []).map(s =>
+    `<a href="${s.href}"${s.key === sub ? ' class="on"' : ''}>${s.label}</a>`).join('');
+  const bricHtml = briciole.map((b, i) => {
+    const ultima = i === briciole.length - 1;
+    const voce = (b.href && !ultima) ? `<a href="${b.href}">${esc(b.label)}</a>` : `<b>${esc(b.label)}</b>`;
+    return (i ? '<span>›</span>' : '') + voce;
+  }).join('');
+
+  return `<header class="nh">
+    <div class="nh-row nh-top">
+      <a class="nh-brand" href="/dashboard" aria-label="Noesys Professional Coaching">${logoCompact(44)}<span class="nh-payoff">Professional<br>Coaching</span></a>
+      <span class="nh-spacer"></span>
+      <div class="nh-search">
+        <input type="search" placeholder="Cerca cliente, committente, progetto…" disabled aria-label="Ricerca — in arrivo">
+        <span class="nh-soon">in arrivo</span>
+      </div>
+      <details class="nh-menu">
+        <summary title="Funzioni">⚙</summary>
+        <div class="nh-menu-box">
+          <a href="/dashboard/icf">Estratto ICF</a>
+          <div class="nh-off">Prenotazioni <span class="nh-tag">in arrivo</span></div>
+          <div class="nh-off">Fatturazione <span class="nh-tag">in arrivo</span></div>
+          <div class="nh-sep"></div>
+          <a href="/dashboard/diag/drive">Verifica Google Drive</a>
+          <div class="nh-sep"></div>
+          <a href="/logout">Esci</a>
+        </div>
+      </details>
+    </div>
+    <div class="nh-band"><div class="nh-row nh-mondi">${mondiHtml}${sottoHtml ? `<span class="nh-sub">${sottoHtml}</span>` : ''}</div></div>
+    ${bricHtml ? `<div class="nh-band"><div class="nh-row nh-bric">${bricHtml}</div></div>` : ''}
+    <div class="nh-accent"></div>
+  </header>`;
 }
 
 function fonteOptions(sel) {
@@ -4020,7 +4109,7 @@ function icfPage(rows, tot, clientiUnici, req) {
       </tr>`).join('');
 
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Estratto ICF</title>${baseStyle()}</head><body>
-  ${appBar({ home:'/dashboard', right:`<a href="/dashboard" class="btn btn-neutral btn-sm">← Clienti</a><a href="/dashboard/leads" class="btn btn-neutral btn-sm">Lead</a><a href="/logout" class="btn btn-neutral btn-sm">Esci</a>` })}
+  ${headerNoesys({ briciole: [{ label: 'Estratto ICF' }] })}
   <div class="container" style="max-width:980px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:12px">
       <div><h1>Estratto ICF</h1><p style="color:#aaa;font-size:13px">Log ore di coaching per la certificazione</p></div>
