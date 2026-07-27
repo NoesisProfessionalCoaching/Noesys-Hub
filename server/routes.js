@@ -2163,11 +2163,12 @@ Germano`;
             <td><strong>€ ${Number(p.importo).toLocaleString('it-IT',{minimumFractionDigits:2})}</strong></td>
             <td style="font-size:12px">${esc(p.tipo)}</td>
             <td style="font-size:12px;color:#aaa">${p.data_pagamento ? itDate(p.data_pagamento) : '—'}</td>
-            <td>${p.stato==='ricevuto' ? `<span class="badge badge-active">Ricevuto</span>` : `<span class="badge badge-inactive">In attesa</span>`}</td>
+            <td>${p.stato==='ricevuto' ? `<span class="badge badge-active">Incassato</span>` : `<span class="badge badge-inactive">Da incassare</span>`}</td>
             <td style="font-size:12px;color:#aaa">${esc(p.note||'')}</td>
-            <td style="white-space:nowrap">
-              ${p.stato==='atteso' ? `<button onclick="segnaRicevuto('${p.id}')" class="btn btn-neutral btn-sm">✓ Ricevuto</button>` : ''}
-              <button onclick="deletePayment('${p.id}')" class="btn btn-danger btn-sm" style="margin-left:4px">✕</button>
+            <td style="white-space:nowrap;text-align:right">
+              ${p.stato==='atteso' ? `<button onclick="segnaRicevuto('${p.id}')" class="btn btn-neutral btn-sm">Segna incassato</button>` : ''}
+              <span style="display:inline-block;width:14px"></span>
+              <button onclick="deletePayment('${p.id}')" class="btn btn-danger btn-sm" title="Elimina il pagamento">🗑</button>
             </td>
           </tr>`).join('')}
         </tbody>
@@ -2177,8 +2178,8 @@ Germano`;
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
         <h2 style="margin:0">Amministrazione
           <span style="font-size:12px;font-weight:400;color:#aaa;margin-left:10px">
-            Ricevuto: <strong style="color:#4F8B73">€ ${totRicevuto.toLocaleString('it-IT',{minimumFractionDigits:2})}</strong>
-            ${totAtteso > 0 ? ` · In attesa: <strong style="color:#D8AE2E">€ ${totAtteso.toLocaleString('it-IT',{minimumFractionDigits:2})}</strong>` : ''}
+            Incassato: <strong style="color:#4F8B73">€ ${totRicevuto.toLocaleString('it-IT',{minimumFractionDigits:2})}</strong>
+            ${totAtteso > 0 ? ` · Da incassare: <strong style="color:#D8AE2E">€ ${totAtteso.toLocaleString('it-IT',{minimumFractionDigits:2})}</strong>` : ''}
           </span>
         </h2>
         <button onclick="openPayment()" class="btn btn-primary btn-sm">+ Pagamento</button>
@@ -2455,7 +2456,7 @@ Germano`;
         <div class="form-group"><label>Tipo</label>
           <select id="pay-tipo"><option value="acconto">Acconto</option><option value="saldo">Saldo</option><option value="sessione">Sessione singola</option><option value="scambio servizi">Scambio servizi</option><option value="altro">Altro</option></select></div>
         <div class="form-group"><label>Stato</label>
-          <select id="pay-stato"><option value="atteso">In attesa</option><option value="ricevuto">Ricevuto</option></select></div>
+          <select id="pay-stato"><option value="atteso">Da incassare</option><option value="ricevuto">Incassato</option></select></div>
       </div>
       <div class="form-group"><label>Data</label><input id="pay-data" type="date"></div>
       <div class="form-group"><label>Note</label><input id="pay-note" type="text" placeholder="opzionale"></div>
@@ -3347,13 +3348,14 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
         <input class="q-coachee" data-part="${k.part_id}" type="number" step="0.01" min="0" value="${qc != null ? qc : ''}" oninput="updateCoacheeSum()" placeholder="€" style="width:100px">
       </td>
       <td style="white-space:nowrap" onclick="event.stopPropagation()">
-        <span id="badge-${k.part_id}" class="badge" style="background:${ric ? '#d1fae5' : '#fff8dc'};color:${ric ? '#065f46' : '#7a5c00'}">${ric ? 'Ricevuto' : 'Atteso'}</span>
+        <span id="badge-${k.part_id}" class="badge" style="background:${ric ? '#d1fae5' : '#fff8dc'};color:${ric ? '#065f46' : '#7a5c00'}">${ric ? 'Incassato' : 'Da incassare'}</span>
         <span id="pagdata-${k.part_id}" style="font-size:11px;color:#aaa">${ric && dtc ? dtc : ''}</span>
-        <button id="pagbtn-${k.part_id}" data-stato="${stc}" onclick="togglePagCoachee('${k.part_id}')" class="btn btn-neutral btn-sm">${ric ? 'Segna atteso' : 'Segna ricevuto'}</button>
+        <button id="pagbtn-${k.part_id}" data-stato="${stc}" onclick="togglePagCoachee('${k.part_id}')" class="btn btn-neutral btn-sm">${ric ? 'Segna da incassare' : 'Segna incassato'}</button>
       </td>
-      <td style="white-space:nowrap" onclick="event.stopPropagation()">
-        <a href="/dashboard/clients/${k.client_id}" class="btn btn-neutral btn-sm">Scheda</a>
-        <button onclick="removeCoachee('${k.part_id}')" class="btn btn-danger btn-sm">✕</button>
+      <td style="white-space:nowrap;text-align:right" onclick="event.stopPropagation()">
+        <a href="/dashboard/clients/${k.client_id}" class="btn btn-neutral btn-sm">Apri scheda</a>
+        <span style="display:inline-block;width:14px"></span>
+        <button onclick="removeCoachee('${k.part_id}')" class="btn btn-danger btn-sm" title="Togli dal progetto">🗑</button>
       </td>
     </tr>`;
   }).join('') : `<tr><td colspan="4" class="empty">Nessun cliente collegato. Aggiungi la prima persona.</td></tr>`;
@@ -3433,7 +3435,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
       <div id="amm-body" style="display:${ammQuoteSet ? 'block' : 'none'};margin-bottom:14px">
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
           <div style="background:#f4f7fa;border-radius:8px;padding:12px">
-            <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#9AA0AA">Atteso</div>
+            <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#9AA0AA">Totale progetto</div>
             <div id="amm-atteso" style="font-size:20px;font-weight:700;color:var(--ink)">€ ${eur(ammAtteso0)}</div>
           </div>
           <div style="background:#eafaf1;border-radius:8px;padding:12px">
@@ -3447,12 +3449,19 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
         </div>
       </div>
 
+      <!-- Chi partecipa è cosa diversa dai soldi: l'azione che aggiunge una
+           persona sta sopra la tabella, non in fondo insieme a quelle di cassa. -->
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px;flex-wrap:wrap">
+        <div class="field-label" style="margin:0">Chi partecipa e quanto paga</div>
+        <button onclick="openAdd()" class="btn btn-neutral btn-sm">+ Aggiungi cliente</button>
+      </div>
+
       <div style="overflow-x:auto;margin:0 -4px">
         <table style="min-width:520px">
           <thead><tr>
             <th style="text-align:left;font-size:12px;color:var(--muted)">Attore</th>
             <th style="text-align:left;font-size:12px;color:var(--muted)">Quota (€)</th>
-            <th style="text-align:left;font-size:12px;color:var(--muted)">Pagamento</th>
+            <th style="text-align:left;font-size:12px;color:var(--muted)">Incasso</th>
             <th></th>
           </tr></thead>
           <tbody>${commRow}${coacheeRows}</tbody>
@@ -3463,9 +3472,8 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
       <div id="coachee-sum" style="font-size:12.5px;color:var(--muted);margin-top:8px"></div>
 
       <div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:14px;flex-wrap:wrap">
-        <button onclick="openAdd()" class="btn btn-neutral btn-sm">+ Aggiungi cliente</button>
         <button onclick="dividiEqui()" class="btn btn-neutral btn-sm">Dividi in parti uguali</button>
-        <button onclick="salvaTutto()" class="btn btn-primary btn-sm">Salva</button>
+        <button onclick="salvaTutto()" class="btn btn-primary btn-sm">Salva le quote</button>
       </div>
     </div>
 
@@ -3791,11 +3799,11 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
       const badge = document.getElementById('badge-'+partId);
       const dataEl = document.getElementById('pagdata-'+partId);
       const btn = document.getElementById('pagbtn-'+partId);
-      badge.textContent = ric ? 'Ricevuto' : 'Atteso';
+      badge.textContent = ric ? 'Incassato' : 'Da incassare';
       badge.style.background = ric ? '#d1fae5' : '#fff8dc';
       badge.style.color = ric ? '#065f46' : '#7a5c00';
       dataEl.textContent = ric ? oggiIt() : '';
-      btn.textContent = ric ? 'Segna atteso' : 'Segna ricevuto';
+      btn.textContent = ric ? 'Segna da incassare' : 'Segna incassato';
       btn.dataset.stato = stato;
       renderAmministrazione();
     }
@@ -3812,12 +3820,12 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
       const btn = document.getElementById('pag-btn');
       const dataEl = document.getElementById('pag-data');
       if (pagStato === 'ricevuto') {
-        badge.textContent = 'Ricevuto'; badge.style.background = '#d1fae5'; badge.style.color = '#065f46';
-        btn.textContent = 'Segna atteso';
+        badge.textContent = 'Incassato'; badge.style.background = '#d1fae5'; badge.style.color = '#065f46';
+        btn.textContent = 'Segna da incassare';
         dataEl.textContent = pagData ? ('il ' + pagData) : '';
       } else {
-        badge.textContent = 'Atteso'; badge.style.background = '#fff8dc'; badge.style.color = '#7a5c00';
-        btn.textContent = 'Segna ricevuto';
+        badge.textContent = 'Da incassare'; badge.style.background = '#fff8dc'; badge.style.color = '#7a5c00';
+        btn.textContent = 'Segna incassato';
         dataEl.textContent = '';
       }
       renderAmministrazione();
