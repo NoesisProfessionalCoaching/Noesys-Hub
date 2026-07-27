@@ -544,10 +544,14 @@ function oreForTipo(tipo, ore) {
 }
 async function recomputePercorso(pid) {
   // Le BOZZE (report automatici non ancora approvati) NON contano le ore/sessioni ICF.
+  // Alle sessioni registrate si SOMMA sempre lo storico anteriore all'automazione
+  // dei report (ore_storiche/sessioni_storiche, vedi db.js): quelle ore sono vere
+  // ma non hanno una seduta che le documenti, e senza questa somma il ricalcolo
+  // le cancellerebbe dall'Estratto ICF.
   await db.query(
     `UPDATE percorsi SET
-       n_sessioni_fatte = (SELECT COUNT(*)             FROM sedute WHERE percorso_id = $1 AND stato <> 'bozza'),
-       ore_fatte        = (SELECT COALESCE(SUM(ore),0) FROM sedute WHERE percorso_id = $1 AND stato <> 'bozza')
+       n_sessioni_fatte = COALESCE(sessioni_storiche, 0) + (SELECT COUNT(*)             FROM sedute WHERE percorso_id = $1 AND stato <> 'bozza'),
+       ore_fatte        = COALESCE(ore_storiche, 0)      + (SELECT COALESCE(SUM(ore),0) FROM sedute WHERE percorso_id = $1 AND stato <> 'bozza')
      WHERE id = $1`, [pid]);
 }
 
@@ -2084,11 +2088,7 @@ Germano`;
               <span style="font-size:11px;color:#aaa"> ${p.n_sessioni_fatte === 1 ? 'sessione' : 'sessioni'}</span>
               <span style="color:#dfe3e8"> · </span>
               <span style="font-weight:700;color:var(--green)">${fmtOre(p.ore_fatte)}</span> <span style="font-size:11px;color:#aaa">h</span>
-              ${!condiviso ? `<div class="correzioni">
-                ${p.stato==='attivo' ? `<button onclick="addSessione('${p.id}',1)" class="btn-mini" title="Segna una sessione in più">+1 sessione</button>
-                ${p.n_sessioni_fatte > 0 ? `<button onclick="addSessione('${p.id}',-1)" class="btn-mini" title="Togli una sessione">−1</button>` : ''}` : ''}
-                <button onclick="editOre('${p.id}', ${Number(p.ore_fatte||0)})" class="btn-mini" title="Correggi le ore svolte">✎ ore</button>
-              </div>` : ''}
+              ${Number(p.ore_storiche) > 0 ? `<div style="font-size:11px;color:#aaa;margin-top:4px">di cui ${fmtOre(p.ore_storiche)} h prima dell'automazione</div>` : ''}
             </td>
             <td>${p.modalita==='Scambio servizi' ? `<span class="badge" style="background:#e8f4fd;color:#1A5280">Scambio servizi</span>` : p.modalita==='Pro bono' ? `<span class="badge badge-pausa">Pro bono</span>` : `<span style="font-size:12px;color:#4a5568">Standard</span>`}</td>
             <td>${p.prezzo ? `€ ${Number(p.prezzo).toLocaleString('it-IT',{minimumFractionDigits:2})}` : '<span style="color:#aaa">—</span>'}${p.promo ? `<br><span class="badge badge-pausa">Promo</span>${p.sconto_note ? ` <span style="font-size:11px;color:#aaa">${esc(p.sconto_note)}</span>` : ''}` : ''}</td>
@@ -2106,7 +2106,7 @@ Germano`;
   const seduteBody = percorsi.length === 0
     ? `<div class="empty">Crea prima un percorso per registrare le sessioni.</div>`
     : sedute.length === 0
-      ? `<div class="empty">Nessuna sessione. Usa "+ Aggiungi sessione", oppure "⟳ Cerca nuovi report" se hai messo un report su Drive.</div>`
+      ? `<div class="empty">Nessuna sessione. Le sessioni nascono dai report: salva il report su Drive e premi "⟳ Cerca nuovi report".</div>`
       : `<div style="overflow-x:auto">
           <table class="scheda-cliente">
             <thead><tr><th>Data</th><th>Sessione</th><th>Obiettivo</th><th>Argomenti trattati</th><th>Attività concordate</th><th>Scadenza</th><th>Eseg.</th><th>Note</th><th></th></tr></thead>
@@ -2124,7 +2124,6 @@ Germano`;
           <span style="display:flex;align-items:center;gap:8px"><span class="sec-caret">▸</span><h2 style="margin:0">Scheda Cliente <span style="font-weight:400;font-size:13px;color:#aaa">(${sedute.length} ${sedute.length === 1 ? 'sessione' : 'sessioni'}${oreConfermate > 0 ? ` · ${fmtOre(oreConfermate)} h` : ''})</span></h2></span>
           <span style="display:inline-flex;gap:8px;align-items:center">
             ${client.drive_url ? `<button id="scan-btn" onclick="event.stopPropagation();scanDrive()" class="btn btn-gold btn-sm" title="Legge i report Word nuovi dalla cartella Drive e ne aggiunge la riga in bozza">⟳ Cerca nuovi report</button>` : ''}
-            ${percorsi.length ? `<button onclick="event.stopPropagation();openSeduta()" class="btn btn-primary btn-sm">+ Aggiungi sessione</button>` : ''}
           </span>
         </summary>
         <div style="margin-top:14px">${seduteBody}</div>
@@ -3187,7 +3186,6 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
         <div class="field-label" style="margin:0">Scheda ${percCond.tipo === 'Group' ? 'del Gruppo' : 'del ' + esc(percCond.tipo)} <span style="font-weight:400;font-size:12px;color:var(--muted)">(${(Number(percCond.n_sessioni_fatte)||0)} ${(Number(percCond.n_sessioni_fatte)||0)===1?'sessione confermata':'sessioni confermate'} · ${fmtOre(percCond.ore_fatte)} h)</span></div>
         <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
           ${hasDrive ? `<button id="scan-coll-btn" onclick="scanCollettivo()" class="btn btn-gold btn-sm" title="Legge i report Word nuovi dalla cartella del percorso e ne crea la bozza">⟳ Cerca nuovi report</button>` : ''}
-          <button onclick="openSeduta()" class="btn btn-primary btn-sm">+ Aggiungi sessione</button>
           <span style="display:inline-block;width:10px"></span>
           ${percCond.stato === 'attivo'
             ? `<button onclick="chiudiPercorsoColl()" class="btn btn-neutral btn-sm" title="Concludi il percorso di gruppo">Chiudi il percorso</button>`

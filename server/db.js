@@ -375,6 +375,32 @@ async function init() {
   // (ancorati alla cartella del cliente). Additiva, nullabile.
   await query(`ALTER TABLE percorsi ADD COLUMN IF NOT EXISTS drive_url TEXT`);
 
+  // 2026-07-27 — ORE E SESSIONI PRECEDENTI ALL'AUTOMAZIONE.
+  // Regola di Germano: le ore vengono dalle sessioni, e una sessione esiste solo
+  // se esiste il suo report. Ma tre percorsi sono anteriori all'automazione dei
+  // report (Giulio Sudano 9h, Marika Rappo 4h, Rebecca Ros 3h = 16 ore ICF vere):
+  // non hanno nessuna seduta che le documenti, quindi il ricalcolo dalle sedute
+  // le azzererebbe. Vivono qui, a parte, e si SOMMANO al calcolato in
+  // recomputePercorso — così la regola vale per tutto il resto senza perdere lo
+  // storico. Additive; il travaso è una-tantum e idempotente.
+  await query(`ALTER TABLE percorsi ADD COLUMN IF NOT EXISTS ore_storiche NUMERIC(6,1) DEFAULT 0`);
+  await query(`ALTER TABLE percorsi ADD COLUMN IF NOT EXISTS sessioni_storiche INTEGER DEFAULT 0`);
+  // Travaso: SOLO i percorsi che hanno numeri scritti a mano e NESSUNA seduta
+  // confermata. Chi ha già sedute non viene toccato (i suoi numeri sono già la
+  // somma). La condizione sulle colonne storiche a zero rende la cosa ripetibile
+  // senza raddoppiare nulla.
+  await query(`
+    UPDATE percorsi p SET
+      ore_storiche      = COALESCE(p.ore_fatte, 0),
+      sessioni_storiche = COALESCE(p.n_sessioni_fatte, 0)
+    WHERE COALESCE(p.ore_storiche, 0) = 0
+      AND COALESCE(p.sessioni_storiche, 0) = 0
+      AND (COALESCE(p.ore_fatte, 0) > 0 OR COALESCE(p.n_sessioni_fatte, 0) > 0)
+      AND NOT EXISTS (
+        SELECT 1 FROM sedute s WHERE s.percorso_id = p.id AND s.stato <> 'bozza'
+      )
+  `);
+
   // Fase 3a (2026-07-18) — le FASI del progetto (tappe con lo sponsor). Timeline a
   // livello di PROGETTO, distinta dalle sessioni del percorso (Intake/Ongoing/Final).
   // tipo = pre-intake | intake-sponsor | kick-off | chiusura-open | chiusura-sponsor.
