@@ -1563,6 +1563,26 @@ function baseStyle() {
       .btn-mini { padding: 3px 9px; font-size: 11px; background: transparent; border: 1px solid var(--line); color: var(--muted); border-radius: 20px; font-weight: 600; font-family: inherit; cursor: pointer; }
       .btn-mini:hover { border-color: var(--blue); color: var(--blue); }
       .correzioni { display: flex; gap: 4px; margin-top: 5px; flex-wrap: wrap; }
+      /* Pulsante di una funzione ancora da sviluppare: il posto è riservato e si
+         vede, ma è spento (metodo dei "posti riservati", come nel menù ⚙). */
+      .btn-off { background: #f2f4f7; color: #b6bcc6; border: 1px dashed #d8dde5; cursor: default; }
+      /* ── ZONE DI UNA SCHEDA ─────────────────────────────────────────────────
+         Regola: sopra i DATI, in fondo TUTTE le azioni e TUTTI i link, raccolti
+         in una zona sola e divisi per funzione (niente pulsanti in mezzo ai
+         dati, niente stessa cosa in due posti). .az-bar esce dai margini della
+         card (padding 22px) per fare fascia piena in fondo. */
+      .zona-tit { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; font-weight: 700; margin-bottom: 14px; }
+      .az-bar { background: #FAFBFC; border-top: 1px solid var(--line); border-radius: 0 0 14px 14px; margin: 22px -22px -22px; padding: 18px 22px 14px; }
+      .az-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 26px; }
+      .az-gruppo { border-left: 2px solid var(--line); padding-left: 14px; min-width: 0; }
+      .az-nome { font-size: 10px; color: var(--hint); text-transform: uppercase; letter-spacing: 0.1em; font-weight: 700; margin-bottom: 8px; }
+      .az-btns { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
+      .az-stato { font-size: 11px; color: var(--hint); margin-top: 7px; line-height: 1.6; }
+      .az-link { font-size: 12px; color: var(--muted); word-break: break-all; margin-bottom: 7px; }
+      .az-arrivo { font-size: 10px; color: var(--hint); font-style: italic; }
+      .az-fatto { color: var(--green); font-weight: 700; }
+      .az-danger { display: flex; justify-content: flex-end; align-items: center; gap: 12px; flex-wrap: wrap; border-top: 1px dashed var(--line); margin-top: 18px; padding-top: 12px; }
+      @media (max-width: 700px) { .az-grid { grid-template-columns: 1fr; } }
       input, select, textarea { width: 100%; padding: 9px 12px; border: 1.5px solid var(--line); border-radius: 9px; font-size: 13px; font-family: inherit; color: var(--ink); outline: none; transition: border-color 0.15s, box-shadow 0.15s; background: #fff; }
       input:focus, select:focus, textarea:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(26,82,128,0.12); }
       textarea { resize: vertical; min-height: 64px; }
@@ -1619,7 +1639,9 @@ function baseStyle() {
       .nh-payoff { font-size: 9.5px; letter-spacing: 0.17em; text-transform: uppercase; color: #5A5A5A; font-weight: 700; line-height: 1.35; border-left: 1px solid var(--line); padding-left: 12px; }
       .nh-spacer { flex: 1 1 auto; }
       .nh-search { position: relative; flex: 0 1 290px; }
-      .nh-search input { padding: 7px 13px; font-size: 12.5px; border-radius: 20px; background: #f7f9fb; }
+      /* il padding a destra tiene il testo lontano dall'etichetta "in arrivo",
+         che è dentro la casella: senza, i due si sovrapponevano */
+      .nh-search input { padding: 7px 74px 7px 13px; font-size: 12.5px; border-radius: 20px; background: #f7f9fb; }
       .nh-search input:disabled { color: #B9BFC7; cursor: not-allowed; }
       .nh-soon { position: absolute; right: 13px; top: 50%; transform: translateY(-50%); font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; color: #B9BFC7; font-weight: 700; pointer-events: none; }
       .nh-menu { position: relative; flex: 0 0 auto; }
@@ -1692,7 +1714,7 @@ function headerNoesys({ mondo = '', sub = '', briciole = [] } = {}) {
       <a class="nh-brand" href="/dashboard" aria-label="Noesys Professional Coaching">${logoCompact(44)}<span class="nh-payoff">Professional<br>Coaching</span></a>
       <span class="nh-spacer"></span>
       <div class="nh-search">
-        <input type="search" placeholder="Cerca cliente, committente, progetto…" disabled aria-label="Ricerca — in arrivo">
+        <input type="search" placeholder="Cerca cliente o progetto…" disabled aria-label="Ricerca — in arrivo">
         <span class="nh-soon">in arrivo</span>
       </div>
       <details class="nh-menu">
@@ -2229,6 +2251,72 @@ Germano`;
       ${client.prossima_azione_data ? ` — <span style="color:#7a5c00">${itDate(client.prossima_azione_data)}</span>` : ''}
     </div>` : '';
 
+  // ── Azioni e collegamenti (la zona in fondo alla scheda anagrafica) ──
+  // Una zona SOLA per tutti i link e tutti i pulsanti, divisi per funzione.
+  // Ogni cosa compare UNA volta, col suo stato accanto: prima la cartella Drive,
+  // il link d'accesso e le date delle mail stavano sia tra i dati sia sui
+  // pulsanti (Germano 27/07: "raggruppa tutti i link e i pulsanti, fai in modo
+  // che non ci siano duplicazioni"). Solo forma: le funzioni sono quelle di ieri.
+  const azioniHtml = `
+    <div class="az-bar">
+      <div class="zona-tit">Azioni e collegamenti</div>
+      <div class="az-grid">
+
+        <div class="az-gruppo">
+          <div class="az-nome">Aggiornamento dati</div>
+          <div class="az-btns">
+            <button onclick="openEdit()" class="btn btn-primary btn-sm">✎ Modifica dati</button>
+            <button class="btn btn-off btn-sm" disabled title="Funzione in arrivo: leggerà i dati dalla scheda anagrafica che il cliente ti rimanda compilata">⟳ Cerca la scheda su Drive</button>
+            <span class="az-arrivo">in arrivo</span>
+          </div>
+          <div class="az-stato">Scheda anagrafica del cliente: <strong style="color:var(--muted)">non ancora acquisita</strong>. Quando la salvi su Drive, l'Hub ne prenderà i dati.</div>
+        </div>
+
+        <div class="az-gruppo">
+          <div class="az-nome">Documenti al cliente</div>
+          <div class="az-btns">
+            <button onclick="openMail1()" class="btn btn-gold btn-sm">✉️ Rivedi e invia Mail 1</button>
+            <button onclick="openMail2()" class="btn btn-gold btn-sm">✉️ Rivedi e invia Mail 2</button>
+          </div>
+          <div class="az-stato">
+            ${mail1SentTxt ? `<span class="az-fatto">✓ Mail 1 inviata il ${mail1SentTxt}</span>` : 'Mail 1 non inviata'} — lettera · scheda anagrafica · Codice ICF<br>
+            ${mail2SentTxt ? `<span class="az-fatto">✓ Mail 2 inviata il ${mail2SentTxt}</span>` : 'Mail 2 non inviata'} — contratto · agenda
+          </div>
+        </div>
+
+        <div class="az-gruppo">
+          <div class="az-nome">Cartella su Drive</div>
+          ${client.drive_url ? `
+          <div class="az-link"><a href="${esc(client.drive_url)}" target="_blank">Apri la cartella su Drive ↗</a></div>
+          <div class="az-btns">
+            <button onclick="copyLink(this.dataset.url)" data-url="${attr(client.drive_url)}" class="btn btn-neutral btn-sm">📋 Copia il link</button>
+          </div>
+          <div class="az-stato">Qui vivono i report delle sessioni e la documentazione del cliente.</div>` : `
+          <div class="az-btns">
+            <button id="drive-folders-btn" onclick="createDriveFolders()" class="btn btn-neutral btn-sm">Crea cartelle su Drive</button>
+            <span id="drive-folders-msg" style="font-size:12px;color:#6B7280"></span>
+          </div>
+          <div class="az-stato">Non ancora creata. Serve per i report delle sessioni e per la documentazione.</div>`}
+        </div>
+
+        <div class="az-gruppo">
+          <div class="az-nome">Accesso agli strumenti</div>
+          <div class="az-link">${link}</div>
+          <div class="az-btns">
+            <button onclick="copyLink('${link}')" class="btn btn-neutral btn-sm">📋 Copia il link</button>
+            <button onclick="toggleAccess()" class="btn btn-neutral btn-sm">${client.active ? "Disattiva l'accesso" : "Riattiva l'accesso"}</button>
+          </div>
+          <div class="az-stato">${client.active ? 'Attivo — il cliente può aprire i suoi strumenti.' : 'Disattivato — il cliente non può aprire i suoi strumenti.'}</div>
+        </div>
+
+      </div>
+
+      <div class="az-danger">
+        <span class="az-stato" style="margin:0">Cancella la persona e tutto il suo storico.</span>
+        <button onclick="deleteClient()" class="btn btn-danger btn-sm">🗑 Elimina il cliente</button>
+      </div>
+    </div>`;
+
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — ${esc(client.name)}</title>${baseStyle()}</head><body>
   ${headerNoesys({ mondo: 'individuali', briciole: [
     { label: 'Percorsi Individuali', href: '/dashboard' },
@@ -2236,56 +2324,35 @@ Germano`;
   ] })}
   <div class="container" style="max-width:980px">
 
-    <!-- SCHEDA CLIENTE -->
+    <!-- SCHEDA ANAGRAFICA — due zone: sopra i dati, in fondo azioni e collegamenti -->
     <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap">
-        <div style="flex:1;min-width:260px">
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
-            <h1 style="margin:0">${esc(client.name)}</h1>
-            <span class="badge" style="background:${ac}18;color:${ac}">${area}</span>
-            <span class="badge ${st.cls}">${st.label}</span>
-            ${!client.active ? `<span class="badge badge-inactive" title="Accesso agli strumenti disattivato">🔒 Accesso off</span>` : ''}
-          </div>
-          <div style="margin-top:14px"><div class="field-label">Indirizzo</div><div class="field-value">${composeAddress(client) ? esc(composeAddress(client)) : '<span style="color:#ccc">—</span>'}</div></div>
-          <div style="margin-top:12px"><div class="field-label">Contatti</div>
-            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-top:4px">
-              <div><span style="font-size:11px;color:var(--hint)">Telefono</span><div class="field-value">${val(client.telefono)}</div></div>
-              <div><span style="font-size:11px;color:var(--hint)">Email</span><div class="field-value">${val(client.email)}</div></div>
-              <div><span style="font-size:11px;color:var(--hint)">Social</span><div class="field-value">${client.altro_recapito ? `${client.social_tipo ? `<strong>${esc(client.social_tipo)}</strong> · ` : ''}${esc(client.altro_recapito)}` : '<span style="color:#ccc">—</span>'}</div></div>
-            </div>
-          </div>
-          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-top:12px">
-            <div><div class="field-label">Data di nascita</div><div class="field-value">${client.data_nascita ? itDate(client.data_nascita) : '<span style="color:#ccc">—</span>'}</div></div>
-            <div><div class="field-label">Professione</div><div class="field-value">${val(client.professione)}</div></div>
-            <div><div class="field-label">Società</div><div class="field-value">${val(client.societa)}</div></div>
-            <div><div class="field-label">Come ci ha conosciuto</div><div class="field-value">${FONTE_LABEL[client.fonte]||val(client.fonte)}</div></div>
-            <div><div class="field-label">Consenso privacy</div><div class="field-value">${client.consenso_privacy ? `Sì${client.consenso_data ? ` (${itDate(client.consenso_data)})` : ''}` : '<span style="color:#ccc">No</span>'}</div></div>
-          </div>
-          ${client.note_preliminari ? `<div style="margin-top:10px"><div class="field-label">Note CRM</div><div style="font-size:13px;color:#6B7280">${esc(client.note_preliminari)}</div></div>` : ''}
-          ${client.drive_url
-            ? `<div style="margin-top:10px"><div class="field-label">Cartella Drive</div><a href="${esc(client.drive_url)}" target="_blank" style="font-size:13px;word-break:break-all">${esc(client.drive_url)}</a></div>`
-            : `<div style="margin-top:10px"><div class="field-label">Cartella Drive</div><button id="drive-folders-btn" onclick="createDriveFolders()" class="btn btn-neutral btn-sm">🔄 Crea cartelle Drive</button><span id="drive-folders-msg" style="font-size:12px;color:#6B7280;margin-left:8px"></span></div>`}
-          ${recallHtml}
-        </div>
-        <div style="text-align:right;min-width:210px">
-          <button onclick="openEdit()" class="btn btn-primary btn-sm" style="margin-bottom:10px">✎ Modifica dati</button>
-          <div style="margin-bottom:10px">
-            <button onclick="openMail1()" class="btn btn-gold btn-sm">✉️ Rivedi e invia Mail 1</button>
-            ${mail1SentTxt ? `<div style="font-size:11px;color:#4F8B73;margin-top:5px">✓ Mail 1 inviata il ${mail1SentTxt}</div>` : ''}
-            <div style="margin-top:8px">
-              <button onclick="openMail2()" class="btn btn-gold btn-sm">✉️ Rivedi e invia Mail 2</button>
-              ${mail2SentTxt ? `<div style="font-size:11px;color:#4F8B73;margin-top:5px">✓ Mail 2 inviata il ${mail2SentTxt}</div>` : ''}
-            </div>
-          </div>
-          <div class="field-label" style="margin-top:6px">Link accesso strumenti</div>
-          <code style="display:block;font-size:10px;background:#f5f5f5;padding:5px 8px;border-radius:5px;word-break:break-all;margin-bottom:8px">${link}</code>
-          <div style="display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap">
-            <button onclick="copyLink('${link}')" class="btn btn-neutral btn-sm">📋 Copia</button>
-            <button onclick="toggleAccess()" class="btn ${client.active?'btn-gold':'btn-primary'} btn-sm">${client.active?'Disattiva accesso':'Riattiva accesso'}</button>
-            <button onclick="deleteClient()" class="btn btn-danger btn-sm">🗑</button>
-          </div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px;flex-wrap:wrap">
+        <h1 style="margin:0">${esc(client.name)}</h1>
+        <span class="badge" style="background:${ac}18;color:${ac}">${area}</span>
+        <span class="badge ${st.cls}">${st.label}</span>
+        ${!client.active ? `<span class="badge badge-inactive" title="Accesso agli strumenti disattivato">🔒 Accesso off</span>` : ''}
+      </div>
+
+      <div class="zona-tit">Dati del Cliente</div>
+      <div><div class="field-label">Indirizzo</div><div class="field-value">${composeAddress(client) ? esc(composeAddress(client)) : '<span style="color:#ccc">—</span>'}</div></div>
+      <div style="margin-top:12px"><div class="field-label">Contatti</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-top:4px">
+          <div><span style="font-size:11px;color:var(--hint)">Telefono</span><div class="field-value">${val(client.telefono)}</div></div>
+          <div><span style="font-size:11px;color:var(--hint)">Email</span><div class="field-value">${val(client.email)}</div></div>
+          <div><span style="font-size:11px;color:var(--hint)">Social</span><div class="field-value">${client.altro_recapito ? `${client.social_tipo ? `<strong>${esc(client.social_tipo)}</strong> · ` : ''}${esc(client.altro_recapito)}` : '<span style="color:#ccc">—</span>'}</div></div>
         </div>
       </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-top:12px">
+        <div><div class="field-label">Data di nascita</div><div class="field-value">${client.data_nascita ? itDate(client.data_nascita) : '<span style="color:#ccc">—</span>'}</div></div>
+        <div><div class="field-label">Professione</div><div class="field-value">${val(client.professione)}</div></div>
+        <div><div class="field-label">Società</div><div class="field-value">${val(client.societa)}</div></div>
+        <div><div class="field-label">Come ci ha conosciuto</div><div class="field-value">${FONTE_LABEL[client.fonte]||val(client.fonte)}</div></div>
+        <div><div class="field-label">Consenso privacy</div><div class="field-value">${client.consenso_privacy ? `Sì${client.consenso_data ? ` (${itDate(client.consenso_data)})` : ''}` : '<span style="color:#ccc">No</span>'}</div></div>
+      </div>
+      ${client.note_preliminari ? `<div style="margin-top:12px"><div class="field-label">Note CRM</div><div style="font-size:13px;color:#6B7280">${esc(client.note_preliminari)}</div></div>` : ''}
+      ${recallHtml}
+
+      ${azioniHtml}
     </div>
 
     ${percorsiHtml}
