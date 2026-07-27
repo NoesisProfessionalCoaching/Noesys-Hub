@@ -2113,13 +2113,17 @@ Germano`;
             <tbody>${sedute.map(renderSedutaRow).join('')}</tbody>
           </table>
         </div>`;
+  // Ore nel titolo della Scheda: contano solo le sessioni CONFERMATE, come
+  // ovunque nell'Hub (le bozze non valgono per le ore ICF finché non le approvi).
+  const oreConfermate = sedute.reduce((s, x) =>
+    s + (x.stato === 'confermata' ? (Number(x.ore) || 0) : 0), 0);
   const seduteHtml = `
     <div class="card">
       <details class="sec" open>
         <summary style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;cursor:pointer">
-          <span style="display:flex;align-items:center;gap:8px"><span class="sec-caret">▸</span><h2 style="margin:0">Scheda Cliente <span style="font-weight:400;font-size:13px;color:#aaa">(${sedute.length} ${sedute.length === 1 ? 'sessione' : 'sessioni'})</span></h2></span>
+          <span style="display:flex;align-items:center;gap:8px"><span class="sec-caret">▸</span><h2 style="margin:0">Scheda Cliente <span style="font-weight:400;font-size:13px;color:#aaa">(${sedute.length} ${sedute.length === 1 ? 'sessione' : 'sessioni'}${oreConfermate > 0 ? ` · ${fmtOre(oreConfermate)} h` : ''})</span></h2></span>
           <span style="display:inline-flex;gap:8px;align-items:center">
-            ${client.drive_url ? `<button id="scan-btn" onclick="event.stopPropagation();scanDrive()" class="btn btn-neutral btn-sm" title="Legge i report Word nuovi dalla cartella Drive e ne aggiunge la riga in bozza">⟳ Cerca nuovi report</button>` : ''}
+            ${client.drive_url ? `<button id="scan-btn" onclick="event.stopPropagation();scanDrive()" class="btn btn-gold btn-sm" title="Legge i report Word nuovi dalla cartella Drive e ne aggiunge la riga in bozza">⟳ Cerca nuovi report</button>` : ''}
             ${percorsi.length ? `<button onclick="event.stopPropagation();openSeduta()" class="btn btn-primary btn-sm">+ Aggiungi sessione</button>` : ''}
           </span>
         </summary>
@@ -3180,13 +3184,14 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
     return `
     <div class="card" style="margin-bottom:18px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:10px;flex-wrap:wrap">
-        <div class="field-label" style="margin:0">Sessioni del percorso ${esc(percCond.tipo)} <span style="font-weight:400;font-size:12px;color:var(--muted)">(${(Number(percCond.n_sessioni_fatte)||0)} ${(Number(percCond.n_sessioni_fatte)||0)===1?'sessione confermata':'sessioni confermate'} · ${fmtOre(percCond.ore_fatte)} h · categoria ${esc(percCond.tipo)})</span></div>
+        <div class="field-label" style="margin:0">Scheda ${percCond.tipo === 'Group' ? 'del Gruppo' : 'del ' + esc(percCond.tipo)} <span style="font-weight:400;font-size:12px;color:var(--muted)">(${(Number(percCond.n_sessioni_fatte)||0)} ${(Number(percCond.n_sessioni_fatte)||0)===1?'sessione confermata':'sessioni confermate'} · ${fmtOre(percCond.ore_fatte)} h)</span></div>
         <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+          ${hasDrive ? `<button id="scan-coll-btn" onclick="scanCollettivo()" class="btn btn-gold btn-sm" title="Legge i report Word nuovi dalla cartella del percorso e ne crea la bozza">⟳ Cerca nuovi report</button>` : ''}
+          <button onclick="openSeduta()" class="btn btn-primary btn-sm">+ Aggiungi sessione</button>
+          <span style="display:inline-block;width:10px"></span>
           ${percCond.stato === 'attivo'
-            ? `<button onclick="chiudiPercorsoColl()" class="btn btn-neutral btn-sm" title="Concludi il percorso di gruppo">Chiudi percorso</button>`
+            ? `<button onclick="chiudiPercorsoColl()" class="btn btn-neutral btn-sm" title="Concludi il percorso di gruppo">Chiudi il percorso</button>`
             : `<span class="badge badge-inactive">Percorso concluso</span>`}
-          <button onclick="openSeduta()" class="btn btn-neutral btn-sm">+ Aggiungi a mano</button>
-          ${hasDrive ? `<button id="scan-coll-btn" onclick="scanCollettivo()" class="btn btn-neutral btn-sm" title="Legge i report Word nuovi dalla cartella del percorso e ne crea la bozza">⟳ Cerca nuovi report</button>` : ''}
         </div>
       </div>
       ${!hasDrive ? `<div style="font-size:12px;color:#b45309;margin-bottom:10px">Crea prima la cartella Drive del percorso (colonna "Cartella sessioni" qui sopra) per l'automazione dei report.</div>` : ''}
@@ -3309,7 +3314,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
         <div class="field-label" style="margin:0">Fasi del progetto</div>
         ${p.drive_url
-          ? `<button id="scan-fasi-btn" onclick="scanProgetto()" class="btn btn-neutral btn-sm" title="Legge i report nuovi dalle sottocartelle di fase su Drive e ne crea la riga in bozza">⟳ Cerca nuovi report</button>`
+          ? `<button id="scan-fasi-btn" onclick="scanProgetto()" class="btn btn-gold btn-sm" title="Legge i report nuovi dalle sottocartelle di fase su Drive e ne crea la riga in bozza">⟳ Cerca nuovi report</button>`
           : `<span style="font-size:12px;color:var(--muted)">crea la cartella Drive per l'automazione</span>`}
       </div>
       <div id="fasi-list">${fasiRows}</div>
@@ -3442,7 +3447,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
       <div id="amm-body" style="display:${ammQuoteSet ? 'block' : 'none'};margin-bottom:14px">
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
           <div style="background:#f4f7fa;border-radius:8px;padding:12px">
-            <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#9AA0AA">Totale progetto</div>
+            <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#9AA0AA">Valore del Progetto</div>
             <div id="amm-atteso" style="font-size:20px;font-weight:700;color:var(--ink)">€ ${eur(ammAtteso0)}</div>
           </div>
           <div style="background:#eafaf1;border-radius:8px;padding:12px">
