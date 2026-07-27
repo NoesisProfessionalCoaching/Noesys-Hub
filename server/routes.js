@@ -1554,6 +1554,11 @@ function baseStyle() {
       .btn-neutral  { background: #eef1f5; color: #4a5568; }
       .btn-neutral:hover { background: #e2e7ee; }
       .btn-sm { padding: 6px 13px; font-size: 12px; }
+      /* Correzione a mano di un numero già scritto (ore, sessioni): non è
+         un'azione sul record, quindi non ha l'aspetto di un pulsante pieno. */
+      .btn-mini { padding: 3px 9px; font-size: 11px; background: transparent; border: 1px solid var(--line); color: var(--muted); border-radius: 20px; font-weight: 600; font-family: inherit; cursor: pointer; }
+      .btn-mini:hover { border-color: var(--blue); color: var(--blue); }
+      .correzioni { display: flex; gap: 4px; margin-top: 5px; flex-wrap: wrap; }
       input, select, textarea { width: 100%; padding: 9px 12px; border: 1.5px solid var(--line); border-radius: 9px; font-size: 13px; font-family: inherit; color: var(--ink); outline: none; transition: border-color 0.15s, box-shadow 0.15s; background: #fff; }
       input:focus, select:focus, textarea:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(26,82,128,0.12); }
       textarea { resize: vertical; min-height: 64px; }
@@ -2070,26 +2075,28 @@ Germano`;
       </div>
       ${percorsi.length === 0 ? `<div class="empty">Nessun percorso registrato.</div>` : `
       <table>
-        <thead><tr><th>Tipo</th><th>Sessioni</th><th>Ore</th><th>Modalità</th><th>Prezzo</th><th>Periodo</th><th>Stato</th><th></th></tr></thead>
+        <thead><tr><th>Tipo</th><th>Lavoro svolto</th><th>Modalità</th><th>Prezzo</th><th>Periodo</th><th>Stato</th><th></th></tr></thead>
         <tbody>
           ${percorsi.map(p => { const condiviso = !p.client_id; return `<tr>
             <td><strong>${esc(p.tipo)}</strong>${condiviso ? ` <span class="badge" style="background:#eef1f5;color:#4a5568" title="Percorso di gruppo: gestito sulla pagina del progetto">condiviso</span>` : ''}${p.progetto_titolo ? `<br><a href="/dashboard/progetti/${p.progetto_id}" class="badge" style="background:#e8f4fd;color:#1A5280;text-decoration:none">📁 ${esc(p.progetto_titolo)}</a>` : ''}</td>
-            <td>
+            <td style="white-space:nowrap">
               <span style="font-size:13px;font-weight:700;color:var(--blue)">${p.n_sessioni_fatte}</span>
               <span style="font-size:11px;color:#aaa"> ${p.n_sessioni_fatte === 1 ? 'sessione' : 'sessioni'}</span>
-              ${(!condiviso && p.stato==='attivo') ? `
-              <button onclick="addSessione('${p.id}',1)" class="btn btn-neutral btn-sm" style="margin-left:6px" title="Aggiungi sessione">+1</button>
-              ${p.n_sessioni_fatte > 0 ? `<button onclick="addSessione('${p.id}',-1)" class="btn btn-neutral btn-sm" title="Rimuovi sessione">-1</button>` : ''}` : ''}
+              <span style="color:#dfe3e8"> · </span>
+              <span style="font-weight:700;color:var(--green)">${fmtOre(p.ore_fatte)}</span> <span style="font-size:11px;color:#aaa">h</span>
+              ${!condiviso ? `<div class="correzioni">
+                ${p.stato==='attivo' ? `<button onclick="addSessione('${p.id}',1)" class="btn-mini" title="Segna una sessione in più">+1 sessione</button>
+                ${p.n_sessioni_fatte > 0 ? `<button onclick="addSessione('${p.id}',-1)" class="btn-mini" title="Togli una sessione">−1</button>` : ''}` : ''}
+                <button onclick="editOre('${p.id}', ${Number(p.ore_fatte||0)})" class="btn-mini" title="Correggi le ore svolte">✎ ore</button>
+              </div>` : ''}
             </td>
-            <td style="white-space:nowrap"><span style="font-weight:700;color:var(--green)">${fmtOre(p.ore_fatte)}</span> <span style="font-size:11px;color:#aaa">h</span>
-              ${!condiviso ? `<button onclick="editOre('${p.id}', ${Number(p.ore_fatte||0)})" class="btn btn-neutral btn-sm" style="margin-left:4px" title="Correggi ore">✎</button>` : ''}</td>
             <td>${p.modalita==='Scambio servizi' ? `<span class="badge" style="background:#e8f4fd;color:#1A5280">Scambio servizi</span>` : p.modalita==='Pro bono' ? `<span class="badge badge-pausa">Pro bono</span>` : `<span style="font-size:12px;color:#4a5568">Standard</span>`}</td>
             <td>${p.prezzo ? `€ ${Number(p.prezzo).toLocaleString('it-IT',{minimumFractionDigits:2})}` : '<span style="color:#aaa">—</span>'}${p.promo ? `<br><span class="badge badge-pausa">Promo</span>${p.sconto_note ? ` <span style="font-size:11px;color:#aaa">${esc(p.sconto_note)}</span>` : ''}` : ''}</td>
             <td style="font-size:12px;color:#aaa">${p.data_inizio ? itDate(p.data_inizio) : '—'}${p.data_fine ? `<br>→ ${itDate(p.data_fine)}` : ''}</td>
             <td><span class="badge ${p.stato==='attivo'?'badge-active':'badge-inactive'}">${p.stato==='attivo'?'Attivo':'Concluso'}</span></td>
-            <td style="white-space:nowrap">${condiviso
+            <td style="white-space:nowrap;text-align:right">${condiviso
               ? `<a href="/dashboard/progetti/${p.progetto_id}" class="btn btn-neutral btn-sm">Gestisci nel progetto</a>`
-              : `${p.stato==='attivo' ? `<button onclick="chiudiPercorso('${p.id}')" class="btn btn-neutral btn-sm">Chiudi</button> ` : ''}<button onclick="delPercorso('${p.id}')" class="btn btn-danger btn-sm" title="Elimina percorso">🗑</button>`}</td>
+              : `${p.stato==='attivo' ? `<button onclick="chiudiPercorso('${p.id}')" class="btn btn-neutral btn-sm">Chiudi il percorso</button>` : ''}<span style="display:inline-block;width:14px"></span><button onclick="delPercorso('${p.id}')" class="btn btn-danger btn-sm" title="Elimina il percorso">🗑</button>`}</td>
           </tr>`; }).join('')}
         </tbody>
       </table>`}
@@ -3486,7 +3493,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
         <thead><tr>
           <th style="text-align:left;font-size:12px;color:var(--muted)">Tipo</th>
           <th style="text-align:left;font-size:12px;color:var(--muted)">Cliente/i</th>
-          <th style="text-align:left;font-size:12px;color:var(--muted)">Sessioni</th>
+          <th style="text-align:left;font-size:12px;color:var(--muted)">Lavoro svolto</th>
           <th style="text-align:left;font-size:12px;color:var(--muted)">Stato</th>
           <th style="text-align:left;font-size:12px;color:var(--muted)">Cartella sessioni</th>
         </tr></thead>
@@ -3502,12 +3509,14 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
           const drive = !condiviso
             ? `<span style="color:#aaa">—</span>`
             : (pc.drive_url
-                ? `<a href="${esc(pc.drive_url)}" target="_blank" style="font-size:12px;color:#1A5280">apri ↗</a>`
-                : `<button onclick="creaCartelleSessioni('${pc.id}', this)" class="btn btn-neutral btn-sm">🔄 Crea cartelle</button>`);
+                ? `<a href="${esc(pc.drive_url)}" target="_blank" style="font-size:12px;color:#1A5280">Apri su Drive ↗</a>`
+                : `<button onclick="creaCartelleSessioni('${pc.id}', this)" class="btn btn-neutral btn-sm">Crea cartelle su Drive</button>`);
           return `<tr>
             <td><strong>${esc(pc.tipo)}</strong>${condiviso ? ` <span class="badge" style="background:#eef1f5;color:#4a5568">condiviso</span>` : ''}</td>
             <td style="font-size:13px">${chi}</td>
-            <td style="font-size:12px;white-space:nowrap">${sess} ${sess === 1 ? 'sessione' : 'sessioni'}${ore > 0 ? ` · ${fmtOre(ore)} h` : ''}</td>
+            <td style="font-size:12px;white-space:nowrap">
+              <span style="font-size:13px;font-weight:700;color:var(--blue)">${sess}</span> <span style="font-size:11px;color:#aaa">${sess === 1 ? 'sessione' : 'sessioni'}</span>${ore > 0 ? `<span style="color:#dfe3e8"> · </span><span style="font-weight:700;color:var(--green)">${fmtOre(ore)}</span> <span style="font-size:11px;color:#aaa">h</span>` : ''}
+            </td>
             <td><span class="badge ${pc.stato === 'attivo' ? 'badge-active' : 'badge-inactive'}">${pc.stato === 'attivo' ? 'Attivo' : 'Concluso'}</span></td>
             <td style="white-space:nowrap">${drive}</td>
           </tr>`;
