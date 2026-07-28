@@ -1799,16 +1799,11 @@ function baseStyle() {
   `;
 }
 
-function appBar({ home = '#', right = '' } = {}) {
-  return `<header class="appbar"><div class="appbar-inner">
-    <a class="appbar-brand" href="${home}" aria-label="Noesys">${logoCompact(52)}</a>
-    <div class="appbar-actions">${right}</div>
-  </div><div class="appbar-accent"></div></header>`;
-}
-
-// Header brandizzato Noesys (Fase 1 del riordino, 26/07).
-// Convive con appBar(): le pagine ci passano UNA PER VOLTA, appBar resta finché
-// l'ultima non è migrata. Tre fasce: identità · i tre mondi · dove sei.
+// Header brandizzato Noesys (Fase 1 del riordino, 26/07 — dal 28/07 è l'UNICO:
+// tutte le pagine dell'Hub sono migrate e la vecchia appBar() è stata rimossa.
+// Le regole CSS .appbar-* in baseStyle() ora non servono a nessuno: si tolgono
+// nella passata di pulizia, insieme agli altri residui.)
+// Tre fasce: identità · i tre mondi · dove sei.
 //   mondo    → 'individuali' | 'progetti' | 'lead' | '' (funzione trasversale)
 //   sub      → sotto-voce attiva del mondo (i Committenti vivono dentro Progetti)
 //   briciole → [{label, href}] dalla radice alla pagina; l'ultima non è un link
@@ -2146,7 +2141,7 @@ function driveDiagPage(steps, root, children, req) {
     : '<div class="empty" style="padding:18px">Nessun elemento in cima alla cartella.</div>';
 
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Verifica Drive</title>${baseStyle()}</head><body>
-  ${appBar({ home: '/dashboard', right: `<a href="/dashboard/individuali" class="btn btn-neutral btn-sm">← Clienti</a>` })}
+  ${headerNoesys({ briciole: [{ label: 'Verifica Google Drive' }] })}
   <div class="container" style="max-width:640px">
     <h1>Verifica collegamento a Google Drive</h1>
     <p style="color:var(--muted);font-size:13px;margin-bottom:18px">Controllo di sola lettura: l'Hub prova a leggere il tuo Drive con le chiavi impostate su Railway. Non tocca né il database né le schede.</p>
@@ -3734,8 +3729,11 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
     </tr>`;
 
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — ${esc(p.titolo)}</title>${baseStyle()}</head><body>
-  ${appBar({ home:'/dashboard', right:`<a href="/dashboard/progetti" class="btn btn-neutral btn-sm">← Progetti</a><a href="/dashboard/committenti" class="btn btn-neutral btn-sm">Committenti</a><a href="/logout" class="btn btn-neutral btn-sm">Esci</a>` })}
-  <div class="container" style="max-width:820px">
+  ${headerNoesys({ mondo: 'progetti', sub: 'progetti', briciole: [
+    { label: 'Progetti Strutturati', href: '/dashboard/progetti' },
+    { label: p.titolo },
+  ] })}
+  <div class="container" style="max-width:980px">
     <div style="margin-bottom:18px">
       <h1>${esc(p.titolo)}</h1>
       <p style="color:#aaa;font-size:13px">Committente: <strong style="color:var(--ink)">${esc(p.committente_nome)}</strong>${p.committente_email ? ` · ${esc(p.committente_email)}` : ''}</p>
