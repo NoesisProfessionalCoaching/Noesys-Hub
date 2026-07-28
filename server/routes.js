@@ -490,9 +490,15 @@ router.post('/dashboard/clients/:id/percorsi/:pid/sessione', requireCoach, expre
   }
 });
 
-router.post('/dashboard/clients/:id/percorsi/:pid/chiudi', requireCoach, async (req, res) => {
+// Chiude il percorso. `data_fine` nel corpo è FACOLTATIVA: la manda la proposta che
+// nasce dall'approvazione di una Final (data della sessione). Senza, vale la data di
+// oggi, come prima — chi chiama senza corpo si comporta esattamente come sempre.
+router.post('/dashboard/clients/:id/percorsi/:pid/chiudi', requireCoach, express.json(), async (req, res) => {
   try {
-    await db.query("UPDATE percorsi SET stato='concluso', data_fine=COALESCE(data_fine, CURRENT_DATE) WHERE id=$1", [req.params.pid]);
+    const d = req.body && /^\d{4}-\d{2}-\d{2}$/.test(String(req.body.data_fine || '')) ? req.body.data_fine : null;
+    await db.query(
+      "UPDATE percorsi SET stato='concluso', data_fine=COALESCE($2::date, data_fine, CURRENT_DATE) WHERE id=$1",
+      [req.params.pid, d]);
     res.json({ ok: true });
   } catch (err) {
     console.error(err);
@@ -613,9 +619,27 @@ router.post('/dashboard/clients/:id/percorsi/:pid/sedute/:sid/approva', requireC
     await db.query("UPDATE sedute SET stato='confermata' WHERE id=$1 AND percorso_id=$2",
       [req.params.sid, req.params.pid]);
     await recomputePercorso(req.params.pid);
-    res.json({ ok: true });
+    res.json({ ok: true, ...await proponiChiusura(req.params.sid, req.params.pid) });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Errore' }); }
 });
+
+// Se la sessione appena approvata è una FINAL e il percorso risulta ancora attivo,
+// dice alla pagina di PROPORRE la chiusura, con la data della Final (non quella di
+// oggi: il percorso è finito il giorno dell'ultima sessione). Proposta, non
+// automatismo: stato della relazione e stato del percorso restano cose distinte,
+// è il coach a decidere. Se qualcosa non torna non propone nulla e tace.
+async function proponiChiusura(sid, pid) {
+  try {
+    const r = await db.query(
+      `SELECT s.tipo, s.data, p.stato
+         FROM sedute s JOIN percorsi p ON p.id = s.percorso_id
+        WHERE s.id = $1 AND s.percorso_id = $2`, [sid, pid]);
+    const x = r.rows[0];
+    if (!x || x.tipo !== 'Final' || x.stato !== 'attivo' || !x.data) return {};
+    const iso = new Date(x.data).toISOString().slice(0, 10);
+    return { proponiChiusura: true, dataFine: iso, dataFineIt: itDate(x.data) };
+  } catch (err) { console.error('[proponiChiusura]', err); return {}; }
+}
 
 // Lancio MANUALE dell'automazione report→scheda (oltre al controllo automatico ogni
 // 8h). Coach-only: legge i report nuovi da Drive e crea le bozze. client_id opzionale.
@@ -693,16 +717,19 @@ router.post('/dashboard/progetti/:id/percorsi/:pid/sedute/:sid/approva', require
     await db.query("UPDATE sedute SET stato='confermata' WHERE id=$1 AND percorso_id=$2",
       [req.params.sid, req.params.pid]);
     await recomputePercorso(req.params.pid);
-    res.json({ ok: true });
+    // Stessa proposta di chiusura della Scheda Cliente: la sezione si comporta
+    // allo stesso modo nelle due pagine in cui vive.
+    res.json({ ok: true, ...await proponiChiusura(req.params.sid, req.params.pid) });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Errore' }); }
 });
 
 // Chiudi/concludi il percorso CONDIVISO (team/group). Come l'individuale: una via, stato→concluso.
-router.post('/dashboard/progetti/:id/percorsi/:pid/chiudi', requireCoach, async (req, res) => {
+router.post('/dashboard/progetti/:id/percorsi/:pid/chiudi', requireCoach, express.json(), async (req, res) => {
   try {
+    const d = req.body && /^\d{4}-\d{2}-\d{2}$/.test(String(req.body.data_fine || '')) ? req.body.data_fine : null;
     await db.query(
-      "UPDATE percorsi SET stato='concluso', data_fine=COALESCE(data_fine, CURRENT_DATE) WHERE id=$1 AND progetto_id=$2 AND client_id IS NULL",
-      [req.params.pid, req.params.id]);
+      "UPDATE percorsi SET stato='concluso', data_fine=COALESCE($3::date, data_fine, CURRENT_DATE) WHERE id=$1 AND progetto_id=$2 AND client_id IS NULL",
+      [req.params.pid, req.params.id, d]);
     res.json({ ok: true });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Errore' }); }
 });
@@ -1788,8 +1815,11 @@ function dashboardPage(clients, req) {
         : '<span style="color:#ccc">—</span>';
       const sess = Number(c.p_sess) || 0;
       const ore  = Number(c.p_ore) || 0;
+      // Relazione conclusa ma percorso ancora aperto: si vede già dall'elenco,
+      // senza dover entrare in ogni scheda per accorgersene.
+      const daChiudere = c.stato_cliente === 'concluso' && c.p_stato === 'attivo';
       const percorso = c.p_tipo
-        ? `${esc(c.p_tipo)} · ${sess} ${sess === 1 ? 'sessione' : 'sessioni'}${ore > 0 ? ` · ${fmtOre(ore)} h` : ''}${c.p_stato !== 'attivo' ? ` · <span style="color:#999">concluso</span>` : ''}${c.p_progetto_titolo ? `<br><span class="badge" style="background:#e8f4fd;color:#1A5280">📁 ${esc(c.p_progetto_titolo)}</span>` : ''}`
+        ? `${esc(c.p_tipo)} · ${sess} ${sess === 1 ? 'sessione' : 'sessioni'}${ore > 0 ? ` · ${fmtOre(ore)} h` : ''}${c.p_stato !== 'attivo' ? ` · <span style="color:#999">concluso</span>` : ''}${daChiudere ? `<br><span class="badge" style="background:#fff8dc;color:#7a5c00" title="La relazione è conclusa ma il percorso risulta ancora attivo">⚠ percorso da chiudere</span>` : ''}${c.p_progetto_titolo ? `<br><span class="badge" style="background:#e8f4fd;color:#1A5280">📁 ${esc(c.p_progetto_titolo)}</span>` : ''}`
         : '<span style="color:#ccc">—</span>';
       return `<tr onclick="location.href='/dashboard/clients/${c.id}'" style="cursor:pointer">
         <td><strong>${esc(c.name)}</strong>${c.email ? `<br><span style="color:#aaa;font-size:11px">${esc(c.email)}</span>` : ''}</td>
@@ -2093,17 +2123,35 @@ Germano`;
     ? itDate(new Date(client.mail2_inviata_data).toISOString()) : '';
 
   // ── Percorsi ────────────────────────────────────────
+  // Stato della RELAZIONE (sul cliente) e stato del PERCORSO sono due cose diverse
+  // e restano separate: una persona può finire un percorso e restare cliente. Ma
+  // quando si contraddicono bisogna dirlo, altrimenti divergono in silenzio per
+  // mesi (casi reali: Francesco Pilo e Rebecca Ros, conclusi con percorsi aperti).
+  const attiviOra = percorsi.filter(p => p.stato === 'attivo');
+  const avvisoStati = (client.stato_cliente === 'concluso' && attiviOra.length) ? `
+      <div style="font-size:13px;background:#fff8ec;padding:10px 14px;border-radius:8px;border-left:3px solid var(--gold);margin-bottom:14px">
+        La relazione con il cliente è <strong>conclusa</strong>, ma ${attiviOra.length === 1 ? 'un percorso risulta' : attiviOra.length + ' percorsi risultano'} ancora <strong>${attiviOra.length === 1 ? 'attivo' : 'attivi'}</strong>. Se ${attiviOra.length === 1 ? 'è finito' : 'sono finiti'}, ${attiviOra.length === 1 ? 'chiudilo' : 'chiudili'} qui sotto; se ${attiviOra.length === 1 ? 'prosegue' : 'proseguono'}, va bene così.
+      </div>` : '';
   const percorsiHtml = `
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
         <h2 style="margin:0">Percorsi</h2>
         <button onclick="openPercorso()" class="btn btn-primary btn-sm">+ Nuovo percorso</button>
       </div>
+      ${avvisoStati}
       ${percorsi.length === 0 ? `<div class="empty">Nessun percorso registrato.</div>` : `
       <table>
         <thead><tr><th>Tipo</th><th>Lavoro svolto</th><th>Modalità</th><th>Prezzo</th><th>Periodo</th><th>Stato</th><th></th></tr></thead>
         <tbody>
-          ${percorsi.map(p => { const condiviso = !p.client_id; return `<tr>
+          ${percorsi.map(p => { const condiviso = !p.client_id;
+            // Un percorso finisce il giorno della sua ULTIMA SESSIONE CONFERMATA,
+            // non il giorno in cui ti ricordi di chiuderlo: la data si propone da lì.
+            const ultima = sedute
+              .filter(s => s.percorso_id === p.id && s.stato === 'confermata' && s.data)
+              .map(s => new Date(s.data)).sort((a, b) => b - a)[0];
+            const fineIso = ultima ? ultima.toISOString().slice(0, 10) : '';
+            const fineIt  = ultima ? itDate(ultima.toISOString()) : '';
+            return `<tr>
             <td><strong>${esc(p.tipo)}</strong>${condiviso ? ` <span class="badge" style="background:#eef1f5;color:#4a5568" title="Percorso di gruppo: gestito sulla pagina del progetto">condiviso</span>` : ''}${p.progetto_titolo ? `<br><a href="/dashboard/progetti/${p.progetto_id}" class="badge" style="background:#e8f4fd;color:#1A5280;text-decoration:none">📁 ${esc(p.progetto_titolo)}</a>` : ''}</td>
             <td style="white-space:nowrap">
               <span style="font-size:13px;font-weight:700;color:var(--blue)">${p.n_sessioni_fatte}</span>
@@ -2118,7 +2166,7 @@ Germano`;
             <td><span class="badge ${p.stato==='attivo'?'badge-active':'badge-inactive'}">${p.stato==='attivo'?'Attivo':'Concluso'}</span></td>
             <td style="white-space:nowrap;text-align:right">${condiviso
               ? `<a href="/dashboard/progetti/${p.progetto_id}" class="btn btn-neutral btn-sm">Gestisci nel progetto</a>`
-              : `${p.stato==='attivo' ? `<button onclick="chiudiPercorso('${p.id}')" class="btn btn-neutral btn-sm">Chiudi il percorso</button>` : ''}<span style="display:inline-block;width:14px"></span><button onclick="delPercorso('${p.id}')" class="btn btn-danger btn-sm" title="Elimina il percorso">🗑</button>`}</td>
+              : `${p.stato==='attivo' ? `<button onclick="chiudiPercorso('${p.id}','${fineIso}','${fineIt}')" class="btn btn-neutral btn-sm">Chiudi il percorso</button>` : ''}<span style="display:inline-block;width:14px"></span><button onclick="delPercorso('${p.id}')" class="btn btn-danger btn-sm" title="Elimina il percorso">🗑</button>`}</td>
           </tr>`; }).join('')}
         </tbody>
       </table>`}
@@ -2615,7 +2663,15 @@ Germano`;
     }
     async function approvaSeduta(sid, pid) {
       if (!confirm('Approvare questa scheda? Da bozza diventa una sessione confermata e le ore entrano nel conteggio ICF.')) return;
-      await fetch('/dashboard/clients/' + CID + '/percorsi/' + pid + '/sedute/' + sid + '/approva', { method: 'POST' }); location.reload();
+      const r = await fetch('/dashboard/clients/' + CID + '/percorsi/' + pid + '/sedute/' + sid + '/approva', { method: 'POST' });
+      let d = {}; try { d = await r.json(); } catch (e) {}
+      // Era la Final e il percorso risulta ancora aperto: lo faccio notare qui,
+      // che è il momento in cui te ne accorgi. Se dici di no non succede nulla.
+      if (d.proponiChiusura && confirm('Questa era la sessione Final. Chiudo anche il percorso, con data ' + d.dataFineIt + '?')) {
+        await fetch('/dashboard/clients/' + CID + '/percorsi/' + pid + '/chiudi',
+          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data_fine: d.dataFine }) });
+      }
+      location.reload();
     }
     async function scanDrive() {
       const btn = document.getElementById('scan-btn');
@@ -2745,9 +2801,14 @@ Germano`;
       await fetch('/dashboard/clients/'+CID+'/percorsi/'+pid+'/sessione',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({delta})});
       location.reload();
     }
-    async function chiudiPercorso(pid) {
-      if(!confirm('Chiudere questo percorso?')) return;
-      await fetch('/dashboard/clients/'+CID+'/percorsi/'+pid+'/chiudi',{method:'POST'}); location.reload();
+    async function chiudiPercorso(pid, fineIso, fineIt) {
+      const msg = fineIso
+        ? ("Chiudere questo percorso? La data di fine sarà " + fineIt + ", il giorno dell'ultima sessione.")
+        : 'Chiudere questo percorso? Non ci sono sessioni registrate, quindi la data di fine sarà oggi.';
+      if(!confirm(msg)) return;
+      await fetch('/dashboard/clients/'+CID+'/percorsi/'+pid+'/chiudi',
+        {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({data_fine: fineIso || null})});
+      location.reload();
     }
     async function editOre(pid, cur) {
       const v = prompt('Ore svolte del percorso (es. 14 oppure 1,5):', cur);
@@ -3252,6 +3313,13 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
   // Fetta B (Mattone 2) — il percorso CONDIVISO (team/group) e le sue sessioni collettive.
   seduteColl = seduteColl || [];
   const percCond = (percorsi || []).find(x => !x.client_id) || null;
+  // Come nella Scheda Cliente: il percorso finisce il giorno dell'ultima sessione
+  // confermata, e quella data si propone alla chiusura.
+  const ultimaColl = seduteColl
+    .filter(s => s.stato === 'confermata' && s.data)
+    .map(s => new Date(s.data)).sort((a, b) => b - a)[0];
+  const collFineIso = ultimaColl ? ultimaColl.toISOString().slice(0, 10) : '';
+  const collFineIt  = ultimaColl ? itDate(ultimaColl.toISOString()) : '';
   const collCard = !percCond ? '' : (() => {
     const hasDrive = !!(percCond.drive_url && percCond.drive_url.trim());
     const body = seduteColl.length === 0
@@ -3683,6 +3751,8 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
     const PID = ${JSON.stringify(p.id)};
     // Fetta B (Mattone 2) — sessioni collettive del percorso condiviso.
     const COLL_PID = ${JSON.stringify(percCond ? percCond.id : '')};
+    const COLL_FINE_ISO = ${JSON.stringify(collFineIso)};   // data dell'ultima sessione confermata
+    const COLL_FINE_IT  = ${JSON.stringify(collFineIt)};
     const SEDUTE = ${JSON.stringify(Object.fromEntries(seduteColl.map(s => [s.id, { id: s.id, percorso_id: s.percorso_id, tipo: s.tipo, data: s.data, ore: Number(s.ore), obiettivo: s.obiettivo || '', argomenti: s.argomenti || '', attivita: s.attivita || '', scadenza: s.scadenza || '', eseguita: s.eseguita || '', note: s.note || '' }]))).replace(/</g, '\\u003c')};
     const ORE_TIPO_COLL = { Intake: 2, Ongoing: 1, Final: null };
     function oreAuto() {
@@ -3731,11 +3801,22 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
     }
     async function approvaSeduta(sid, pid) {
       if (!confirm('Approvare questa scheda? Da bozza diventa una sessione confermata e le ore entrano nel conteggio (categoria Team/Group).')) return;
-      await fetch('/dashboard/progetti/' + PID + '/percorsi/' + pid + '/sedute/' + sid + '/approva', { method: 'POST' }); ricaricaConservando();
+      const r = await fetch('/dashboard/progetti/' + PID + '/percorsi/' + pid + '/sedute/' + sid + '/approva', { method: 'POST' });
+      let d = {}; try { d = await r.json(); } catch (e) {}
+      if (d.proponiChiusura && confirm('Questa era la sessione Final. Chiudo anche il percorso, con data ' + d.dataFineIt + '?')) {
+        await fetch('/dashboard/progetti/' + PID + '/percorsi/' + pid + '/chiudi',
+          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data_fine: d.dataFine }) });
+      }
+      ricaricaConservando();
     }
     async function chiudiPercorsoColl() {
-      if (!confirm('Concludere il percorso di gruppo? Lo stato passa a "concluso".')) return;
-      await fetch('/dashboard/progetti/' + PID + '/percorsi/' + COLL_PID + '/chiudi', { method: 'POST' }); ricaricaConservando();
+      const msg = COLL_FINE_ISO
+        ? ("Concludere il percorso di gruppo? La data di fine sarà " + COLL_FINE_IT + ", il giorno dell'ultima sessione.")
+        : 'Concludere il percorso di gruppo? Non ci sono sessioni registrate, quindi la data di fine sarà oggi.';
+      if (!confirm(msg)) return;
+      await fetch('/dashboard/progetti/' + PID + '/percorsi/' + COLL_PID + '/chiudi',
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data_fine: COLL_FINE_ISO || null }) });
+      ricaricaConservando();
     }
     async function scanCollettivo() {
       const btn = document.getElementById('scan-coll-btn');
