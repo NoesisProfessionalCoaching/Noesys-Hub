@@ -2221,7 +2221,22 @@ Germano`;
     </div>`;
 
   // ── Strumenti utilizzati — sezione a fisarmonica ─────
-  const TOOL_LABEL = {valori:'💎 Valori',abilita:'⭐ Abilità',lineavita:'📈 Linea della Vita',genogramma:'🔗 Genogramma',ruotavita:'🎯 Ruota della Vita',brainstorming:'💡 Brainstorming','logica-cartesiana':'🧭 Logica Cartesiana'};
+  // Nomi e icone IDENTICI a quelli che il cliente vede in Coaching-Tools: uno
+  // strumento si chiama allo stesso modo nelle due app. Mancavano i quattro più
+  // recenti (le due ruote, SWOT, Covey/Eisenhower): comparivano col nome tecnico.
+  const TOOL_LABEL = {
+    valori:'💎 Scheda Valori',
+    abilita:'⭐ Scheda Abilità',
+    lineavita:'📈 Linea della Vita',
+    genogramma:'🔗 Genogramma Relazionale',
+    ruotavita:'🎯 Ruota della Vita',
+    'ruota-leadership':'👑 Ruota della Leadership',
+    'ruota-management':'📊 Ruota del Management',
+    brainstorming:'💡 Brainstorming',
+    'logica-cartesiana':'🧭 Logica Cartesiana',
+    swot:'⚖️ SWOT Analysis',
+    'covey-eisenhower':'⏳ Matrice Covey/Eisenhower',
+  };
   const strumentiItems = sessions.length === 0
     ? `<div class="empty">Nessuno strumento compilato dal cliente.</div>`
     : sessions.map(s => `
@@ -3270,10 +3285,13 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
   // di visualizzazione anche se aggiunte in un ordine diverso.
   const FASI_CFG = [
     { tipo:'pre-intake',       label:'Pre-Intake',           opt:false },
-    { tipo:'intake-sponsor',   label:'Intake con Sponsor',   opt:false },
-    { tipo:'kick-off',         label:'Kick-Off',             opt:false },
-    { tipo:'chiusura-open',    label:'Chiusura Open',        opt:true  },
-    { tipo:'chiusura-sponsor', label:'Chiusura con Sponsor', opt:false },
+    // Etichette a schermo con la terminologia bloccata: si dice COMMITTENTE, non
+    // "Sponsor". I `tipo` nel database restano quelli di prima (intake-sponsor,
+    // chiusura-sponsor): cambia solo la parola che si legge.
+    { tipo:'intake-sponsor',   label:'Intake con il Committente',   opt:false },
+    { tipo:'kick-off',         label:'Kick-Off',                    opt:false },
+    { tipo:'chiusura-open',    label:'Chiusura Open',               opt:true  },
+    { tipo:'chiusura-sponsor', label:'Chiusura con il Committente', opt:false },
   ];
   const FASE_LABELS = {}, FASE_ORDER = {};
   FASI_CFG.forEach((c, i) => { FASE_LABELS[c.tipo] = c.label; FASE_ORDER[c.tipo] = i; });
@@ -3301,7 +3319,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
     ],
     'kick-off': [
       { key:'partecipanti', label:"Partecipanti all'incontro" },
-      { key:'argomenti', label:'Argomenti presentati (Sponsor/Coach)' },
+      { key:'argomenti', label:'Argomenti presentati (Committente/Coach)' },
       { key:'interventi', label:'Interventi importanti dei partecipanti' },
       { key:'next_steps', label:'Next steps' },
       { key:'note', label:'Note' },
@@ -3315,7 +3333,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
     'chiusura-sponsor': [
       { key:'partecipanti', label:"Partecipanti all'incontro" },
       { key:'argomenti', label:'Argomenti trattati' },
-      { key:'feedback_sponsor', label:'Feedback Sponsor' },
+      { key:'feedback_sponsor', label:'Feedback del Committente' },
       { key:'note', label:'Note' },
     ],
   };
@@ -3352,11 +3370,12 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
         <span class="fase-label" style="min-width:150px;font-weight:600;font-size:13px;color:var(--ink)">${esc(label)}</span>
         ${isBozza ? `<span style="background:#fef3c7;color:#92400e;font-size:11px;padding:2px 7px;border-radius:6px">bozza</span>` : ''}
         <input type="date" class="f-data" value="${esc(data)}" style="width:150px">
-        <label style="font-size:12px;color:#4a5568;display:flex;align-items:center;gap:4px"><input type="checkbox" class="f-fatta" ${fatta ? 'checked' : ''}> fatta</label>
+        <label style="font-size:12px;color:#4a5568;display:flex;align-items:center;gap:5px;flex:0 0 auto;white-space:nowrap;text-transform:none;letter-spacing:0;font-weight:500;margin:0"><input type="checkbox" class="f-fatta" style="width:auto;margin:0" ${fatta ? 'checked' : ''}> fatta</label>
         <button type="button" onclick="toggleDettaglio(this)" class="btn btn-neutral btn-sm">Dettaglio ▾</button>
-        ${isBozza ? `<button type="button" onclick="approvaFase(this)" class="btn btn-primary btn-sm">Approva</button>` : ''}
+        ${isBozza ? `<button type="button" onclick="approvaFase(this)" class="btn btn-sm" style="background:#e7f1ec;color:#2e6b52" title="Approva la fase in bozza">✓ Approva</button>` : ''}
         <button type="button" onclick="salvaFase(this)" class="btn btn-neutral btn-sm">Salva</button>
-        <button type="button" onclick="delFase(this)" class="btn btn-danger btn-sm" title="Rimuovi">🗑</button>
+        <span style="display:inline-block;width:14px"></span>
+        <button type="button" onclick="delFase(this)" class="btn btn-danger btn-sm" title="Elimina la fase">🗑</button>
       </div>
       <div class="fase-dettaglio" style="display:none;margin-top:10px;padding:10px;background:#f9fafb;border-radius:8px">
         ${faseDetail(tipo, contenuto, isPrimoPre)}
@@ -3385,7 +3404,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
       <div id="fasi-list">${fasiRows}</div>
       <div id="fasi-empty" style="display:${fasiSorted.length ? 'none' : 'block'};font-size:13px;color:var(--muted);padding:6px 0">Nessuna fase ancora. Aggiungila con il pulsante qui sotto.</div>
       <div style="position:relative;margin-top:12px">
-        <button type="button" onclick="toggleFaseMenu()" class="btn btn-neutral btn-sm">+ Aggiungi fase ▾</button>
+        <button type="button" onclick="toggleFaseMenu()" class="btn btn-primary btn-sm">+ Aggiungi fase ▾</button>
         <div id="fase-menu" style="display:none;position:absolute;left:0;top:100%;margin-top:4px;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.12);min-width:220px;z-index:50;overflow:hidden">
           ${fasiMenuItems}
         </div>
@@ -4139,7 +4158,9 @@ function renderSessionData(tool, jsonStr) {
       return `${d.decisione ? `<div style="margin-bottom:10px"><span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#9AA0AA">Decisione</span><br><span style="font-size:14px;font-weight:700;color:#223B6E">${esc(d.decisione)}</span></div>` : ''}${blocks}`;
     }
     default:
-      return '<span style="color:#aaa;font-size:12px">Anteprima non disponibile</span>';
+      // Le quattro anteprime mancanti (ruote leadership/management, SWOT,
+      // Covey/Eisenhower) sono una fetta a sé: qui si dichiara, non si finge.
+      return '<span style="color:#aaa;font-size:12px">Anteprima in arrivo per questo strumento. Intanto la scheda si legge dagli strumenti del cliente.</span>';
   }
 }
 
