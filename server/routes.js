@@ -552,19 +552,6 @@ router.get('/dashboard/diag/modelli', requireCoach, async (req, res) => {
   } catch (err) { console.error('[diag/modelli]', err); res.status(500).json({ error: err.message }); }
 });
 
-router.post('/dashboard/clients/:id/percorsi/:pid/sessione', requireCoach, express.json(), async (req, res) => {
-  try {
-    await db.query(
-      'UPDATE percorsi SET n_sessioni_fatte = GREATEST(0, n_sessioni_fatte + $1) WHERE id=$2',
-      [req.body.delta || 1, req.params.pid]
-    );
-    res.json({ ok: true });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Errore' });
-  }
-});
-
 // Chiude il percorso. `data_fine` nel corpo è FACOLTATIVA: la manda la proposta che
 // nasce dall'approvazione di una Final (data della sessione). Senza, vale la data di
 // oggi, come prima — chi chiama senza corpo si comporta esattamente come sempre.
@@ -584,19 +571,6 @@ router.post('/dashboard/clients/:id/percorsi/:pid/chiudi', requireCoach, express
 router.delete('/dashboard/clients/:id/percorsi/:pid', requireCoach, async (req, res) => {
   try {
     await db.query('DELETE FROM percorsi WHERE id=$1 AND client_id=$2', [req.params.pid, req.params.id]);
-    res.json({ ok: true });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Errore' });
-  }
-});
-
-router.post('/dashboard/clients/:id/percorsi/:pid/ore', requireCoach, express.json(), async (req, res) => {
-  const ore = parseFloat(req.body.ore_fatte);
-  if (isNaN(ore) || ore < 0) return res.status(400).json({ error: 'Ore non valide' });
-  try {
-    await db.query('UPDATE percorsi SET ore_fatte=$1 WHERE id=$2 AND client_id=$3',
-      [ore, req.params.pid, req.params.id]);
     res.json({ ok: true });
   } catch (err) {
     console.error(err);
@@ -1704,9 +1678,6 @@ function baseStyle() {
       .btn-sm { padding: 6px 13px; font-size: 12px; }
       /* Correzione a mano di un numero già scritto (ore, sessioni): non è
          un'azione sul record, quindi non ha l'aspetto di un pulsante pieno. */
-      .btn-mini { padding: 3px 9px; font-size: 11px; background: transparent; border: 1px solid var(--line); color: var(--muted); border-radius: 20px; font-weight: 600; font-family: inherit; cursor: pointer; }
-      .btn-mini:hover { border-color: var(--blue); color: var(--blue); }
-      .correzioni { display: flex; gap: 4px; margin-top: 5px; flex-wrap: wrap; }
       /* Pulsante di una funzione ancora da sviluppare: il posto è riservato e si
          vede, ma è spento (metodo dei "posti riservati", come nel menù ⚙). */
       .btn-off { background: #f2f4f7; color: #b6bcc6; border: 1px dashed #d8dde5; cursor: default; }
@@ -1765,11 +1736,6 @@ function baseStyle() {
       .badge-active   { background: #e7f1ec; color: #2e6b52; }
       .badge-inactive { background: #eef1f5; color: #7a8089; }
       .badge-pausa    { background: #fff8dc; color: #7a5c00; }
-      .appbar { position: sticky; top: 0; z-index: 50; background: #fff; border-bottom: 1px solid var(--line); }
-      .appbar-inner { display: flex; align-items: center; justify-content: space-between; gap: 14px; max-width: 980px; margin: 0 auto; padding: 8px 18px; }
-      .appbar-brand { display: flex; align-items: center; text-decoration: none; line-height: 0; }
-      .appbar-actions { display: flex; align-items: center; gap: 10px; }
-      .appbar-accent { height: 3px; background: var(--grad); }
       table { width: 100%; border-collapse: collapse; }
       th { text-align: left; font-size: 11px; color: var(--hint); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; padding: 10px 14px; border-bottom: 1px solid var(--line); }
       td { padding: 13px 14px; border-bottom: 1px solid #f1f3f6; font-size: 13px; vertical-align: middle; }
@@ -1801,7 +1767,7 @@ function baseStyle() {
       .scheda-cliente td:nth-child(7) { width: 42px; }
       .scheda-cliente td:nth-child(8) { min-width: 260px; }
       .scheda-cliente ul { margin: 0; padding-left: 16px; }
-      /* ── Header brandizzato Noesys (Fase 1) — namespace nh-, convive con .appbar ── */
+      /* ── Header brandizzato Noesys — namespace nh-, l'unico dell'Hub ── */
       .nh { position: sticky; top: 0; z-index: 60; background: #fff; border-bottom: 1px solid var(--line); }
       .nh-row { max-width: 980px; margin: 0 auto; padding: 0 18px; }
       .nh-top { display: flex; align-items: center; gap: 14px; padding-top: 9px; padding-bottom: 9px; }
@@ -1840,10 +1806,8 @@ function baseStyle() {
   `;
 }
 
-// Header brandizzato Noesys (Fase 1 del riordino, 26/07 — dal 28/07 è l'UNICO:
-// tutte le pagine dell'Hub sono migrate e la vecchia appBar() è stata rimossa.
-// Le regole CSS .appbar-* in baseStyle() ora non servono a nessuno: si tolgono
-// nella passata di pulizia, insieme agli altri residui.)
+// Header brandizzato Noesys — l'UNICO dell'Hub dal 28/07: tutte le pagine sono
+// migrate, la vecchia appBar() e le sue regole CSS non esistono più.
 // Tre fasce: identità · i tre mondi · dove sei.
 //   mondo    → 'individuali' | 'progetti' | 'lead' | '' (funzione trasversale)
 //   sub      → sotto-voce attiva del mondo (i Committenti vivono dentro Progetti)
@@ -3011,10 +2975,6 @@ Germano`;
       if (d && d.driveWarning) alert(d.driveWarning);
       location.reload();
     }
-    async function addSessione(pid,delta) {
-      await fetch('/dashboard/clients/'+CID+'/percorsi/'+pid+'/sessione',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({delta})});
-      location.reload();
-    }
     async function chiudiPercorso(pid, fineIso, fineIt) {
       const msg = fineIso
         ? ("Chiudere questo percorso? La data di fine sarà " + fineIt + ", il giorno dell'ultima sessione.")
@@ -3023,13 +2983,6 @@ Germano`;
       await fetch('/dashboard/clients/'+CID+'/percorsi/'+pid+'/chiudi',
         {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({data_fine: fineIso || null})});
       location.reload();
-    }
-    async function editOre(pid, cur) {
-      const v = prompt('Ore svolte del percorso (es. 14 oppure 1,5):', cur);
-      if (v === null) return;
-      const n = parseFloat(String(v).replace(',', '.'));
-      if (isNaN(n) || n < 0) { alert('Inserisci un numero valido, es. 14 oppure 1,5'); return; }
-      await fetch('/dashboard/clients/'+CID+'/percorsi/'+pid+'/ore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ore_fatte:n})}); location.reload();
     }
     async function delPercorso(pid) {
       if(!confirm('Eliminare questo percorso? Le sue ore spariscono dall\\'estratto ICF. Operazione irreversibile.')) return;
