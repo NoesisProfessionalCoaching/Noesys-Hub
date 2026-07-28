@@ -3052,14 +3052,14 @@ function leadsPage(leads, req) {
       <td style="font-size:12px;color:#4a5568;max-width:180px">${esc(l.note||'')}</td>
       <td style="white-space:nowrap">
         <button onclick="editLead('${l.id}','${attr(l.nome)}','${attr(l.cognome||'')}','${attr(l.email||'')}','${attr(l.telefono||'')}','${l.fonte}','${l.stato}','${attr(l.note||'')}','${l.data_prossimo_contatto?String(l.data_prossimo_contatto).slice(0,10):''}')" class="btn btn-neutral btn-sm">Modifica</button>
-        ${l.stato!=='convertito' ? `<button onclick="convertLead('${l.id}')" class="btn btn-primary btn-sm" style="margin:0 4px">→ Cliente</button>` : ''}
-        <button onclick="deleteLead('${l.id}')" class="btn btn-danger btn-sm">✕</button>
+        ${l.stato!=='convertito' ? `<button onclick="convertLead('${l.id}')" class="btn btn-neutral btn-sm" style="margin:0 4px" title="Trasforma questo lead in un cliente">→ Cliente</button>` : ''}
+        <span style="display:inline-block;width:10px"></span><button onclick="deleteLead('${l.id}')" class="btn btn-danger btn-sm" title="Elimina il lead">🗑</button>
       </td>
     </tr>`;
   }
 
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Lead</title>${baseStyle()}</head><body>
-  ${appBar({ home:'/dashboard', right:`<a href="/dashboard/individuali" class="btn btn-neutral btn-sm">← Clienti</a><a href="/logout" class="btn btn-neutral btn-sm">Esci</a>` })}
+  ${headerNoesys({ mondo: 'lead' })}
   <div class="container" style="max-width:980px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px">
       <div><h1>Lead</h1><p style="color:#aaa;font-size:13px">${attivi.length} attivi · ${archiviati.length} archiviati</p></div>
@@ -3070,7 +3070,7 @@ function leadsPage(leads, req) {
 
     <div class="card" style="padding:0;overflow:hidden">
       <table>
-        <thead><tr><th>Contatto</th><th>Stato</th><th>Fonte</th><th>Prossimo contatto</th><th>Note</th><th>Azioni</th></tr></thead>
+        <thead><tr><th>Contatto</th><th>Stato</th><th>Fonte</th><th>Prossimo contatto</th><th>Note</th><th></th></tr></thead>
         <tbody>
           ${attivi.length ? attivi.map(renderRow).join('') : `<tr><td colspan="6" class="empty">Nessun lead attivo.</td></tr>`}
         </tbody>
@@ -3080,7 +3080,7 @@ function leadsPage(leads, req) {
     ${archiviati.length ? `
     <h2 style="margin:24px 0 10px;font-size:14px;color:#aaa">Archiviati (convertiti / persi)</h2>
     <div class="card" style="padding:0;overflow:hidden">
-      <table><thead><tr><th>Contatto</th><th>Stato</th><th>Fonte</th><th>Prossimo contatto</th><th>Note</th><th>Azioni</th></tr></thead>
+      <table><thead><tr><th>Contatto</th><th>Stato</th><th>Fonte</th><th>Prossimo contatto</th><th>Note</th><th></th></tr></thead>
       <tbody>${archiviati.map(renderRow).join('')}</tbody></table>
     </div>` : ''}
   </div>
@@ -3218,16 +3218,17 @@ function committentiPage(committenti, req) {
       <td style="font-size:12px;color:#aaa">${fatt || '—'}</td>
       <td style="white-space:nowrap">
         <button onclick='editComm(${JSON.stringify(k).replace(/'/g, "&#39;")})' class="btn btn-neutral btn-sm">Modifica</button>
-        <button onclick="deleteComm('${k.id}')" class="btn btn-danger btn-sm">✕</button>
+        <span style="display:inline-block;width:10px"></span>
+        <button onclick="deleteComm('${k.id}')" class="btn btn-danger btn-sm" title="Elimina il committente">🗑</button>
       </td>
     </tr>`;
   }
 
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Committenti</title>${baseStyle()}</head><body>
-  ${appBar({ home:'/dashboard', right:`<a href="/dashboard/individuali" class="btn btn-neutral btn-sm">← Clienti</a><a href="/dashboard/leads" class="btn btn-neutral btn-sm">Lead</a><a href="/dashboard/progetti" class="btn btn-neutral btn-sm">Progetti</a><a href="/logout" class="btn btn-neutral btn-sm">Esci</a>` })}
+  ${headerNoesys({ mondo: 'progetti', sub: 'committenti' })}
   <div class="container" style="max-width:980px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:12px">
-      <div><h1>Committenti / Sponsor</h1><p style="color:#aaa;font-size:13px">${committenti.length} ${committenti.length===1?'committente':'committenti'}</p></div>
+      <div><h1>Committenti</h1><p style="color:#aaa;font-size:13px">${committenti.length} ${committenti.length===1?'committente':'committenti'}</p></div>
       <button onclick="openNew()" class="btn btn-primary">+ Nuovo committente</button>
     </div>
     <p style="color:var(--muted);font-size:12.5px;margin-bottom:16px">Chi commissiona o paga un percorso (azienda o persona). Non ha accesso all'Hub.</p>
@@ -3236,7 +3237,7 @@ function committentiPage(committenti, req) {
 
     <div class="card" style="padding:0;overflow:hidden">
       <table>
-        <thead><tr><th>Committente</th><th>Tipo</th><th>Contatto</th><th>Fatturazione</th><th>Azioni</th></tr></thead>
+        <thead><tr><th>Committente</th><th>Tipo</th><th>Contatto</th><th>Fatturazione</th><th></th></tr></thead>
         <tbody>
           ${committenti.length ? committenti.map(renderRow).join('') : `<tr><td colspan="5" class="empty">Nessun committente. Crea il primo con il pulsante qui sopra.</td></tr>`}
         </tbody>
@@ -3360,27 +3361,28 @@ function progettiPage(progetti, committenti, req) {
       <td style="font-size:12px;color:#aaa">${p.data_inizio ? itDate(p.data_inizio) : '—'}</td>
       <td style="white-space:nowrap" onclick="event.stopPropagation()">
         <button onclick='editProg(${JSON.stringify(p).replace(/'/g, "&#39;")})' class="btn btn-neutral btn-sm">Modifica</button>
-        <button onclick="deleteProg('${p.id}')" class="btn btn-danger btn-sm">✕</button>
+        <span style="display:inline-block;width:10px"></span>
+        <button onclick="deleteProg('${p.id}')" class="btn btn-danger btn-sm" title="Elimina il progetto">🗑</button>
       </td>
     </tr>`;
   }
 
-  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Progetti</title>${baseStyle()}</head><body>
-  ${appBar({ home:'/dashboard', right:`<a href="/dashboard/individuali" class="btn btn-neutral btn-sm">← Clienti</a><a href="/dashboard/committenti" class="btn btn-neutral btn-sm">Committenti</a><a href="/dashboard/leads" class="btn btn-neutral btn-sm">Lead</a><a href="/logout" class="btn btn-neutral btn-sm">Esci</a>` })}
+  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Progetti Strutturati</title>${baseStyle()}</head><body>
+  ${headerNoesys({ mondo: 'progetti', sub: 'progetti' })}
   <div class="container" style="max-width:980px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:12px">
-      <div><h1>Progetti</h1><p style="color:#aaa;font-size:13px">${progetti.length} ${progetti.length===1?'progetto':'progetti'}</p></div>
+      <div><h1>Progetti Strutturati</h1><p style="color:#aaa;font-size:13px">${progetti.length} ${progetti.length===1?'progetto':'progetti'}</p></div>
       ${noComm
         ? `<a href="/dashboard/committenti" class="btn btn-primary">+ Crea prima un committente</a>`
         : `<button onclick="openNew()" class="btn btn-primary">+ Nuovo progetto</button>`}
     </div>
-    <p style="color:var(--muted);font-size:12.5px;margin-bottom:16px">Il percorso commissionato da un committente (Business/Young con sponsor). Lo stato segue la relazione: attivo · in pausa · concluso.</p>
+    <p style="color:var(--muted);font-size:12.5px;margin-bottom:16px">Il percorso commissionato da un committente, che lo paga in tutto o in parte (ambito Business o Young). Lo stato segue la relazione: attivo · in pausa · concluso.</p>
 
     <input id="cerca" type="search" placeholder="🔍 Cerca progetto (titolo, committente…)" oninput="filtra()" style="margin-bottom:14px">
 
     <div class="card" style="padding:0;overflow:hidden">
       <table>
-        <thead><tr><th>Progetto</th><th>Area</th><th>Tipo</th><th>Stato</th><th>Clienti</th><th>Inizio</th><th>Azioni</th></tr></thead>
+        <thead><tr><th>Progetto</th><th>Area</th><th>Tipo</th><th>Stato</th><th>Clienti</th><th>Inizio</th><th></th></tr></thead>
         <tbody>
           ${progetti.length ? progetti.map(renderRow).join('') : `<tr><td colspan="7" class="empty">Nessun progetto. ${noComm ? 'Crea prima un committente.' : 'Crea il primo con il pulsante qui sopra.'}</td></tr>`}
         </tbody>
