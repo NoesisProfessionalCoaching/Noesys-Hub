@@ -3,7 +3,7 @@ const bcrypt  = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const db      = require('./db');
 const { signToken, requireCoach, COOKIE_NAME } = require('./auth');
-const { logoCompact } = require('./logo');
+const { logoCompact, logoPicto } = require('./logo');
 const drive = require('./google-drive');
 const scan = require('./scan');
 const documenti = require('./documenti');
@@ -63,9 +63,18 @@ router.get('/logout', (req, res) => {
 
 router.get('/', (req, res) => res.redirect('/dashboard'));
 
-router.get('/dashboard', requireCoach, async (req, res) => {
-  try {
-    const result = await db.query(`
+// Chi appartiene al mondo INDIVIDUALE: chi ha almeno un percorso FUORI dai
+// progetti, più chi non ha ancora nessun percorso (un cliente appena inserito non
+// deve sparire da nessuna parte). Chi esiste solo dentro un progetto si raggiunge
+// dal progetto — deciso con Germano il 28/07. `tutti` scavalca il filtro: è la
+// valvola di sicurezza finché la ricerca in alto non è accesa.
+function queryClienti({ tutti = false } = {}) {
+  const filtro = tutti ? '' : `
+      WHERE EXISTS (SELECT 1 FROM percorsi pi WHERE pi.client_id = c.id AND pi.progetto_id IS NULL)
+         OR NOT EXISTS (SELECT 1 FROM percorsi pt WHERE pt.client_id = c.id
+              OR EXISTS (SELECT 1 FROM percorso_partecipanti ppt
+                          WHERE ppt.percorso_id = pt.id AND ppt.client_id = c.id))`;
+  return `
       SELECT c.*,
         (SELECT COUNT(DISTINCT s.tool) FROM sessions s WHERE s.client_id = c.id) AS tool_count,
         pp.tipo AS p_tipo, pp.n_sessioni_fatte AS p_sess, pp.ore_fatte AS p_ore, pp.stato AS p_stato,
@@ -79,14 +88,80 @@ router.get('/dashboard', requireCoach, async (req, res) => {
            OR EXISTS (SELECT 1 FROM percorso_partecipanti pp2 WHERE pp2.percorso_id = p.id AND pp2.client_id = c.id)
         ORDER BY (p.stato = 'attivo') DESC, p.created_at DESC LIMIT 1
       ) pp ON true
-      ORDER BY c.created_at DESC
-    `);
-    res.send(dashboardPage(result.rows, req));
+      ${filtro}
+      ORDER BY c.created_at DESC`;
+}
+
+// Elenco del mondo individuale, al suo indirizzo. Nasce ACCANTO alla home di oggi
+// (che resta l'elenco completo finché non si scambiano gli indirizzi).
+router.get('/dashboard/individuali', requireCoach, async (req, res) => {
+  try {
+    const tutti = req.query.tutti === '1';
+    const result = await db.query(queryClienti({ tutti }));
+    res.send(dashboardPage(result.rows, req, { tutti, individuali: true }));
   } catch (err) {
     console.error(err);
-    res.status(500).send('Errore nel caricamento dashboard');
+    res.status(500).send('Errore nel caricamento elenco');
   }
 });
+
+// ── HOME (Fase 2) ────────────────────────────────────────────────────────────
+// Tre porte + ciò che chiede attenzione. Niente elenco clienti: quello vive nella
+// sua pagina (decisione di Germano 28/07). Nasce su /dashboard/home e diventerà la
+// home quando l'avrà vista: così l'Hub non resta mai senza elenco.
+// Tutti i numeri vengono da dati che l'Hub ha già: nessun campo nuovo.
+async function mostraHome(req, res) {
+  try {
+    const [ind, prog, comm, lead, bozze, daChiudere, azioni, richiami] = await Promise.all([
+      db.query(`SELECT count(*)::int n FROM clients c
+                 WHERE EXISTS (SELECT 1 FROM percorsi pi WHERE pi.client_id = c.id AND pi.progetto_id IS NULL)
+                    OR NOT EXISTS (SELECT 1 FROM percorsi pt WHERE pt.client_id = c.id
+                         OR EXISTS (SELECT 1 FROM percorso_partecipanti ppt
+                                     WHERE ppt.percorso_id = pt.id AND ppt.client_id = c.id))`),
+      db.query(`SELECT count(*)::int n, count(*) FILTER (WHERE stato='attivo')::int attivi FROM progetti`),
+      db.query(`SELECT count(*)::int n FROM committenti`),
+      db.query(`SELECT count(*)::int n, count(*) FILTER (WHERE stato <> 'convertito')::int aperti FROM leads`),
+      // Sessioni in bozza: possono essere di un cliente o di un percorso di gruppo.
+      db.query(`SELECT s.id, s.data, cl.id AS client_id, cl.name AS cliente,
+                       g.id AS progetto_id, g.titolo AS progetto
+                  FROM sedute s
+                  JOIN percorsi p ON p.id = s.percorso_id
+                  LEFT JOIN clients cl ON cl.id = COALESCE(s.client_id, p.client_id)
+                  LEFT JOIN progetti g ON g.id = p.progetto_id
+                 WHERE s.stato = 'bozza'
+                 ORDER BY s.data DESC NULLS LAST LIMIT 6`),
+      db.query(`SELECT cl.id, cl.name, count(*)::int n
+                  FROM percorsi p JOIN clients cl ON cl.id = p.client_id
+                 WHERE cl.stato_cliente = 'concluso' AND p.stato = 'attivo'
+                 GROUP BY cl.id, cl.name ORDER BY cl.name LIMIT 6`),
+      db.query(`SELECT id, name, prossima_azione, prossima_azione_data FROM clients
+                 WHERE prossima_azione IS NOT NULL AND prossima_azione <> ''
+                   AND (prossima_azione_data IS NULL OR prossima_azione_data <= CURRENT_DATE + 7)
+                 ORDER BY prossima_azione_data NULLS LAST LIMIT 6`),
+      db.query(`SELECT id, nome, cognome, data_prossimo_contatto FROM leads
+                 WHERE stato <> 'convertito' AND data_prossimo_contatto IS NOT NULL
+                   AND data_prossimo_contatto <= CURRENT_DATE + 7
+                 ORDER BY data_prossimo_contatto LIMIT 6`),
+    ]);
+    res.send(homePage({
+      nIndividuali: ind.rows[0].n,
+      nProgetti: prog.rows[0].n, nProgettiAttivi: prog.rows[0].attivi,
+      nCommittenti: comm.rows[0].n,
+      nLead: lead.rows[0].n, nLeadAperti: lead.rows[0].aperti,
+      bozze: bozze.rows, daChiudere: daChiudere.rows,
+      azioni: azioni.rows, richiami: richiami.rows,
+    }, req));
+  } catch (err) {
+    console.error('[home]', err);
+    res.status(500).send('Errore nel caricamento della home');
+  }
+}
+
+// `/dashboard` è la HOME. L'elenco dei clienti vive in `/dashboard/individuali`.
+// `/dashboard/home` resta come alias: era l'indirizzo di prova, e un vecchio
+// segnalibro non deve finire su una pagina che non c'è.
+router.get('/dashboard', requireCoach, mostraHome);
+router.get('/dashboard/home', requireCoach, mostraHome);
 
 // ── Diagnosi Google Drive (Fase 3a) ────────────────────────────────
 // Pagina protetta che prova, dall'Hub ONLINE, a raggiungere il Drive con le
@@ -194,7 +269,7 @@ router.get('/dashboard/clients/:id', requireCoach, async (req, res) => {
   try {
     const cr = await db.query('SELECT * FROM clients WHERE id = $1', [req.params.id]);
     const client = cr.rows[0];
-    if (!client) return res.redirect('/dashboard');
+    if (!client) return res.redirect('/dashboard/individuali');
     const [sr, pr, payr, sedr, prjr] = await Promise.all([
       db.query('SELECT * FROM sessions WHERE client_id=$1 ORDER BY tool, created_at DESC', [req.params.id]),
       db.query(`SELECT p.*, prj.titolo AS progetto_titolo
@@ -1610,6 +1685,32 @@ function baseStyle() {
       .az-fatto { color: var(--green); font-weight: 700; }
       .az-danger { display: flex; justify-content: flex-end; align-items: center; gap: 12px; flex-wrap: wrap; border-top: 1px dashed var(--line); margin-top: 18px; padding-top: 12px; }
       @media (max-width: 700px) { .az-grid { grid-template-columns: 1fr; } }
+      /* ── HOME ────────────────────────────────────────────────────────────────
+         Il pittogramma del marchio fa da sfondo (grande e trasparente, scelta di
+         Germano 28/07): sta SOTTO le porte, che sono bianche appena traslucide
+         così il segno si intravede senza disturbare la lettura. */
+      .hm-hero { position: relative; padding: 30px 0 34px; }
+      /* Come sul sito Noesys: il pittogramma è ENORME e ancorato al bordo destro,
+         quindi si vede solo una PORZIONE delle curve. Non fa il protagonista — dà
+         movimento alla pagina con la linea. Posizione fissa: così non genera mai
+         barre di scorrimento e resta un fondo stabile mentre si scorre.
+         ATTENZIONE: qui siamo dentro un template literal, niente backtick nei
+         commenti — chiudono la stringa e rompono tutto il file. */
+      .hm-picto { position: fixed; top: -250px; right: -580px; width: 1180px; height: 1180px; opacity: 0.09; line-height: 0; pointer-events: none; z-index: 0; }
+      .hm-picto svg { width: 100%; height: 100%; }
+      .hm-porte { position: relative; z-index: 1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+      .hm-porta { display: block; background: rgba(255,255,255,0.88); border: 1px solid var(--line); border-radius: 14px; padding: 20px; text-decoration: none; color: var(--ink); box-shadow: 0 1px 3px rgba(16,33,60,0.04); transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s; }
+      .hm-porta:hover { transform: translateY(-2px); border-color: #cdd7e1; box-shadow: 0 8px 24px rgba(16,33,60,0.09); }
+      .hm-porta-nome { display: block; font-size: 15px; font-weight: 700; margin-bottom: 12px; }
+      .hm-porta-num { font-size: 32px; font-weight: 800; color: var(--blue); line-height: 1; }
+      .hm-porta-unita { font-size: 12px; color: var(--hint); margin-left: 5px; }
+      .hm-porta-desc { display: block; font-size: 12px; color: var(--muted); line-height: 1.5; margin-top: 10px; }
+      .hm-gruppo { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px 20px; margin-bottom: 12px; box-shadow: 0 1px 3px rgba(16,33,60,0.04); }
+      .hm-gruppo-nome { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; margin-bottom: 4px; }
+      .hm-voce { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 9px 0; border-top: 1px solid #eef1f5; font-size: 13px; color: var(--ink); text-decoration: none; }
+      .hm-voce:hover { color: var(--blue); }
+      .hm-voce-coda { font-size: 12px; color: var(--hint); white-space: nowrap; flex: 0 0 auto; }
+      @media (max-width: 720px) { .hm-porte { grid-template-columns: 1fr; } .hm-picto { display: none; } }
       input, select, textarea { width: 100%; padding: 9px 12px; border: 1.5px solid var(--line); border-radius: 9px; font-size: 13px; font-family: inherit; color: var(--ink); outline: none; transition: border-color 0.15s, box-shadow 0.15s; background: #fff; }
       input:focus, select:focus, textarea:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(26,82,128,0.12); }
       textarea { resize: vertical; min-height: 64px; }
@@ -1716,7 +1817,7 @@ function appBar({ home = '#', right = '' } = {}) {
 // il descrittore scende sotto i 6px e diventa illeggibile.
 function headerNoesys({ mondo = '', sub = '', briciole = [] } = {}) {
   const MONDI = [
-    { key: 'individuali', label: 'Percorsi Individuali', href: '/dashboard' },
+    { key: 'individuali', label: 'Percorsi Individuali', href: '/dashboard/individuali' },
     { key: 'progetti',    label: 'Progetti Strutturati', href: '/dashboard/progetti' },
     { key: 'lead',        label: 'Lead',                 href: '/dashboard/leads' },
   ];
@@ -1803,7 +1904,78 @@ function loginPage(error) {
   </body></html>`;
 }
 
-function dashboardPage(clients, req) {
+// ═══════════════════════════════════════════════════════
+// HOME — tre porte sul pittogramma + cosa chiede attenzione
+// ═══════════════════════════════════════════════════════
+function homePage(d, req) {
+  const porta = (href, nome, num, unita, desc) => `
+    <a class="hm-porta" href="${href}">
+      <span class="hm-porta-nome">${nome}</span>
+      <span class="hm-porta-num">${num}</span>
+      <span class="hm-porta-unita">${unita}</span>
+      <span class="hm-porta-desc">${desc}</span>
+    </a>`;
+
+  // Un gruppo compare SOLO se ha qualcosa dentro: una home che elenca caselle
+  // vuote è rumore.
+  const gruppo = (titolo, voci) => voci.length ? `
+    <div class="hm-gruppo">
+      <div class="hm-gruppo-nome">${titolo}</div>
+      ${voci.join('')}
+    </div>` : '';
+  const voce = (href, testo, coda) => `
+    <a class="hm-voce" href="${href}"><span>${testo}</span><span class="hm-voce-coda">${coda || ''}</span></a>`;
+
+  const gBozze = gruppo('Sessioni in bozza da approvare', d.bozze.map(b => voce(
+    b.client_id ? `/dashboard/clients/${b.client_id}` : (b.progetto_id ? `/dashboard/progetti/${b.progetto_id}` : '/dashboard/individuali'),
+    b.cliente ? esc(b.cliente) : (b.progetto ? esc(b.progetto) + ' <span style="color:var(--hint)">· percorso di gruppo</span>' : 'Sessione'),
+    b.data ? itDate(b.data) : '')));
+
+  const gChiudere = gruppo('Percorsi da chiudere', d.daChiudere.map(x => voce(
+    `/dashboard/clients/${x.id}`, esc(x.name),
+    'relazione conclusa, ' + (x.n === 1 ? 'percorso ancora attivo' : x.n + ' percorsi ancora attivi'))));
+
+  const gAzioni = gruppo('Prossime azioni', d.azioni.map(a => voce(
+    `/dashboard/clients/${a.id}`, `<strong>${esc(a.name)}</strong> — ${esc(a.prossima_azione)}`,
+    a.prossima_azione_data ? itDate(a.prossima_azione_data) : '')));
+
+  const gLead = gruppo('Lead da ricontattare', d.richiami.map(l => voce(
+    '/dashboard/leads', esc([l.nome, l.cognome].filter(Boolean).join(' ')),
+    l.data_prossimo_contatto ? itDate(l.data_prossimo_contatto) : '')));
+
+  const attenzione = [gBozze, gChiudere, gAzioni, gLead].filter(Boolean).join('');
+
+  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub</title>${baseStyle()}</head><body>
+  ${headerNoesys({})}
+  <div class="hm-picto">${logoPicto(1080)}</div>
+  <div class="container" style="max-width:980px;position:relative;z-index:1">
+
+    <section class="hm-hero">
+      <div class="hm-porte">
+        ${porta('/dashboard/individuali', 'Percorsi Individuali', d.nIndividuali,
+                d.nIndividuali === 1 ? 'cliente' : 'clienti',
+                'Le persone che segui una per una: paga il cliente.')}
+        ${porta('/dashboard/progetti', 'Progetti Strutturati', d.nProgetti,
+                d.nProgetti === 1 ? 'progetto' : 'progetti',
+                `Commissionati da un committente${d.nCommittenti ? ` · ${d.nCommittenti} ${d.nCommittenti === 1 ? 'committente' : 'committenti'}` : ''}.`)}
+        ${porta('/dashboard/leads', 'Lead', d.nLeadAperti,
+                d.nLeadAperti === 1 ? 'da coltivare' : 'da coltivare',
+                'Chi ti ha contattato e non è ancora un cliente.')}
+      </div>
+    </section>
+
+    <section class="hm-att">
+      <h2 style="margin-bottom:14px">Chiede attenzione</h2>
+      ${attenzione || `<div class="card" style="color:var(--muted);font-size:13px">Non c'è nulla in sospeso: nessuna bozza da approvare, nessun percorso da chiudere, nessun richiamo in scadenza.</div>`}
+    </section>
+
+  </div>
+  </body></html>`;
+}
+
+// `individuali` = la pagina è quella del mondo individuale (titolo e conteggio lo
+// dicono); `tutti` = filtro scavalcato, si vedono anche i clienti dei progetti.
+function dashboardPage(clients, req, { individuali = false, tutti = false } = {}) {
   const rows = clients.length === 0
     ? `<tr><td colspan="6" class="empty">Nessun cliente. Crea il primo con il pulsante qui sopra.</td></tr>`
     : clients.map(c => {
@@ -1834,11 +2006,18 @@ function dashboardPage(clients, req) {
       </tr>`;
     }).join('');
 
-  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Clienti</title>${baseStyle()}</head><body>
+  const titolo = individuali && !tutti ? 'Percorsi Individuali' : 'Clienti';
+  const sotto = individuali && !tutti
+    ? `${clients.length} ${clients.length === 1 ? 'cliente che segui una a una' : 'clienti che segui uno per uno'} · <a href="/dashboard/individuali?tutti=1" style="font-size:13px">vedi tutti i clienti, compresi quelli dentro i progetti</a>`
+    : individuali
+      ? `${clients.length} clienti in tutto, progetti compresi · <a href="/dashboard/individuali" style="font-size:13px">torna ai soli percorsi individuali</a>`
+      : `${clients.length} clienti registrati`;
+
+  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — ${esc(titolo)}</title>${baseStyle()}</head><body>
   ${headerNoesys({ mondo: 'individuali' })}
   <div class="container" style="max-width:980px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px">
-      <div><h1>Clienti</h1><p style="color:#aaa;font-size:13px">${clients.length} clienti registrati</p></div>
+      <div><h1>${esc(titolo)}</h1><p style="color:#aaa;font-size:13px">${sotto}</p></div>
       <button onclick="openNewClient()" class="btn btn-primary">+ Nuovo cliente</button>
     </div>
     <input id="cerca" type="search" placeholder="🔍 Cerca cliente (nome, email, area…)" oninput="filtra()" style="margin-bottom:14px">
@@ -1967,7 +2146,7 @@ function driveDiagPage(steps, root, children, req) {
     : '<div class="empty" style="padding:18px">Nessun elemento in cima alla cartella.</div>';
 
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Verifica Drive</title>${baseStyle()}</head><body>
-  ${appBar({ home: '/dashboard', right: `<a href="/dashboard" class="btn btn-neutral btn-sm">← Dashboard</a>` })}
+  ${appBar({ home: '/dashboard', right: `<a href="/dashboard/individuali" class="btn btn-neutral btn-sm">← Clienti</a>` })}
   <div class="container" style="max-width:640px">
     <h1>Verifica collegamento a Google Drive</h1>
     <p style="color:var(--muted);font-size:13px;margin-bottom:18px">Controllo di sola lettura: l'Hub prova a leggere il tuo Drive con le chiavi impostate su Railway. Non tocca né il database né le schede.</p>
@@ -2382,7 +2561,7 @@ Germano`;
 
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — ${esc(client.name)}</title>${baseStyle()}</head><body>
   ${headerNoesys({ mondo: 'individuali', briciole: [
-    { label: 'Percorsi Individuali', href: '/dashboard' },
+    { label: 'Percorsi Individuali', href: '/dashboard/individuali' },
     { label: client.name },
   ] })}
   <div class="container" style="max-width:980px">
@@ -2779,7 +2958,7 @@ Germano`;
     async function toggleAccess() { await fetch('/dashboard/clients/'+CID+'/toggle',{method:'POST'}); location.reload(); }
     async function deleteClient() {
       if (!confirm('Eliminare ${attr(client.name)} e tutti i suoi dati? Operazione irreversibile.')) return;
-      await fetch('/dashboard/clients/'+CID,{method:'DELETE'}); location.href='/dashboard';
+      await fetch('/dashboard/clients/'+CID,{method:'DELETE'}); location.href='/dashboard/individuali';
     }
     function openPercorso() { document.getElementById('modal-percorso').style.display='flex'; }
     async function savePercorso() {
@@ -2880,7 +3059,7 @@ function leadsPage(leads, req) {
   }
 
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Lead</title>${baseStyle()}</head><body>
-  ${appBar({ home:'/dashboard', right:`<a href="/dashboard" class="btn btn-neutral btn-sm">← Clienti</a><a href="/logout" class="btn btn-neutral btn-sm">Esci</a>` })}
+  ${appBar({ home:'/dashboard', right:`<a href="/dashboard/individuali" class="btn btn-neutral btn-sm">← Clienti</a><a href="/logout" class="btn btn-neutral btn-sm">Esci</a>` })}
   <div class="container" style="max-width:980px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px">
       <div><h1>Lead</h1><p style="color:#aaa;font-size:13px">${attivi.length} attivi · ${archiviati.length} archiviati</p></div>
@@ -3045,7 +3224,7 @@ function committentiPage(committenti, req) {
   }
 
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Committenti</title>${baseStyle()}</head><body>
-  ${appBar({ home:'/dashboard', right:`<a href="/dashboard" class="btn btn-neutral btn-sm">← Clienti</a><a href="/dashboard/leads" class="btn btn-neutral btn-sm">Lead</a><a href="/dashboard/progetti" class="btn btn-neutral btn-sm">Progetti</a><a href="/logout" class="btn btn-neutral btn-sm">Esci</a>` })}
+  ${appBar({ home:'/dashboard', right:`<a href="/dashboard/individuali" class="btn btn-neutral btn-sm">← Clienti</a><a href="/dashboard/leads" class="btn btn-neutral btn-sm">Lead</a><a href="/dashboard/progetti" class="btn btn-neutral btn-sm">Progetti</a><a href="/logout" class="btn btn-neutral btn-sm">Esci</a>` })}
   <div class="container" style="max-width:980px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:12px">
       <div><h1>Committenti / Sponsor</h1><p style="color:#aaa;font-size:13px">${committenti.length} ${committenti.length===1?'committente':'committenti'}</p></div>
@@ -3187,7 +3366,7 @@ function progettiPage(progetti, committenti, req) {
   }
 
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Progetti</title>${baseStyle()}</head><body>
-  ${appBar({ home:'/dashboard', right:`<a href="/dashboard" class="btn btn-neutral btn-sm">← Clienti</a><a href="/dashboard/committenti" class="btn btn-neutral btn-sm">Committenti</a><a href="/dashboard/leads" class="btn btn-neutral btn-sm">Lead</a><a href="/logout" class="btn btn-neutral btn-sm">Esci</a>` })}
+  ${appBar({ home:'/dashboard', right:`<a href="/dashboard/individuali" class="btn btn-neutral btn-sm">← Clienti</a><a href="/dashboard/committenti" class="btn btn-neutral btn-sm">Committenti</a><a href="/dashboard/leads" class="btn btn-neutral btn-sm">Lead</a><a href="/logout" class="btn btn-neutral btn-sm">Esci</a>` })}
   <div class="container" style="max-width:980px">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:12px">
       <div><h1>Progetti</h1><p style="color:#aaa;font-size:13px">${progetti.length} ${progetti.length===1?'progetto':'progetti'}</p></div>

@@ -21,4 +21,16 @@ function logoCompact(h = 32) {
   </svg>`;
 }
 
-module.exports = { logoCompact };
+// Solo il PITTOGRAMMA (i quattro cerchi), senza la parola: serve in grande e
+// trasparente come sfondo della home. Gli id dei gradienti sono rinominati
+// (ngw0…) perché nella stessa pagina c'è già il marchio dell'header: due
+// gradienti con lo stesso id nello stesso documento si pestano i piedi.
+function logoPicto(size = 320) {
+  const grad  = LOGO_GRADIENTS.replace(/id="ng(\d)"/g, 'id="ngw$1"');
+  const picto = LOGO_PICTO.replace(/url\(#ng(\d)\)/g, 'url(#ngw$1)');
+  return `<svg width="${size}" height="${size}" viewBox="253 134 366 366" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
+    <defs>${grad}</defs>${picto}
+  </svg>`;
+}
+
+module.exports = { logoCompact, logoPicto };
