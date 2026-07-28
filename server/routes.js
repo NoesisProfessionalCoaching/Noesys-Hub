@@ -1656,16 +1656,28 @@ function baseStyle() {
         --blue:#1A5280; --blue-dark:#134265; --navy:#223B6E;
         --gold:#D8AE2E; --green:#4F8B73; --lime:#B7B342;
         --ink:#2C3E50; --muted:#6B7280; --hint:#9AA0AA;
-        --bg:#F4F6F8; --card:#FFFFFF; --line:#E6E9EE;
+        --bg:#FAFBFC; --card:#FFFFFF; --line:#E6E9EE;
         --grad:linear-gradient(90deg,#D8AE2E,#B7B342,#4F8B73,#1A5280);
       }
       * { box-sizing: border-box; margin: 0; padding: 0; }
-      /* ⛔ NON rifare il fondo avorio/caldo: provato il 28/07 e BOCCIATO da
-         Germano ("caldo non mi piace"). La sua idea è un BIANCO LUMINOSO, la
-         luce data dai riflessi, non da una tinta calda. */
-      body { font-family: 'Manrope', system-ui, -apple-system, sans-serif; background: var(--bg); min-height: 100vh; color: var(--ink); -webkit-font-smoothing: antialiased; }
+      /* Fondo BIANCO LUMINOSO. ⛔ NON rifarlo caldo/avorio: provato il 28/07
+         e bocciato ("caldo non mi piace"). La luce va data dai riflessi, non
+         da una tinta: un bagliore chiaro in alto, come una luce da studio, e
+         un riflesso a pavimento in basso. */
+      body { font-family: 'Manrope', system-ui, -apple-system, sans-serif; color: var(--ink); min-height: 100vh; -webkit-font-smoothing: antialiased;
+        background-color: var(--bg);
+        background-image:
+          radial-gradient(1100px 640px at 50% -14%, rgba(255,255,255,1), rgba(255,255,255,0) 66%),
+          radial-gradient(1300px 480px at 50% 106%, rgba(206,216,228,0.5), rgba(206,216,228,0) 72%);
+        background-repeat: no-repeat; background-attachment: fixed; }
       .container { max-width: 900px; margin: 0 auto; padding: 28px 18px; }
-      .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 1px 3px rgba(16,33,60,0.04); padding: 22px; margin-bottom: 16px; }
+      /* La scheda è un oggetto appoggiato, non un rettangolo: DUE ombre
+         sovrapposte — una stretta di contatto sotto il bordo, una più larga
+         intorno — più un filo di luce sul bordo alto e una schiaritura verso
+         il basso, che è il riflesso della luce che viene da sopra. */
+      .card { background: var(--card); background-image: linear-gradient(180deg, #FFFFFF 0%, #FCFDFE 42%, #F9FBFC 100%); border: 1px solid var(--line); border-radius: 14px;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.95), 0 2px 3px rgba(16,33,60,0.13), 0 7px 14px rgba(16,33,60,0.18);
+        padding: 22px; margin-bottom: 16px; }
       .btn { display: inline-block; padding: 9px 20px; border: none; border-radius: 22px; font-size: 13px; font-weight: 600; font-family: inherit; cursor: pointer; transition: all 0.15s; text-decoration: none; }
       .btn-primary  { background: var(--blue); color: #fff; }
       .btn-primary:hover { background: var(--blue-dark); }
