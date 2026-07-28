@@ -3546,7 +3546,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
     return `
     <div class="card" style="margin-bottom:18px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:10px;flex-wrap:wrap">
-        <div class="field-label" style="margin:0">Scheda ${percCond.tipo === 'Group' ? 'del Gruppo' : 'del ' + esc(percCond.tipo)} <span style="font-weight:400;font-size:12px;color:var(--muted)">(${(Number(percCond.n_sessioni_fatte)||0)} ${(Number(percCond.n_sessioni_fatte)||0)===1?'sessione confermata':'sessioni confermate'} · ${fmtOre(percCond.ore_fatte)} h)</span></div>
+        <h2 style="margin:0">Scheda ${percCond.tipo === 'Group' ? 'del Gruppo' : 'del ' + esc(percCond.tipo)} <span style="font-weight:400;font-size:13px;color:#aaa">(${(Number(percCond.n_sessioni_fatte)||0)} ${(Number(percCond.n_sessioni_fatte)||0)===1?'sessione confermata':'sessioni confermate'} · ${fmtOre(percCond.ore_fatte)} h)</span></h2>
         <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
           ${hasDrive ? `<button id="scan-coll-btn" onclick="scanCollettivo()" class="btn btn-gold btn-sm" title="Legge i report Word nuovi dalla cartella del percorso e ne crea la bozza">⟳ Cerca nuovi report</button>` : ''}
           <span style="display:inline-block;width:10px"></span>
@@ -3677,7 +3677,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
   const fasiCard = `
     <div class="card" style="margin-bottom:18px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-        <div class="field-label" style="margin:0">Fasi del progetto</div>
+        <h2 style="margin:0">Fasi del progetto</h2>
         ${p.drive_url
           ? `<button id="scan-fasi-btn" onclick="scanProgetto()" class="btn btn-gold btn-sm" title="Legge i report nuovi dalle sottocartelle di fase su Drive e ne crea la riga in bozza">⟳ Cerca nuovi report</button>`
           : `<span style="font-size:12px;color:var(--muted)">crea la cartella Drive per l'automazione</span>`}
@@ -3802,7 +3802,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
 
     <div class="card" id="amm" style="margin-bottom:18px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-        <div class="field-label" style="margin:0">Amministrazione</div>
+        <h2 style="margin:0">Amministrazione</h2>
         <span style="font-size:12px;color:var(--muted)">quote e pagamenti del progetto</span>
       </div>
 
@@ -3832,7 +3832,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
       <!-- Chi partecipa è cosa diversa dai soldi: l'azione che aggiunge una
            persona sta sopra la tabella, non in fondo insieme a quelle di cassa. -->
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px;flex-wrap:wrap">
-        <div class="field-label" style="margin:0">Chi partecipa e quanto paga</div>
+        <h2 style="margin:0">Chi partecipa e quanto paga</h2>
         <button onclick="openAdd()" class="btn btn-neutral btn-sm">+ Aggiungi cliente</button>
       </div>
 
@@ -3859,7 +3859,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
 
     <div class="card" style="margin-bottom:18px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-        <div class="field-label" style="margin:0">Percorsi</div>
+        <h2 style="margin:0">Percorsi</h2>
         <span style="font-size:12px;color:var(--muted)">nascono da soli dai clienti del progetto</span>
       </div>
       ${(percorsi && percorsi.length) ? `<div style="overflow-x:auto;margin:0 -4px"><table style="min-width:480px">
