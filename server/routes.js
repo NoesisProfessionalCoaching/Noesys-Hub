@@ -1000,6 +1000,45 @@ async function loadIcf() {
   return { rows, tot, clientiUnici };
 }
 
+// RICERCA (fase 1c). Funzione trasversale: la casella vive nell'header, quindi
+// si cerca da qualsiasi pagina. Sola lettura — nessuna scrittura, nessuna azione
+// sui risultati: si guarda e si va alla scheda.
+// Serve soprattutto da quando la home mostra in "Percorsi Individuali" solo chi
+// ha percorsi fuori dai progetti: chi sta solo dentro un progetto si trova qui.
+router.get('/dashboard/cerca', requireCoach, async (req, res) => {
+  const q = (req.query.q || '').trim();
+  if (!q) return res.send(cercaPage(q, null, req));
+  const like = `%${q}%`;
+  try {
+    const [clienti, committenti, progetti, leads] = await Promise.all([
+      db.query(`SELECT id, name, nome, cognome, email, area, societa, stato_cliente
+                  FROM clients
+                 WHERE name ILIKE $1 OR nome ILIKE $1 OR cognome ILIKE $1
+                    OR email ILIKE $1 OR societa ILIKE $1
+                 ORDER BY cognome NULLS LAST, nome NULLS LAST, name LIMIT 30`, [like]),
+      db.query(`SELECT id, denominazione, referente, ruolo, email, telefono, tipo
+                  FROM committenti
+                 WHERE denominazione ILIKE $1 OR referente ILIKE $1 OR email ILIKE $1
+                 ORDER BY denominazione LIMIT 30`, [like]),
+      db.query(`SELECT p.id, p.titolo, p.stato, p.area, p.tipo, k.denominazione
+                  FROM progetti p JOIN committenti k ON k.id = p.committente_id
+                 WHERE p.titolo ILIKE $1 OR k.denominazione ILIKE $1
+                 ORDER BY p.titolo LIMIT 30`, [like]),
+      db.query(`SELECT id, nome, cognome, email, telefono, stato
+                  FROM leads
+                 WHERE nome ILIKE $1 OR cognome ILIKE $1 OR email ILIKE $1
+                 ORDER BY cognome NULLS LAST, nome LIMIT 30`, [like]),
+    ]);
+    res.send(cercaPage(q, {
+      clienti: clienti.rows, committenti: committenti.rows,
+      progetti: progetti.rows, leads: leads.rows,
+    }, req));
+  } catch (err) {
+    console.error('[cerca]', err);
+    res.status(500).send(cercaPage(q, { errore: true, clienti: [], committenti: [], progetti: [], leads: [] }, req));
+  }
+});
+
 router.get('/dashboard/icf', requireCoach, async (req, res) => {
   try {
     const { rows, tot, clientiUnici } = await loadIcf();
@@ -1767,11 +1806,10 @@ function baseStyle() {
       .nh-payoff { font-size: 9.5px; letter-spacing: 0.17em; text-transform: uppercase; color: #5A5A5A; font-weight: 700; line-height: 1.35; border-left: 1px solid var(--line); padding-left: 12px; }
       .nh-spacer { flex: 1 1 auto; }
       .nh-search { position: relative; flex: 0 1 290px; }
-      /* il padding a destra tiene il testo lontano dall'etichetta "in arrivo",
-         che è dentro la casella: senza, i due si sovrapponevano */
-      .nh-search input { padding: 7px 74px 7px 13px; font-size: 12.5px; border-radius: 20px; background: #f7f9fb; }
-      .nh-search input:disabled { color: #B9BFC7; cursor: not-allowed; }
-      .nh-soon { position: absolute; right: 13px; top: 50%; transform: translateY(-50%); font-size: 9px; text-transform: uppercase; letter-spacing: 0.08em; color: #B9BFC7; font-weight: 700; pointer-events: none; }
+      /* la casella è viva dalla fase 1c: sparita l'etichetta "in arrivo" che
+         stava dentro, è sparito anche il padding a destra che le faceva posto */
+      .nh-search input { padding: 7px 13px; font-size: 12.5px; border-radius: 20px; background: #f7f9fb; }
+      .nh-search input:focus { background: #fff; }
       .nh-menu { position: relative; flex: 0 0 auto; }
       .nh-menu > summary { cursor: pointer; width: 34px; height: 34px; border-radius: 50%; background: #eef1f5; display: flex; align-items: center; justify-content: center; font-size: 15px; color: #4a5568; }
       .nh-menu > summary:hover { background: #e2e7ee; }
@@ -1810,7 +1848,7 @@ function baseStyle() {
 // Il descrittore "Professional Coaching" è TESTO accanto al logo, non dentro
 // l'SVG: scelta di Germano 26/07 — nel marchio esteso, alle misure da header,
 // il descrittore scende sotto i 6px e diventa illeggibile.
-function headerNoesys({ mondo = '', sub = '', briciole = [] } = {}) {
+function headerNoesys({ mondo = '', sub = '', briciole = [], q = '' } = {}) {
   const MONDI = [
     { key: 'individuali', label: 'Percorsi Individuali', href: '/dashboard/individuali' },
     { key: 'progetti',    label: 'Progetti Strutturati', href: '/dashboard/progetti' },
@@ -1836,10 +1874,9 @@ function headerNoesys({ mondo = '', sub = '', briciole = [] } = {}) {
     <div class="nh-row nh-top">
       <a class="nh-brand" href="/dashboard" aria-label="Noesys Professional Coaching">${logoCompact(44)}<span class="nh-payoff">Professional<br>Coaching</span></a>
       <span class="nh-spacer"></span>
-      <div class="nh-search">
-        <input type="search" placeholder="Cerca cliente o progetto…" disabled aria-label="Ricerca — in arrivo">
-        <span class="nh-soon">in arrivo</span>
-      </div>
+      <form class="nh-search" action="/dashboard/cerca" method="get" role="search">
+        <input type="search" name="q" value="${esc(q)}" placeholder="Cerca cliente, committente, progetto…" aria-label="Cerca">
+      </form>
       <details class="nh-menu">
         <summary title="Funzioni">⚙</summary>
         <div class="nh-menu-box">
@@ -4510,6 +4547,94 @@ function fmtOre(n) {
 }
 
 // ── Estratto ICF: tabella percorsi + riepilogo, con download CSV. ──
+// Pagina dei risultati di ricerca (fase 1c). Sola lettura: ogni risultato è un
+// link alla sua scheda, nessun pulsante che agisca.
+// NIENTE <script> qui dentro, di proposito: senza JS inline non c'è il rischio
+// degli apostrofi dentro il template literal, e la pagina non ha nulla da fare
+// nel browser. Committenti e Lead non hanno una scheda propria nell'Hub: il
+// risultato mostra i loro dati sul posto e porta al rispettivo elenco.
+function cercaPage(q, ris, req) {
+  // il conteggio dice anche quando la lista è tagliata: un "30" muto farebbe
+  // credere che siano tutti (il limite delle query è 30 per gruppo)
+  const testa = (t, n) => `<div style="display:flex;align-items:baseline;gap:8px;margin:22px 0 8px">
+      <h2 style="margin:0">${t}</h2><span style="font-size:12px;color:#aaa">${n >= 30 ? 'primi 30 — restringi la ricerca' : n}</span></div>`;
+  const riga = (titolo, href, sotto, badge) => `<div class="ce-riga">
+      <div style="min-width:0">
+        ${href ? `<a href="${href}" class="ce-nome">${titolo}</a>` : `<span class="ce-nome">${titolo}</span>`}
+        ${sotto ? `<div class="ce-sotto">${sotto}</div>` : ''}
+      </div>
+      ${badge || ''}
+    </div>`;
+  const pezzi = (...v) => v.filter(Boolean).join(' · ');
+  // nome e cognome di una persona si uniscono con uno SPAZIO, non col puntino
+  // che separa le informazioni: altrimenti si legge "Marco · Bianchi"
+  const nomeCognome = (n, c) => [n, c].filter(Boolean).join(' ');
+
+  let corpo;
+  if (!q) {
+    corpo = `<div class="card"><p style="color:var(--muted);font-size:13.5px;margin:0">
+      Scrivi un nome nella casella qui sopra e premi Invio. Si cercano <strong>clienti</strong>, <strong>committenti</strong>, <strong>progetti</strong> e <strong>lead</strong>.</p></div>`;
+  } else if (ris && ris.errore) {
+    corpo = `<div class="card"><p style="color:#c0392b;font-size:13.5px;margin:0">La ricerca non è riuscita. Riprova fra un momento.</p></div>`;
+  } else {
+    const { clienti, committenti, progetti, leads } = ris;
+    const totale = clienti.length + committenti.length + progetti.length + leads.length;
+    if (!totale) {
+      corpo = `<div class="card"><p style="color:var(--muted);font-size:13.5px;margin:0">
+        Nessun risultato per <strong>${esc(q)}</strong>.<br>
+        <span style="font-size:12.5px">Si cercano i nomi di clienti, committenti, progetti e lead — non il contenuto di sessioni, report o note.</span></p></div>`;
+    } else {
+      corpo = `
+      ${clienti.length ? testa('Clienti', clienti.length) + `<div class="card ce-card">${clienti.map(c => riga(
+        esc(c.name || nomeCognome(c.nome, c.cognome) || '—'),
+        `/dashboard/clients/${c.id}`,
+        pezzi(c.area ? esc(c.area) : '', c.societa ? esc(c.societa) : '', c.email ? esc(c.email) : ''),
+        c.stato_cliente ? `<span class="badge">${esc(c.stato_cliente)}</span>` : ''
+      )).join('')}</div>` : ''}
+
+      ${committenti.length ? testa('Committenti', committenti.length) + `<div class="card ce-card">${committenti.map(k => riga(
+        esc(k.denominazione),
+        null,
+        pezzi(k.referente ? esc(k.referente) + (k.ruolo ? ' — ' + esc(k.ruolo) : '') : '', k.email ? esc(k.email) : '', k.telefono ? esc(k.telefono) : ''),
+        `<a href="/dashboard/committenti" class="ce-vai">Elenco Committenti ↗</a>`
+      )).join('')}</div>` : ''}
+
+      ${progetti.length ? testa('Progetti Strutturati', progetti.length) + `<div class="card ce-card">${progetti.map(p => riga(
+        esc(p.titolo),
+        `/dashboard/progetti/${p.id}`,
+        pezzi(esc(p.denominazione), p.area ? esc(p.area) : ''),
+        p.stato ? `<span class="badge">${esc(p.stato)}</span>` : ''
+      )).join('')}</div>` : ''}
+
+      ${leads.length ? testa('Lead', leads.length) + `<div class="card ce-card">${leads.map(l => riga(
+        esc(nomeCognome(l.nome, l.cognome) || '—'),
+        null,
+        pezzi(l.email ? esc(l.email) : '', l.telefono ? esc(l.telefono) : ''),
+        `<a href="/dashboard/leads" class="ce-vai">Elenco Lead ↗</a>`
+      )).join('')}</div>` : ''}`;
+    }
+  }
+
+  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Ricerca</title>${baseStyle()}
+  <style>
+    .ce-card { padding: 4px 0; }
+    .ce-riga { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 11px 20px; border-bottom: 1px solid #f1f3f6; }
+    .ce-riga:last-child { border-bottom: none; }
+    .ce-nome { font-size: 14px; font-weight: 700; color: var(--ink); text-decoration: none; }
+    a.ce-nome:hover { color: var(--blue); text-decoration: underline; }
+    .ce-sotto { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .ce-vai { font-size: 12px; color: var(--muted); text-decoration: none; white-space: nowrap; }
+    .ce-vai:hover { color: var(--blue); }
+  </style></head><body>
+  ${headerNoesys({ q })}
+  <div class="container" style="max-width:980px">
+    <h1>Ricerca</h1>
+    ${q ? `<p style="color:#aaa;font-size:13px">Risultati per <strong style="color:var(--ink)">${esc(q)}</strong></p>` : ''}
+    ${corpo}
+  </div>
+  </body></html>`;
+}
+
 function icfPage(rows, tot, clientiUnici, req) {
   const body = rows.length === 0
     ? `<tr><td colspan="9" class="empty">Nessun percorso registrato. I percorsi si aggiungono dalla scheda cliente.</td></tr>`
