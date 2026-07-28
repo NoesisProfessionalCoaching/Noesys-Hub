@@ -1682,11 +1682,20 @@ function baseStyle() {
         --blue:#1A5280; --blue-dark:#134265; --navy:#223B6E;
         --gold:#D8AE2E; --green:#4F8B73; --lime:#B7B342;
         --ink:#2C3E50; --muted:#6B7280; --hint:#9AA0AA;
-        --bg:#F4F6F8; --card:#FFFFFF; --line:#E6E9EE;
+        --bg:#FBF7F0; --card:#FFFFFF; --line:#E8E3DA;
         --grad:linear-gradient(90deg,#D8AE2E,#B7B342,#4F8B73,#1A5280);
       }
       * { box-sizing: border-box; margin: 0; padding: 0; }
-      body { font-family: 'Manrope', system-ui, -apple-system, sans-serif; background: var(--bg); min-height: 100vh; color: var(--ink); -webkit-font-smoothing: antialiased; }
+      /* Fondo bianco CALDO (regola di Germano): base avorio + due bagliori
+         larghissimi di luce, uno in alto a destra e un riflesso in basso a
+         sinistra. Gradienti lisci, MAI texture o nuvolato: provati e bocciati.
+         background-attachment fixed = la luce resta ferma mentre si scorre. */
+      body { font-family: 'Manrope', system-ui, -apple-system, sans-serif; color: var(--ink); min-height: 100vh; -webkit-font-smoothing: antialiased;
+        background-color: var(--bg);
+        background-image:
+          radial-gradient(1200px 720px at 84% -12%, rgba(255,252,244,0.95), rgba(255,252,244,0) 62%),
+          radial-gradient(1000px 620px at 6% 110%, rgba(255,255,255,0.92), rgba(255,255,255,0) 64%);
+        background-repeat: no-repeat; background-attachment: fixed; }
       .container { max-width: 900px; margin: 0 auto; padding: 28px 18px; }
       .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; box-shadow: 0 1px 3px rgba(16,33,60,0.04); padding: 22px; margin-bottom: 16px; }
       .btn { display: inline-block; padding: 9px 20px; border: none; border-radius: 22px; font-size: 13px; font-weight: 600; font-family: inherit; cursor: pointer; transition: all 0.15s; text-decoration: none; }
