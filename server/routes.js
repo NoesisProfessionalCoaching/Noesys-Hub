@@ -4343,6 +4343,31 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
 // RENDER DATI STRUMENTI (sola lettura)
 // ═══════════════════════════════════════════════════════
 
+// Anteprima delle tre MATRICI. Un disegno solo: cambiano le etichette (cfg) e,
+// per Covey, la percentuale di tempo su ogni voce più il subtotale del quadrante.
+function renderMatrice(d, cfg) {
+  const pesi = (cfg.pesi && d.pesi) ? d.pesi : null;
+  const chip = (testo, p) => `<span style="display:inline-block;margin:3px 4px 3px 0;padding:3px 10px;border-radius:14px;background:#eef1f5;color:#4a5568;font-size:12px">${esc(testo)}${p ? ` <strong style="color:#223B6E">${p}%</strong>` : ''}</span>`;
+  let totale = 0;
+  const blocks = cfg.quads.map(qd => {
+    const voci = (d[qd.key] || []).filter(c => c && c.text);
+    const sub = pesi ? voci.reduce((s, c) => s + (Number(pesi[c.id]) || 0), 0) : null;
+    if (sub) totale += sub;
+    return `<div style="margin-bottom:8px">
+      <span style="font-size:11px;font-weight:700;color:#6B7280;display:inline-flex;align-items:center">
+        <span style="display:inline-block;min-width:18px;height:16px;line-height:16px;text-align:center;padding:0 4px;border-radius:8px;background:#223B6E;color:#fff;font-size:10px;font-weight:700;margin-right:6px">${qd.r}</span>${esc(qd.q)}${sub != null ? ` <span style="color:#9AA0AA;font-weight:600;margin-left:6px">${sub}% del tempo</span>` : ''}</span><br>
+      ${voci.length ? voci.map(c => chip(c.text, pesi ? (Number(pesi[c.id]) || 0) : null)).join('') : '<span style="color:#aaa;font-size:12px">—</span>'}
+    </div>`;
+  }).join('');
+  const testa = d.decisione
+    ? `<div style="margin-bottom:10px"><span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#9AA0AA">${esc(cfg.campo)}</span><br><span style="font-size:14px;font-weight:700;color:#223B6E">${esc(d.decisione)}</span></div>`
+    : '';
+  const coda = (pesi && totale)
+    ? `<div style="font-size:11px;color:#9AA0AA;margin-top:6px">Tempo distribuito: <strong style="color:${totale === 100 ? '#4F8B73' : '#9AA0AA'}">${totale}%</strong></div>`
+    : '';
+  return `${testa}${blocks}${coda}`;
+}
+
 function renderSessionData(tool, jsonStr) {
   let d;
   try { d = JSON.parse(jsonStr); } catch(e) { return '<em style="color:#aaa">Dati non leggibili</em>'; }
@@ -4361,7 +4386,11 @@ function renderSessionData(tool, jsonStr) {
       return `<span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#9AA0AA">Abilità selezionate</span><br>
         ${abilita.length ? abilita.map(v => `<span style="display:inline-block;margin:3px 4px 3px 0;padding:3px 10px;border-radius:14px;background:#eef1f5;color:#4a5568;font-size:12px">${esc(v)}</span>`).join('') : '<span style="color:#aaa;font-size:12px">—</span>'}`;
     }
-    case 'ruotavita': {
+    // Le due ruote nuove salvano esattamente come la Ruota della Vita
+    // ({areas:[{name,value}]}): stesso disegno, nessuna riga in più.
+    case 'ruotavita':
+    case 'ruota-leadership':
+    case 'ruota-management': {
       const aree = (d.areas || []).filter(a => a.value !== null && a.value !== undefined);
       return `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px">
         ${aree.map(a => {
@@ -4399,24 +4428,34 @@ function renderSessionData(tool, jsonStr) {
       return `<span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#9AA0AA">Persone</span><br>
         ${persone.length ? persone.map(p => `<span style="display:inline-block;margin:3px 4px 3px 0;padding:3px 10px;border-radius:14px;background:#eef1f5;color:#4a5568;font-size:12px">${esc(p.name)}${p.role ? ` <em style="color:#9AA0AA">${esc(p.role)}</em>` : ''}</span>`).join('') : '<span style="color:#aaa;font-size:12px">—</span>'}`;
     }
-    case 'logica-cartesiana': {
-      const quads = [
+    // Le tre MATRICI (Logica Cartesiana, SWOT, Covey/Eisenhower) sono lo stesso
+    // strumento con parole diverse: un campo in cima + quattro elenchi di voci
+    // {id,text}. Cambiano solo le etichette. Covey ha in più la percentuale di
+    // tempo per singola voce (la sua Fase 2): quella si mostra, ed è il motivo per
+    // cui lo strumento esiste (deciso da Germano 28/07).
+    case 'logica-cartesiana':
+      return renderMatrice(d, { campo: 'Decisione', quads: [
         { r:'I',   key:'accade_faccio',       q:'Cosa accade se lo faccio?' },
         { r:'II',  key:'accade_nonfaccio',    q:'Cosa accade se non lo faccio?' },
         { r:'III', key:'nonaccade_faccio',    q:'Cosa non accade se lo faccio?' },
-        { r:'IV',  key:'nonaccade_nonfaccio', q:'Cosa non accade se non lo faccio?' }
-      ];
-      const chip = t => `<span style="display:inline-block;margin:3px 4px 3px 0;padding:3px 10px;border-radius:14px;background:#eef1f5;color:#4a5568;font-size:12px">${esc(t)}</span>`;
-      const blocks = quads.map(qd => {
-        const items = (d[qd.key] || []).map(c => c && c.text).filter(Boolean);
-        return `<div style="margin-bottom:8px">
-          <span style="font-size:11px;font-weight:700;color:#6B7280;display:inline-flex;align-items:center">
-            <span style="display:inline-block;min-width:18px;height:16px;line-height:16px;text-align:center;padding:0 4px;border-radius:8px;background:#223B6E;color:#fff;font-size:10px;font-weight:700;margin-right:6px">${qd.r}</span>${qd.q}</span><br>
-          ${items.length ? items.map(chip).join('') : '<span style="color:#aaa;font-size:12px">—</span>'}
-        </div>`;
-      }).join('');
-      return `${d.decisione ? `<div style="margin-bottom:10px"><span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#9AA0AA">Decisione</span><br><span style="font-size:14px;font-weight:700;color:#223B6E">${esc(d.decisione)}</span></div>` : ''}${blocks}`;
-    }
+        { r:'IV',  key:'nonaccade_nonfaccio', q:'Cosa non accade se non lo faccio?' },
+      ] });
+    case 'swot':
+      return renderMatrice(d, { campo: 'Attività analizzata', quads: [
+        { r:'I',   key:'forze',       q:'Forze · interni, positivi' },
+        { r:'II',  key:'debolezze',   q:'Debolezze · interni, negativi' },
+        { r:'III', key:'opportunita', q:'Opportunità · esterni, positivi' },
+        { r:'IV',  key:'minacce',     q:'Minacce · esterni, negativi' },
+      ] });
+    case 'covey-eisenhower':
+      // NIENTE nomi dei quadranti (Crisi/Qualità/Delega/Sprechi): Germano li ha
+      // fatti togliere dallo strumento perché giudicanti. Restano gli assi.
+      return renderMatrice(d, { campo: 'Ambito osservato', pesi: true, quads: [
+        { r:'I',   key:'crisi',    q:'Urgente · importante' },
+        { r:'II',  key:'qualita',  q:'Non urgente · importante' },
+        { r:'III', key:'delega',   q:'Urgente · non importante' },
+        { r:'IV',  key:'sprechi',  q:'Non urgente · non importante' },
+      ] });
     default:
       // Le quattro anteprime mancanti (ruote leadership/management, SWOT,
       // Covey/Eisenhower) sono una fetta a sé: qui si dichiara, non si finge.
@@ -4428,10 +4467,14 @@ function renderSessionData(tool, jsonStr) {
 // HELPER
 // ═══════════════════════════════════════════════════════
 
+// Data e ora all'italiana (12/06/2026 10:40). Prima usciva in formato tecnico
+// (2026-06-12 10:40), l'unico posto in tutto l'Hub che non parlava italiano.
 function fmtDate(d) {
   if (!d) return '—';
   const s = d instanceof Date ? d.toISOString() : String(d);
-  return s.slice(0, 16).replace('T', ' ');
+  const giorno = itDate(s);
+  const ora = s.slice(11, 16);
+  return ora ? `${giorno} ${ora}` : giorno;
 }
 
 // Data 'AAAA-MM-GG' → 'GG/MM/AAAA' (formato italiano per la visualizzazione).
