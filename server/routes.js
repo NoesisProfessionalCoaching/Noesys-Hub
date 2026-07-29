@@ -112,7 +112,7 @@ router.get('/dashboard/individuali', requireCoach, async (req, res) => {
 // Tutti i numeri vengono da dati che l'Hub ha già: nessun campo nuovo.
 async function mostraHome(req, res) {
   try {
-    const [ind, prog, comm, lead, bozze, daChiudere, azioni, richiami] = await Promise.all([
+    const [ind, prog, comm, lead, bozze, daChiudere, azioni, richiami, appuntamenti] = await Promise.all([
       db.query(`SELECT count(*)::int n FROM clients c
                  WHERE EXISTS (SELECT 1 FROM percorsi pi WHERE pi.client_id = c.id AND pi.progetto_id IS NULL)
                     OR NOT EXISTS (SELECT 1 FROM percorsi pt WHERE pt.client_id = c.id
@@ -142,6 +142,27 @@ async function mostraHome(req, res) {
                  WHERE stato <> 'convertito' AND data_prossimo_contatto IS NOT NULL
                    AND data_prossimo_contatto <= CURRENT_DATE + 7
                  ORDER BY data_prossimo_contatto LIMIT 6`),
+      // ── Prossimi appuntamenti ──────────────────────────────────────────────
+      // Non è un campo nuovo: la data della sessione successiva la scrive già
+      // l'automazione dei report nel campo `scadenza` della sessione ("di norma è
+      // la data della sessione SUCCESSIVA, che il report indica in chiusura").
+      // Qui si legge e basta. Di ogni percorso attivo si guarda la sessione più
+      // recente che porti una data vera (il campo a volte è "—" o testo libero):
+      // se quella data non è ancora passata, l'appuntamento compare. Passata,
+      // sparisce da solo. "Oggi" è il giorno italiano, non quello del server UTC.
+      db.query(`SELECT cl.id AS client_id, cl.name, u.scad
+                  FROM percorsi p
+                  JOIN clients cl ON cl.id = p.client_id
+                  JOIN LATERAL (
+                        SELECT s.scadenza::date AS scad
+                          FROM sedute s
+                         WHERE s.percorso_id = p.id AND s.stato = 'confermata'
+                           AND s.scadenza ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+                         ORDER BY s.data DESC NULLS LAST
+                         LIMIT 1) u ON TRUE
+                 WHERE p.stato = 'attivo'
+                   AND u.scad >= (NOW() AT TIME ZONE 'Europe/Rome')::date
+                 ORDER BY u.scad`),
     ]);
     res.send(homePage({
       nIndividuali: ind.rows[0].n,
@@ -150,6 +171,7 @@ async function mostraHome(req, res) {
       nLead: lead.rows[0].n, nLeadAperti: lead.rows[0].aperti,
       bozze: bozze.rows, daChiudere: daChiudere.rows,
       azioni: azioni.rows, richiami: richiami.rows,
+      appuntamenti: appuntamenti.rows,
     }, req));
   } catch (err) {
     console.error('[home]', err);
@@ -1949,6 +1971,12 @@ function homePage(d, req) {
   const voce = (href, testo, coda) => `
     <a class="hm-voce" href="${href}"><span>${testo}</span><span class="hm-voce-coda">${coda || ''}</span></a>`;
 
+  // Il prossimo appuntamento di ogni percorso, come lo dice il report dell'ultima
+  // sessione. Sta per primo perché è la cosa che si guarda per prima. Quando la
+  // data è passata la riga non c'è più: il gruppo si mostra solo se ha voci.
+  const gAppuntamenti = gruppo('Prossimi appuntamenti', d.appuntamenti.map(a => voce(
+    `/dashboard/clients/${a.client_id}`, esc(a.name), itDate(a.scad))));
+
   const gBozze = gruppo('Sessioni in bozza da approvare', d.bozze.map(b => voce(
     b.client_id ? `/dashboard/clients/${b.client_id}` : (b.progetto_id ? `/dashboard/progetti/${b.progetto_id}` : '/dashboard/individuali'),
     b.cliente ? esc(b.cliente) : (b.progetto ? esc(b.progetto) + ' <span style="color:var(--hint)">· percorso di gruppo</span>' : 'Sessione'),
@@ -1966,7 +1994,7 @@ function homePage(d, req) {
     '/dashboard/leads', esc([l.nome, l.cognome].filter(Boolean).join(' ')),
     l.data_prossimo_contatto ? itDate(l.data_prossimo_contatto) : '')));
 
-  const attenzione = [gBozze, gChiudere, gAzioni, gLead].filter(Boolean).join('');
+  const attenzione = [gAppuntamenti, gBozze, gChiudere, gAzioni, gLead].filter(Boolean).join('');
 
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub</title>${baseStyle()}</head><body>
   ${headerNoesys({})}
