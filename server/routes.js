@@ -950,11 +950,23 @@ router.delete('/dashboard/leads/:id', requireCoach, async (req, res) => {
 
 // Carica i percorsi con il cliente e calcola ore pagate/pro bono per ognuno,
 // più i totali di riepilogo. Condiviso tra la pagina e l'export CSV.
+// REGOLA DI CONTEGGIO (2026-07-29): entra nell'estratto solo un percorso con
+// ALMENO UNA SESSIONE FATTA. Nessuna clausola sullo stato del percorso: le ore di
+// un percorso interrotto sono state erogate davvero e valgono per la certificazione.
+// Due modi di avere ore, ed entrambi contano:
+//   • ore_fatte > 0 → comprende le ore scritte a mano (ore_storiche, pulsanti ✎ ore),
+//     senza cui sparirebbero i percorsi storici (Sudano, Rappo, Ros);
+//   • almeno una seduta CONFERMATA → copre la sessione appena registrata a 0 ore.
+// Le sedute in bozza non contano (come ovunque nel conteggio ore).
+// È sicura per i totali: un percorso a 0 ore aggiunge 0 a ogni somma, quindi
+// togliendolo nessun numero cambia — si pulisce solo l'elenco dai gusci di prova.
 async function loadIcf() {
   const result = await db.query(`
     SELECT p.*, c.name AS client_name, c.email, c.telefono
     FROM percorsi p
     JOIN clients c ON c.id = p.client_id
+    WHERE COALESCE(p.ore_fatte, 0) > 0
+       OR EXISTS (SELECT 1 FROM sedute s WHERE s.percorso_id = p.id AND s.stato <> 'bozza')
     ORDER BY c.name, p.data_inizio NULLS LAST, p.created_at
   `);
   const rows = result.rows.map(p => {
