@@ -164,7 +164,9 @@ async function mostraHome(req, res) {
                          LIMIT 1) u ON TRUE
                  WHERE p.stato = 'attivo'
                    AND u.scad >= (NOW() AT TIME ZONE 'Europe/Rome')::date
-                 ORDER BY u.scad`),
+                 -- A parità di giorno conta l'ora: lpad perché l'orario è testo e
+                 -- "9:00" senza lo zero finirebbe dopo "10:30".
+                 ORDER BY u.scad, lpad(u.ora, 5, '0') NULLS LAST`),
     ]);
     res.send(homePage({
       nIndividuali: ind.rows[0].n,
