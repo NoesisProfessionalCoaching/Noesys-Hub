@@ -150,11 +150,13 @@ async function mostraHome(req, res) {
       // recente che porti una data vera (il campo a volte è "—" o testo libero):
       // se quella data non è ancora passata, l'appuntamento compare. Passata,
       // sparisce da solo. "Oggi" è il giorno italiano, non quello del server UTC.
-      db.query(`SELECT cl.id AS client_id, cl.name, u.scad
+      db.query(`SELECT cl.id AS client_id, cl.name, u.scad, u.ora
                   FROM percorsi p
                   JOIN clients cl ON cl.id = p.client_id
                   JOIN LATERAL (
-                        SELECT s.scadenza::date AS scad
+                        SELECT s.scadenza::date AS scad,
+                               CASE WHEN s.prossima_ora ~ '^[0-9]{1,2}:[0-9]{2}$'
+                                    THEN s.prossima_ora END AS ora
                           FROM sedute s
                          WHERE s.percorso_id = p.id AND s.stato = 'confermata'
                            AND s.scadenza ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
@@ -638,6 +640,9 @@ function sedutaFields(b) {
   return {
     obiettivo: val('obiettivo'), argomenti: val('argomenti'), attivita: val('attivita'),
     scadenza: val('scadenza'), eseguita: val('eseguita'), note: val('note'),
+    // L'ora del prossimo appuntamento: si accetta solo se è davvero un orario
+    // (il campo del browser dà HH:MM; l'estrattore può scrivere "—").
+    prossima_ora: /^\d{1,2}:\d{2}$/.test(String((b.prossima_ora || '')).trim()) ? String(b.prossima_ora).trim() : null,
   };
 }
 
@@ -648,10 +653,10 @@ router.post('/dashboard/clients/:id/percorsi/:pid/sedute', requireCoach, express
     const f = sedutaFields(req.body);
     const sid = uuidv4();
     await db.query(
-      `INSERT INTO sedute (id, percorso_id, client_id, tipo, data, ore, obiettivo, argomenti, attivita, scadenza, eseguita, note)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      `INSERT INTO sedute (id, percorso_id, client_id, tipo, data, ore, obiettivo, argomenti, attivita, scadenza, prossima_ora, eseguita, note)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
       [sid, req.params.pid, req.params.id, t, req.body.data || null, oreForTipo(t, req.body.ore),
-       f.obiettivo, f.argomenti, f.attivita, f.scadenza, f.eseguita, f.note]
+       f.obiettivo, f.argomenti, f.attivita, f.scadenza, f.prossima_ora, f.eseguita, f.note]
     );
     await recomputePercorso(req.params.pid);
     res.json({ ok: true, id: sid });
@@ -664,10 +669,10 @@ router.post('/dashboard/clients/:id/percorsi/:pid/sedute/:sid', requireCoach, ex
     const t = normTipo(req.body.tipo);
     const f = sedutaFields(req.body);
     await db.query(
-      `UPDATE sedute SET tipo=$1, data=$2, ore=$3, obiettivo=$4, argomenti=$5, attivita=$6, scadenza=$7, eseguita=$8, note=$9
-       WHERE id=$10 AND percorso_id=$11`,
+      `UPDATE sedute SET tipo=$1, data=$2, ore=$3, obiettivo=$4, argomenti=$5, attivita=$6, scadenza=$7, prossima_ora=$8, eseguita=$9, note=$10
+       WHERE id=$11 AND percorso_id=$12`,
       [t, req.body.data || null, oreForTipo(t, req.body.ore),
-       f.obiettivo, f.argomenti, f.attivita, f.scadenza, f.eseguita, f.note, req.params.sid, req.params.pid]
+       f.obiettivo, f.argomenti, f.attivita, f.scadenza, f.prossima_ora, f.eseguita, f.note, req.params.sid, req.params.pid]
     );
     await recomputePercorso(req.params.pid);
     res.json({ ok: true });
@@ -750,10 +755,10 @@ router.post('/dashboard/progetti/:id/percorsi/:pid/sedute', requireCoach, expres
     const f = sedutaFields(req.body);
     const sid = uuidv4();
     await db.query(
-      `INSERT INTO sedute (id, percorso_id, client_id, tipo, data, ore, obiettivo, argomenti, attivita, scadenza, eseguita, note)
-       VALUES ($1,$2,NULL,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      `INSERT INTO sedute (id, percorso_id, client_id, tipo, data, ore, obiettivo, argomenti, attivita, scadenza, prossima_ora, eseguita, note)
+       VALUES ($1,$2,NULL,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
       [sid, req.params.pid, t, req.body.data || null, oreForTipo(t, req.body.ore),
-       f.obiettivo, f.argomenti, f.attivita, f.scadenza, f.eseguita, f.note]
+       f.obiettivo, f.argomenti, f.attivita, f.scadenza, f.prossima_ora, f.eseguita, f.note]
     );
     await recomputePercorso(req.params.pid);
     res.json({ ok: true, id: sid });
@@ -765,10 +770,10 @@ router.post('/dashboard/progetti/:id/percorsi/:pid/sedute/:sid', requireCoach, e
     const t = normTipo(req.body.tipo);
     const f = sedutaFields(req.body);
     await db.query(
-      `UPDATE sedute SET tipo=$1, data=$2, ore=$3, obiettivo=$4, argomenti=$5, attivita=$6, scadenza=$7, eseguita=$8, note=$9
-       WHERE id=$10 AND percorso_id=$11`,
+      `UPDATE sedute SET tipo=$1, data=$2, ore=$3, obiettivo=$4, argomenti=$5, attivita=$6, scadenza=$7, prossima_ora=$8, eseguita=$9, note=$10
+       WHERE id=$11 AND percorso_id=$12`,
       [t, req.body.data || null, oreForTipo(t, req.body.ore),
-       f.obiettivo, f.argomenti, f.attivita, f.scadenza, f.eseguita, f.note, req.params.sid, req.params.pid]
+       f.obiettivo, f.argomenti, f.attivita, f.scadenza, f.prossima_ora, f.eseguita, f.note, req.params.sid, req.params.pid]
     );
     await recomputePercorso(req.params.pid);
     res.json({ ok: true });
@@ -1790,6 +1795,16 @@ function baseStyle() {
       .flash-error { background: #fdf0ef; color: #c0392b; border: 1px solid #f3c9c4; border-radius: 9px; padding: 11px 14px; margin-bottom: 16px; font-size: 13px; }
       .modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.3); z-index:100; align-items:center; justify-content:center; padding:16px; }
       .modal-box { background:#fff; border-radius:12px; padding:26px; width:520px; max-width:100%; box-shadow:0 8px 32px rgba(0,0,0,0.18); max-height:90vh; overflow-y:auto; }
+      /* Su uno schermo da portatile la finestrella della sessione e' piu' lunga
+         dello schermo: le Note (ultima voce) e i pulsanti finivano fuori, e su
+         macOS la barra di scorrimento non si vede, quindi niente lo diceva.
+         Rimedio senza toccare il contenuto: il titolo resta appeso in alto e la
+         riga dei pulsanti in basso, scorrono solo i campi in mezzo. Cosi' Salva
+         e Annulla sono sempre a portata e non si perde mai il punto in cui si e'.
+         dvh accanto a vh: sui tablet segue la tastiera, dove vh non la vede. */
+      .modal-box > h2 { position:sticky; top:-26px; z-index:2; background:#fff; margin:-26px -26px 12px; padding:26px 26px 12px; border-radius:12px 12px 0 0; }
+      .modal-box > div:last-child { position:sticky; bottom:-26px; z-index:2; background:#fff; margin:8px -26px -26px; padding:14px 26px 26px; border-top:1px solid var(--line); border-radius:0 0 12px 12px; }
+      @supports (max-height: 90dvh) { .modal-box { max-height:90dvh; } }
       .field-label { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:0.06em; font-weight:600; margin-bottom:3px; }
       .field-value { font-size:13px; color:var(--ink); }
       /* Accordion — report sessioni / strumenti */
@@ -1974,8 +1989,11 @@ function homePage(d, req) {
   // Il prossimo appuntamento di ogni percorso, come lo dice il report dell'ultima
   // sessione. Sta per primo perché è la cosa che si guarda per prima. Quando la
   // data è passata la riga non c'è più: il gruppo si mostra solo se ha voci.
+  // L'ora c'è solo se il report la diceva: senza, resta la sola data (meglio di
+  // un orario inventato).
   const gAppuntamenti = gruppo('Prossimi appuntamenti', d.appuntamenti.map(a => voce(
-    `/dashboard/clients/${a.client_id}`, esc(a.name), itDate(a.scad))));
+    `/dashboard/clients/${a.client_id}`, esc(a.name),
+    itDate(a.scad) + (a.ora ? ` · <strong style="color:var(--ink)">${esc(a.ora)}</strong>` : ''))));
 
   const gBozze = gruppo('Sessioni in bozza da approvare', d.bozze.map(b => voce(
     b.client_id ? `/dashboard/clients/${b.client_id}` : (b.progetto_id ? `/dashboard/progetti/${b.progetto_id}` : '/dashboard/individuali'),
@@ -2286,7 +2304,7 @@ function renderSedutaRow(s) {
     <td>${cellText(s.obiettivo)}</td>
     <td>${cellList(s.argomenti)}</td>
     <td>${cellList(s.attivita)}</td>
-    <td style="white-space:nowrap">${cellDate(s.scadenza)}</td>
+    <td style="white-space:nowrap">${cellDate(s.scadenza)}${/^\d{1,2}:\d{2}$/.test(s.prossima_ora || '') ? `<div style="font-size:11px;color:var(--hint);margin-top:2px">ore ${esc(s.prossima_ora)}</div>` : ''}</td>
     <td style="text-align:center">${cellEseg(s.eseguita)}</td>
     <td>${cellText(noteVal)}</td>
     <td style="white-space:nowrap">${approvaBtn}<button onclick="editSeduta('${s.id}')" class="btn btn-neutral btn-sm" title="Modifica">✎</button> <button onclick="delSeduta('${s.id}','${s.percorso_id}')" class="btn btn-danger btn-sm" title="${isBozza ? 'Scarta' : 'Elimina'}">🗑</button></td>
@@ -2805,8 +2823,9 @@ Germano`;
       <div class="form-group"><label>Obiettivo <span style="font-size:11px;color:#aaa;text-transform:none;letter-spacing:0">(una frase)</span></label><textarea id="s-obiettivo" style="min-height:54px"></textarea></div>
       <div class="form-group"><label>Argomenti trattati <span style="font-size:11px;color:#aaa;text-transform:none;letter-spacing:0">(un punto per riga, inizia con -)</span></label><textarea id="s-argomenti" style="min-height:72px" placeholder="- primo argomento&#10;- secondo argomento"></textarea></div>
       <div class="form-group"><label>Attività concordate <span style="font-size:11px;color:#aaa;text-transform:none;letter-spacing:0">(un punto per riga, inizia con -)</span></label><textarea id="s-attivita" style="min-height:60px" placeholder="- prima attività&#10;- **Cliente:** seconda attività"></textarea></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div style="display:grid;grid-template-columns:1.2fr 0.8fr 1fr;gap:12px">
         <div class="form-group"><label>Scadenza <span style="font-size:11px;color:#aaa;text-transform:none;letter-spacing:0">(data)</span></label><input id="s-scadenza" type="date"></div>
+        <div class="form-group"><label>Ora <span style="font-size:11px;color:#aaa;text-transform:none;letter-spacing:0">(prossimo)</span></label><input id="s-ora" type="time"></div>
         <div class="form-group"><label>Eseguita</label><select id="s-eseguita"><option value="">—</option><option value="✓">✓ fatta</option><option value="✗">✗ non fatta</option></select></div>
       </div>
       <div class="form-group"><label>Note</label><textarea id="s-note" style="min-height:60px"></textarea></div>
@@ -2840,7 +2859,7 @@ Germano`;
   <div id="toast" style="display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--navy);color:#fff;padding:10px 20px;border-radius:20px;font-size:13px;font-weight:600;z-index:200">Fatto!</div>
   <script>
     const CID = '${client.id}';
-    const SEDUTE = ${JSON.stringify(Object.fromEntries(sedute.map(s => [s.id, { id: s.id, percorso_id: s.percorso_id, tipo: s.tipo, data: s.data, ore: Number(s.ore), obiettivo: s.obiettivo || '', argomenti: s.argomenti || '', attivita: s.attivita || '', scadenza: s.scadenza || '', eseguita: s.eseguita || '', note: s.note || '' }]))).replace(/</g, '\\u003c')};
+    const SEDUTE = ${JSON.stringify(Object.fromEntries(sedute.map(s => [s.id, { id: s.id, percorso_id: s.percorso_id, tipo: s.tipo, data: s.data, ore: Number(s.ore), obiettivo: s.obiettivo || '', argomenti: s.argomenti || '', attivita: s.attivita || '', scadenza: s.scadenza || '', prossima_ora: s.prossima_ora || '', eseguita: s.eseguita || '', note: s.note || '' }]))).replace(/</g, '\\u003c')};
     const ORE_TIPO = { Intake: 2, Ongoing: 1, Final: null };
     function oreAuto() {
       const t = document.getElementById('s-tipo').value;
@@ -2856,7 +2875,7 @@ Germano`;
       const ps = document.getElementById('s-percorso'); if (ps.options.length) ps.selectedIndex = 0;
       document.getElementById('s-tipo').value = 'Ongoing';
       document.getElementById('s-data').value = new Date().toISOString().slice(0, 10);
-      ['s-obiettivo','s-argomenti','s-attivita','s-scadenza','s-eseguita','s-note'].forEach(id => document.getElementById(id).value = '');
+      ['s-obiettivo','s-argomenti','s-attivita','s-scadenza','s-ora','s-eseguita','s-note'].forEach(id => document.getElementById(id).value = '');
       oreAuto();
       document.getElementById('modal-seduta').style.display = 'flex';
     }
@@ -2871,6 +2890,9 @@ Germano`;
       document.getElementById('s-argomenti').value = s.argomenti || '';
       document.getElementById('s-attivita').value = s.attivita || '';
       document.getElementById('s-scadenza').value = s.scadenza || '';
+      // \\d e non \d: siamo dentro una template literal, dove \d diventerebbe una
+      // semplice "d" e la regola non riconoscerebbe piu' un orario (campo vuoto).
+      document.getElementById('s-ora').value = /^\\d{1,2}:\\d{2}$/.test(s.prossima_ora || '') ? s.prossima_ora : '';
       document.getElementById('s-eseguita').value = s.eseguita || '';
       document.getElementById('s-note').value = s.note || '';
       oreAuto();
@@ -2882,7 +2904,7 @@ Germano`;
       if (!pid) { alert('Serve un percorso'); return; }
       const sid = document.getElementById('s-id').value;
       const g = id => document.getElementById(id).value;
-      const body = { tipo: g('s-tipo'), data: g('s-data') || null, ore: g('s-ore') || 0, obiettivo: g('s-obiettivo'), argomenti: g('s-argomenti'), attivita: g('s-attivita'), scadenza: g('s-scadenza'), eseguita: g('s-eseguita'), note: g('s-note') };
+      const body = { tipo: g('s-tipo'), data: g('s-data') || null, ore: g('s-ore') || 0, obiettivo: g('s-obiettivo'), argomenti: g('s-argomenti'), attivita: g('s-attivita'), scadenza: g('s-scadenza'), prossima_ora: g('s-ora'), eseguita: g('s-eseguita'), note: g('s-note') };
       const url = '/dashboard/clients/' + CID + '/percorsi/' + pid + '/sedute' + (sid ? ('/' + sid) : '');
       await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       location.reload();
@@ -3957,8 +3979,9 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
       <div class="form-group"><label>Obiettivo <span style="font-size:11px;color:#aaa;text-transform:none;letter-spacing:0">(comune al gruppo, una frase)</span></label><textarea id="s-obiettivo" style="min-height:54px"></textarea></div>
       <div class="form-group"><label>Argomenti trattati <span style="font-size:11px;color:#aaa;text-transform:none;letter-spacing:0">(un punto per riga; cita i nomi dei singoli dove serve)</span></label><textarea id="s-argomenti" style="min-height:72px" placeholder="- primo argomento&#10;- **Marco:** ha portato…"></textarea></div>
       <div class="form-group"><label>Attività concordate <span style="font-size:11px;color:#aaa;text-transform:none;letter-spacing:0">(un punto per riga)</span></label><textarea id="s-attivita" style="min-height:60px" placeholder="- attività comune&#10;- **Anna:** attività individuale"></textarea></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div style="display:grid;grid-template-columns:1.2fr 0.8fr 1fr;gap:12px">
         <div class="form-group"><label>Scadenza <span style="font-size:11px;color:#aaa;text-transform:none;letter-spacing:0">(data)</span></label><input id="s-scadenza" type="date"></div>
+        <div class="form-group"><label>Ora <span style="font-size:11px;color:#aaa;text-transform:none;letter-spacing:0">(prossimo)</span></label><input id="s-ora" type="time"></div>
         <div class="form-group"><label>Eseguita</label><select id="s-eseguita"><option value="">—</option><option value="✓">✓ fatta</option><option value="✗">✗ non fatta</option></select></div>
       </div>
       <div class="form-group"><label>Note</label><textarea id="s-note" style="min-height:60px"></textarea></div>
@@ -3977,7 +4000,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
     const COLL_PID = ${JSON.stringify(percCond ? percCond.id : '')};
     const COLL_FINE_ISO = ${JSON.stringify(collFineIso)};   // data dell'ultima sessione confermata
     const COLL_FINE_IT  = ${JSON.stringify(collFineIt)};
-    const SEDUTE = ${JSON.stringify(Object.fromEntries(seduteColl.map(s => [s.id, { id: s.id, percorso_id: s.percorso_id, tipo: s.tipo, data: s.data, ore: Number(s.ore), obiettivo: s.obiettivo || '', argomenti: s.argomenti || '', attivita: s.attivita || '', scadenza: s.scadenza || '', eseguita: s.eseguita || '', note: s.note || '' }]))).replace(/</g, '\\u003c')};
+    const SEDUTE = ${JSON.stringify(Object.fromEntries(seduteColl.map(s => [s.id, { id: s.id, percorso_id: s.percorso_id, tipo: s.tipo, data: s.data, ore: Number(s.ore), obiettivo: s.obiettivo || '', argomenti: s.argomenti || '', attivita: s.attivita || '', scadenza: s.scadenza || '', prossima_ora: s.prossima_ora || '', eseguita: s.eseguita || '', note: s.note || '' }]))).replace(/</g, '\\u003c')};
     const ORE_TIPO_COLL = { Intake: 2, Ongoing: 1, Final: null };
     function oreAuto() {
       const t = document.getElementById('s-tipo').value;
@@ -3991,7 +4014,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
       document.getElementById('s-id').value = '';
       document.getElementById('s-tipo').value = 'Ongoing';
       document.getElementById('s-data').value = new Date().toISOString().slice(0, 10);
-      ['s-obiettivo','s-argomenti','s-attivita','s-scadenza','s-eseguita','s-note'].forEach(id => document.getElementById(id).value = '');
+      ['s-obiettivo','s-argomenti','s-attivita','s-scadenza','s-ora','s-eseguita','s-note'].forEach(id => document.getElementById(id).value = '');
       oreAuto();
       document.getElementById('modal-seduta').style.display = 'flex';
     }
@@ -4005,6 +4028,9 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
       document.getElementById('s-argomenti').value = s.argomenti || '';
       document.getElementById('s-attivita').value = s.attivita || '';
       document.getElementById('s-scadenza').value = s.scadenza || '';
+      // \\d e non \d: siamo dentro una template literal, dove \d diventerebbe una
+      // semplice "d" e la regola non riconoscerebbe piu' un orario (campo vuoto).
+      document.getElementById('s-ora').value = /^\\d{1,2}:\\d{2}$/.test(s.prossima_ora || '') ? s.prossima_ora : '';
       document.getElementById('s-eseguita').value = s.eseguita || '';
       document.getElementById('s-note').value = s.note || '';
       oreAuto();
@@ -4014,7 +4040,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
     async function saveSeduta() {
       const sid = document.getElementById('s-id').value;
       const g = id => document.getElementById(id).value;
-      const body = { tipo: g('s-tipo'), data: g('s-data') || null, ore: g('s-ore') || 0, obiettivo: g('s-obiettivo'), argomenti: g('s-argomenti'), attivita: g('s-attivita'), scadenza: g('s-scadenza'), eseguita: g('s-eseguita'), note: g('s-note') };
+      const body = { tipo: g('s-tipo'), data: g('s-data') || null, ore: g('s-ore') || 0, obiettivo: g('s-obiettivo'), argomenti: g('s-argomenti'), attivita: g('s-attivita'), scadenza: g('s-scadenza'), prossima_ora: g('s-ora'), eseguita: g('s-eseguita'), note: g('s-note') };
       const url = '/dashboard/progetti/' + PID + '/percorsi/' + COLL_PID + '/sedute' + (sid ? ('/' + sid) : '');
       await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       ricaricaConservando();

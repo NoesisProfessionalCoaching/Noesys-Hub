@@ -186,6 +186,11 @@ async function init() {
   await query(`ALTER TABLE sedute ADD COLUMN IF NOT EXISTS scadenza   TEXT`);
   await query(`ALTER TABLE sedute ADD COLUMN IF NOT EXISTS eseguita   TEXT`);
   await query(`ALTER TABLE sedute ADD COLUMN IF NOT EXISTS note       TEXT`);
+  // Ora del PROSSIMO appuntamento (2026-07-30). La data ce l'ha già `scadenza`
+  // ("di norma la data della sessione successiva"): qui va solo l'orario, HH:MM,
+  // così il promemoria in home dice giorno E ora senza duplicare la data.
+  // Testo e non TIME perché l'estrattore scrive "—" quando il report non lo dà.
+  await query(`ALTER TABLE sedute ADD COLUMN IF NOT EXISTS prossima_ora TEXT`);
 
   // Fetta B (2026-07-23) — sessioni COLLETTIVE (team/group). La riga di una sessione
   // di gruppo appartiene al percorso CONDIVISO, non a un singolo cliente: il titolare

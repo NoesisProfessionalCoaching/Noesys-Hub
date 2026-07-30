@@ -1,7 +1,8 @@
 // Estrazione di UNA riga della "Scheda Cliente" dal report di sessione (+ strumenti).
 // La Scheda Cliente è una tabella con una riga per sessione (modello storico Cowork):
 // data · sessione · OBIETTIVO · ARGOMENTI · ATTIVITÀ · SCADENZA · ESEGUITA · NOTE.
-// Qui estraiamo i 6 campi di contenuto; data e tipo li mette lo scanner.
+// Qui estraiamo i campi di contenuto (piu' l'ora del prossimo appuntamento, che serve
+// al promemoria in home); data e tipo li mette lo scanner.
 //
 // Modello: Opus 4.8, output strutturato (JSON), niente thinking (estrazione: veloce ed economica).
 const Anthropic = require('@anthropic-ai/sdk');
@@ -23,6 +24,7 @@ Regole ferme (rispettale alla lettera):
 - argomenti: ELENCO PUNTATO. Un punto per riga, ogni riga inizia con "- ". Punti brevi.
 - attivita: ELENCO PUNTATO, un punto per riga con "- ". Se un'attività è di una persona precisa, inizia col nome in grassetto: "- **Nome:** ...".
 - scadenza: una DATA in formato AAAA-MM-GG. Di norma è la data della sessione SUCCESSIVA, che il report indica in chiusura (es. "prossimo appuntamento 21 luglio" → 2026-07-21). Se il report indica una scadenza diversa per le attività, usa quella. Se nel report non c'è nessuna data, "—".
+- ora: l'ORARIO di inizio del prossimo appuntamento, formato HH:MM (24 ore). Sta nella stessa frase di chiusura della scadenza, ma non sempre con le stesse parole: "prossimo appuntamento giovedì 30 luglio ore 15:00" → "15:00"; "prima sessione ongoing fissata per lunedì 10 agosto, dalle 11:00 alle 12:00" → "11:00" (l'INIZIO); "martedì 11 ore 17:00-18:00, poi cadenza bisettimanale il lunedì 14:00" → "17:00" (il PRIMO appuntamento, non la cadenza futura). Se il report non dà l'orario del prossimo appuntamento, "—". Non dedurlo dall'orario di QUESTA sessione.
 - eseguita: "✓" se il report dice che le attività assegnate in precedenza sono state svolte, "✗" se non svolte, "—" se non applicabile (tipicamente una sessione nuova).
 - note: le conclusioni/considerazioni del COACH, riportando FEDELMENTE eventuali "Note conclusive del coach" (tra virgolette come nel report); più eventuali dati utili (prossimo appuntamento, spunti). Testo scorrevole e conciso.
 
@@ -31,6 +33,7 @@ Esempio di STILE (imita il formato, non il contenuto):
   argomenti: "- Difficoltà a chiedere aiuto\n- Freni emotivi: autonomia, non disturbare\n- Differenze caratteriali con i genitori"
   attivita: "- **Cliente:** individuare un supporto specifico da chiedere\n- Allenarsi a rispondere con calma agli aiuti non richiesti"
   scadenza: "2026-07-21"
+  ora: "15:00"
   eseguita: "—"
   note: "Note conclusive del coach: \"...\". Prossimo appuntamento 21/07 ore 15:00."
 
@@ -43,10 +46,11 @@ const SCHEMA = {
     argomenti: { type: 'string' },
     attivita:  { type: 'string' },
     scadenza:  { type: 'string' },
+    ora:       { type: 'string' },
     eseguita:  { type: 'string' },
     note:      { type: 'string' },
   },
-  required: ['obiettivo', 'argomenti', 'attivita', 'scadenza', 'eseguita', 'note'],
+  required: ['obiettivo', 'argomenti', 'attivita', 'scadenza', 'ora', 'eseguita', 'note'],
   additionalProperties: false,
 };
 
@@ -77,7 +81,7 @@ ${(reportText || '').trim() || '(report vuoto)'}
 === OUTPUT DEGLI STRUMENTI (contesto, in formato dati) ===
 ${(strumentiText || '').trim() || '(nessuno strumento disponibile)'}
 
-Estrai i 6 campi della riga (obiettivo, argomenti, attivita, scadenza, eseguita, note) secondo le regole. Rispondi SOLO con l'oggetto JSON.`;
+Estrai i 7 campi della riga (obiettivo, argomenti, attivita, scadenza, ora, eseguita, note) secondo le regole. Rispondi SOLO con l'oggetto JSON.`;
 
   const resp = await client.messages.create({
     model: MODEL,
@@ -101,13 +105,14 @@ Estrai i 6 campi della riga (obiettivo, argomenti, attivita, scadenza, eseguita,
     argomenti: pick('argomenti'),
     attivita:  pick('attivita'),
     scadenza:  pick('scadenza'),
+    ora:       pick('ora'),
     eseguita:  pick('eseguita'),
     note:      pick('note'),
   };
 }
 
 // ═══════════════════════════════════════════════════════
-// Fetta B (sessioni COLLETTIVE team/group): stessa Scheda Cliente (stessi 6 campi e stesse
+// Fetta B (sessioni COLLETTIVE team/group): stessa Scheda Cliente (stessi campi e stesse
 // regole), ma la sessione è di GRUPPO. Obiettivo e attività sono COMUNI; i contributi dei
 // singoli vanno citati per NOME. Passiamo l'elenco partecipanti così l'estrazione attribuisce.
 // ═══════════════════════════════════════════════════════
@@ -128,7 +133,7 @@ async function generaRigaCollettiva({ tipo, percorsoTipo, partecipanti, reportTe
 === REPORT DELLA SESSIONE (fonte principale) ===
 ${(reportText || '').trim() || '(report vuoto)'}
 
-Questa è una sessione COLLETTIVA: l'obiettivo e le attività sono COMUNI al gruppo. Quando un intervento, un contributo o un'attività riguarda una persona PRECISA tra i partecipanti, CITALA per nome (in argomenti/attivita/note usa "**Nome:** ..." oppure "(Nome)"). Non attribuire a nessuno ciò che è del gruppo. Estrai i 6 campi (obiettivo, argomenti, attivita, scadenza, eseguita, note) secondo le regole. Rispondi SOLO con l'oggetto JSON.`;
+Questa è una sessione COLLETTIVA: l'obiettivo e le attività sono COMUNI al gruppo. Quando un intervento, un contributo o un'attività riguarda una persona PRECISA tra i partecipanti, CITALA per nome (in argomenti/attivita/note usa "**Nome:** ..." oppure "(Nome)"). Non attribuire a nessuno ciò che è del gruppo. Estrai i 7 campi (obiettivo, argomenti, attivita, scadenza, ora, eseguita, note) secondo le regole. Rispondi SOLO con l'oggetto JSON.`;
 
   const resp = await client.messages.create({
     model: MODEL,
@@ -151,6 +156,7 @@ Questa è una sessione COLLETTIVA: l'obiettivo e le attività sono COMUNI al gru
     argomenti: pick('argomenti'),
     attivita:  pick('attivita'),
     scadenza:  pick('scadenza'),
+    ora:       pick('ora'),
     eseguita:  pick('eseguita'),
     note:      pick('note'),
   };

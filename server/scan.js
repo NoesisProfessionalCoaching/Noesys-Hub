@@ -147,10 +147,10 @@ async function scanClientReports({ onlyClientId } = {}) {
         const riga = await claude.generaRiga({ tipo: rep.tipo, cliente, reportText, strumentiText });
         const sid = uuidv4();
         await db.query(
-          `INSERT INTO sedute (id, percorso_id, client_id, tipo, data, ore, obiettivo, argomenti, attivita, scadenza, eseguita, note, stato, origine, source_file_id)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'bozza','auto',$13)`,
+          `INSERT INTO sedute (id, percorso_id, client_id, tipo, data, ore, obiettivo, argomenti, attivita, scadenza, prossima_ora, eseguita, note, stato, origine, source_file_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'bozza','auto',$14)`,
           [sid, percorso.id, cliente.id, rep.tipo, dataDaReport(rep), oreDefault(rep.tipo),
-           riga.obiettivo, riga.argomenti, riga.attivita, riga.scadenza, riga.eseguita, riga.note, rep.id]);
+           riga.obiettivo, riga.argomenti, riga.attivita, riga.scadenza, riga.ora, riga.eseguita, riga.note, rep.id]);
         done.add(rep.id);
         result.processed.push({ cliente: cliente.name, tipo: rep.tipo, file: rep.name, sid });
       } catch (e) {
@@ -314,10 +314,10 @@ async function scanCollectiveReports({ onlyProjectId } = {}) {
         const riga = await claude.generaRigaCollettiva({ tipo: rep.tipo, percorsoTipo: perc.tipo, partecipanti, reportText });
         const sid = uuidv4();
         await db.query(
-          `INSERT INTO sedute (id, percorso_id, client_id, tipo, data, ore, obiettivo, argomenti, attivita, scadenza, eseguita, note, stato, origine, source_file_id)
-           VALUES ($1,$2,NULL,$3,$4,$5,$6,$7,$8,$9,$10,$11,'bozza','auto',$12)`,
+          `INSERT INTO sedute (id, percorso_id, client_id, tipo, data, ore, obiettivo, argomenti, attivita, scadenza, prossima_ora, eseguita, note, stato, origine, source_file_id)
+           VALUES ($1,$2,NULL,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'bozza','auto',$13)`,
           [sid, perc.id, rep.tipo, dataDaReport(rep), oreDefault(rep.tipo),
-           riga.obiettivo, riga.argomenti, riga.attivita, riga.scadenza, riga.eseguita, riga.note, rep.id]);
+           riga.obiettivo, riga.argomenti, riga.attivita, riga.scadenza, riga.ora, riga.eseguita, riga.note, rep.id]);
         done.add(rep.id);
         result.processed.push({ percorso: perc.tipo, tipo: rep.tipo, file: rep.name, sid });
       } catch (e) {
