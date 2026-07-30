@@ -163,7 +163,11 @@ async function mostraHome(req, res) {
                          ORDER BY s.data DESC NULLS LAST
                          LIMIT 1) u ON TRUE
                  WHERE p.stato = 'attivo'
-                   AND u.scad >= (NOW() AT TIME ZONE 'Europe/Rome')::date
+                   -- La riga sparisce quando passa l'ORA dell'appuntamento, non a
+                   -- mezzanotte. Se il report non dava l'orario non si può fare di
+                   -- meglio che tenerla fino a fine giornata (23:59).
+                   AND (u.scad + COALESCE(u.ora::time, TIME '23:59'))
+                       >= (NOW() AT TIME ZONE 'Europe/Rome')
                  -- A parità di giorno conta l'ora: lpad perché l'orario è testo e
                  -- "9:00" senza lo zero finirebbe dopo "10:30".
                  ORDER BY u.scad, lpad(u.ora, 5, '0') NULLS LAST`),
