@@ -395,18 +395,11 @@ router.post('/dashboard/clients/:id', requireCoach, express.json(), async (req, 
   }
 });
 
-router.post('/dashboard/clients/:id/toggle', requireCoach, async (req, res) => {
-  try {
-    const result = await db.query('SELECT * FROM clients WHERE id = $1', [req.params.id]);
-    const client = result.rows[0];
-    if (!client) return res.status(404).json({ error: 'Cliente non trovato' });
-    await db.query('UPDATE clients SET active = $1 WHERE id = $2', [!client.active, client.id]);
-    res.json({ active: !client.active });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Errore' });
-  }
-});
+// L'interruttore generale acceso/spento è stato tolto il 31/07: nessuno legge
+// più `clients.active`, a decidere chi entra sono i permessi a termine. Tolta
+// anche la rotta che lo spegneva — se restasse, basterebbe un vecchio
+// segnalibro per bloccare un cliente con un interruttore che non si vede più.
+// La colonna resta nel database: non si buttano dati, semplicemente è inerte.
 
 // ── Permessi a termine sugli strumenti (2026-07-31) ────
 // Il coach sceglie lo strumento (o «il portale») e per quanto vale, l'Hub apre il
@@ -2781,10 +2774,7 @@ Germano`;
           <div class="az-btns">
             <button onclick="openStrumento()" class="btn btn-primary btn-sm">🔑 Manda uno strumento</button>
           </div>
-          <div class="az-stato">
-            ${permessiSintesi}
-            ${client.active ? '' : '<div style="margin-top:6px;color:#B45309">⚠️ L&rsquo;accesso generale è spento: finché resta così, nessun permesso funziona.</div>'}
-          </div>
+          <div class="az-stato">${permessiSintesi}</div>
         </div>
 
       </div>
@@ -2808,7 +2798,10 @@ Germano`;
         <h1 style="margin:0">${esc(client.name)}</h1>
         <span class="badge" style="background:${ac}18;color:${ac}">${area}</span>
         <span class="badge ${st.cls}">${st.label}</span>
-        ${!client.active ? `<span class="badge badge-inactive" title="Accesso agli strumenti disattivato">🔒 Accesso off</span>` : ''}
+        ${/* Qui stava il bollino «🔒 Accesso off»: tolto il 31/07 insieme
+              all'interruttore generale che rappresentava. Non spiegava niente e
+              soprattutto non esiste più niente da rappresentare — chi entra lo
+              decidono i permessi a termine. */ ''}
       </div>
 
       <div class="zona-tit">Dati del Cliente</div>
@@ -3258,7 +3251,6 @@ Germano`;
       if (d.error) { err.textContent=d.error; err.style.display='block'; return; }
       location.reload();
     }
-    async function toggleAccess() { await fetch('/dashboard/clients/'+CID+'/toggle',{method:'POST'}); location.reload(); }
 
     // ── Permessi a termine sugli strumenti ────
     function openStrumento() {
