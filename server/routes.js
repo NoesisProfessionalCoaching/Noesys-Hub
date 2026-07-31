@@ -2686,19 +2686,27 @@ Germano`;
   const opzioniStrumenti = STRUMENTI
     .map(t => `<option value="${attr(t.key)}">${esc(t.nome)}</option>`).join('');
 
-  // Cosa è aperto adesso, in parole. Un permesso scaduto non si mostra: conta
-  // quello che il cliente può fare ORA.
+  // Cosa è aperto adesso. Un permesso scaduto non si mostra: conta quello che il
+  // cliente può fare ORA. Nella riga della scheda va solo il riassunto in una
+  // frase — i pulsanti stanno tutti dentro la finestrella, così la riga resta
+  // pulita come le altre.
   const permessiVivi = permessi.filter(p => p.valido);
-  const permessiTxt = permessiVivi.length === 0
+  const descrivi = p => (p.primo_accesso || p.durata_ore == null)
+    ? `fino al ${itDateTime(p.fine)}`
+    : `${p.durata_ore} ore da quando lo apre (non ancora aperto)`;
+  const permessiSintesi = permessiVivi.length === 0
     ? 'Nessun permesso aperto: in questo momento il cliente non apre nulla.'
-    : permessiVivi.map(p => {
-        const cosa = p.tool ? (TOOL_LABEL[p.tool] || esc(p.tool)) : 'Tutti gli strumenti';
-        const quando = p.primo_accesso || p.durata_ore == null
-          ? `fino al ${itDateTime(p.fine)}`
-          : `${p.durata_ore} ore da quando lo apre (non ancora aperto)`;
-        return `<div style="margin-top:3px">✓ <strong>${cosa}</strong> — ${quando}
-          <button onclick="chiudiPermesso('${attr(p.id)}')" class="btn btn-off btn-sm" style="padding:1px 7px;font-size:11px;margin-left:6px">chiudi</button></div>`;
-      }).join('');
+    : permessiVivi.length === 1
+      ? `Aperto: <strong>${permessiVivi[0].tool ? (TOOL_LABEL[permessiVivi[0].tool] || esc(permessiVivi[0].tool)) : 'tutti gli strumenti'}</strong>, ${descrivi(permessiVivi[0])}.`
+      : `${permessiVivi.length} permessi aperti.`;
+  const permessiElenco = permessiVivi.length === 0
+    ? '<div style="font-size:13px;color:#8a94a6">Nessun permesso aperto in questo momento.</div>'
+    : permessiVivi.map(p => `
+        <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--line);font-size:13px">
+          <span style="flex:1">✓ <strong>${p.tool ? (TOOL_LABEL[p.tool] || esc(p.tool)) : 'Tutti gli strumenti'}</strong>
+            <span style="color:#8a94a6">— ${descrivi(p)}</span></span>
+          <button onclick="chiudiPermesso('${attr(p.id)}')" class="btn btn-off btn-sm" style="padding:2px 9px;font-size:11px">chiudi</button>
+        </div>`).join('');
 
   const azioniHtml = `
     <div class="az-bar">
@@ -2744,26 +2752,12 @@ Germano`;
 
         <div class="az-gruppo">
           <div class="az-nome">Accesso agli strumenti</div>
-          <div class="az-btns" style="flex-wrap:wrap">
-            <select id="perm-tool" onchange="aggiornaDurate()" class="btn btn-neutral btn-sm" style="max-width:250px">
-              <option value="">Il portale — tutti gli strumenti</option>
-              ${opzioniStrumenti}
-            </select>
-            <select id="perm-durata" class="btn btn-neutral btn-sm" style="max-width:230px">
-              <option value="ore">per la sessione di oggi</option>
-              ${prossimaSess ? `<option value="sessione">fino alla prossima sessione (${itDate(prossimaSess)})</option>` : ''}
-            </select>
-            <button onclick="creaPermesso()" class="btn btn-primary btn-sm">📋 Crea il link e copialo</button>
+          <div class="az-btns">
+            <button onclick="openStrumento()" class="btn btn-primary btn-sm">🔑 Manda uno strumento</button>
           </div>
           <div class="az-stato">
-            ${permessiTxt}
-            <div style="margin-top:6px;color:var(--hint);font-size:11px">
-              «Per la sessione di oggi» vale ${PERMESSO_ORE_SESSIONE} ore, contate da quando il cliente apre il link (così puoi mandarlo la sera prima).${prossimaSess ? ' «Fino alla prossima sessione» arriva a fine giornata, per poterlo guardare insieme.' : ' Per questo cliente non c&rsquo;è ancora una data di prossima sessione nei report.'}
-            </div>
+            ${permessiSintesi}
             ${client.active ? '' : '<div style="margin-top:6px;color:#B45309">⚠️ L&rsquo;accesso generale è spento: finché resta così, nessun permesso funziona.</div>'}
-          </div>
-          <div class="az-btns" style="margin-top:8px">
-            <button onclick="toggleAccess()" class="btn btn-neutral btn-sm">${client.active ? "Disattiva tutto l'accesso" : "Riattiva l'accesso"}</button>
           </div>
         </div>
 
@@ -2877,6 +2871,52 @@ Germano`;
   </div>
 
   <!-- MODAL MAIL 1 — RIVEDI E INVIA -->
+  <!-- Manda uno strumento: una finestrella sola al posto delle due tendine e del
+       pulsante che stavano nella riga (Germano 31/07: "non mi piace che ci siano
+       tre pulsanti… si torna a creare la confusione che avevamo risolto"). Qui le
+       scelte hanno lo spazio per essere scritte in chiaro. Struttura come le
+       altre finestrelle: h2 primo figlio, riga dei pulsanti ultimo div — è quello
+       che le tiene appesi in alto e in basso quando il contenuto non ci sta. -->
+  <div id="modal-strumento" class="modal-overlay">
+    <div class="modal-box" style="width:520px">
+      <h2 style="margin-bottom:4px">Manda uno strumento a ${esc(mailNome || client.name)}</h2>
+      <p style="margin:0 0 16px;font-size:12px;color:#8a94a6">Il link è sempre lo stesso indirizzo: a decidere se si apre è il permesso che gli dài qui.</p>
+
+      <div class="form-group">
+        <label>Cosa gli apri</label>
+        <select id="perm-tool" onchange="aggiornaDurate()">
+          <option value="">Il portale — tutti gli strumenti</option>
+          ${opzioniStrumenti}
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>Per quanto</label>
+        <label style="display:flex;align-items:flex-start;gap:8px;margin:0 0 8px;text-transform:none;letter-spacing:0;font-weight:400;font-size:13px">
+          <input type="radio" name="perm-durata" value="ore" checked style="width:auto;margin:3px 0 0">
+          <span>Per la sessione di oggi<br><span style="color:#8a94a6;font-size:12px">Vale ${PERMESSO_ORE_SESSIONE} ore, contate da quando il cliente apre il link — così puoi mandarglielo anche la sera prima.</span></span>
+        </label>
+        <label id="perm-lbl-sessione" style="display:flex;align-items:flex-start;gap:8px;margin:0;text-transform:none;letter-spacing:0;font-weight:400;font-size:13px">
+          <input type="radio" name="perm-durata" value="sessione" id="perm-r-sessione" style="width:auto;margin:3px 0 0" ${prossimaSess ? '' : 'disabled data-senza-data="1"'}>
+          <span>${prossimaSess ? `Fino alla prossima sessione — <strong>${itDate(prossimaSess)}</strong>` : 'Fino alla prossima sessione'}<br><span style="color:#8a94a6;font-size:12px">${prossimaSess
+            ? 'Arriva a fine giornata di quel giorno, così il lavoro lo aprite insieme in sessione. Vale per un solo strumento, non per tutto il portale.'
+            : 'Non disponibile: nei report approvati di questo cliente non c&rsquo;è ancora la data della prossima sessione.'}</span></span>
+        </label>
+      </div>
+
+      <div class="form-group" style="margin-bottom:14px">
+        <label>Permessi aperti adesso</label>
+        <div id="perm-elenco">${permessiElenco}</div>
+      </div>
+
+      <div id="perm-error" style="display:none" class="flash-error"></div>
+      <div style="display:flex;gap:8px;margin-top:4px">
+        <button onclick="document.getElementById('modal-strumento').style.display='none'" class="btn btn-neutral" style="flex:1">Chiudi</button>
+        <button onclick="creaPermesso()" class="btn btn-primary" style="flex:1">📋 Crea il link e copialo</button>
+      </div>
+    </div>
+  </div>
+
   <div id="modal-mail1" class="modal-overlay">
     <div class="modal-box" style="width:560px">
       <h2 style="margin-bottom:4px">Rivedi e invia — Mail 1 di benvenuto</h2>
@@ -3178,25 +3218,36 @@ Germano`;
     async function toggleAccess() { await fetch('/dashboard/clients/'+CID+'/toggle',{method:'POST'}); location.reload(); }
 
     // ── Permessi a termine sugli strumenti ────
+    function openStrumento() {
+      document.getElementById('perm-error').style.display = 'none';
+      document.getElementById('modal-strumento').style.display = 'flex';
+      aggiornaDurate();
+    }
     // Il portale intero vale solo per la sessione di oggi: "fino alla prossima
     // sessione" ha senso per il compito su UN solo strumento, non per aprire tutto.
+    // La scelta NON si nasconde quando non è disponibile — si spegne e resta
+    // leggibile: nascosta sembrava che il programma fosse rotto.
     function aggiornaDurate() {
       const tool = document.getElementById('perm-tool').value;
-      const dur  = document.getElementById('perm-durata');
-      const sess = dur.querySelector('option[value="sessione"]');
-      if (!sess) return;
-      sess.hidden = !tool;
-      if (!tool) dur.value = 'ore';
+      const r    = document.getElementById('perm-r-sessione');
+      const lbl  = document.getElementById('perm-lbl-sessione');
+      if (!r) return;
+      const disponibile = !!tool && !r.dataset.senzaData;
+      r.disabled = !disponibile;
+      lbl.style.opacity = disponibile ? '1' : '0.45';
+      if (!disponibile) document.querySelector('input[name="perm-durata"][value="ore"]').checked = true;
     }
     async function creaPermesso() {
       const tool   = document.getElementById('perm-tool').value;
-      const durata = document.getElementById('perm-durata').value;
+      const durata = document.querySelector('input[name="perm-durata"]:checked').value;
+      const err    = document.getElementById('perm-error');
+      err.style.display = 'none';
       const r = await fetch('/dashboard/clients/'+CID+'/permessi', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tool: tool || null, durata: durata })
       });
       const d = await r.json().catch(() => ({}));
-      if (!d.ok) { alert(d.error || 'Non sono riuscito a creare il permesso.'); return; }
+      if (!d.ok) { err.textContent = d.error || 'Non sono riuscito a creare il permesso.'; err.style.display = 'block'; return; }
       // La copia automatica può essere bloccata dal browser (succede su Safari
       // quando fra il clic e la copia c\'è una chiamata al server): in quel caso
       // il link non si perde, si mostra e lo si copia a mano.
@@ -3215,7 +3266,6 @@ Germano`;
       await fetch('/dashboard/clients/'+CID+'/permessi/'+id+'/chiudi', { method: 'POST' });
       location.reload();
     }
-    aggiornaDurate();
     async function deleteClient() {
       if (!confirm('Eliminare ${attr(client.name)} e tutti i suoi dati? Operazione irreversibile.')) return;
       await fetch('/dashboard/clients/'+CID,{method:'DELETE'}); location.href='/dashboard/individuali';
