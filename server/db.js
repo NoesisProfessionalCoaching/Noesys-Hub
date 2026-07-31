@@ -470,6 +470,13 @@ async function init() {
     )
   `);
   await query(`CREATE INDEX IF NOT EXISTS permessi_strumenti_client_idx ON permessi_strumenti (client_id)`);
+  // 31/07 — il TERZO tipo di permesso, chiesto da Germano: «in caso la data della
+  // sessione successiva non fosse pianificata, la scadenza rimane libera fino a
+  // che la data viene decisa». Non a ore e non a data fissa: aspetta la data.
+  // Appena il report della prossima sessione la porta, il permesso si fissa a quel
+  // giorno (lo scrive Coaching-Tools alla prima apertura utile del cliente) e
+  // `attende_sessione` torna falso.
+  await query(`ALTER TABLE permessi_strumenti ADD COLUMN IF NOT EXISTS attende_sessione BOOLEAN DEFAULT FALSE`);
 
   // UNA SOLA VERITÀ sulla scadenza. La regola la leggono due applicazioni diverse
   // (l'Hub per dire al coach com'è messo, Coaching-Tools per aprire o non aprire la
@@ -477,15 +484,28 @@ async function init() {
   // qui, e tutt'e due interrogano questa vista.
   //   `fine` = quando il permesso smette di valere:
   //     - data fissa            → quella data
+  //     - in attesa della data  → fine giornata della prima sessione futura che i
+  //                               report conoscono; se non ce n'è ancora nessuna,
+  //                               NON scade (è la regola voluta: resta libero
+  //                               finché la data non viene decisa)
   //     - a ore e già aperto    → prima apertura + le ore
   //     - a ore e MAI aperto    → 30 giorni dalla creazione. Un link preparato e mai
   //                               usato non può restare buono a vita.
   await query(`
     CREATE OR REPLACE VIEW permessi_validi AS
     SELECT p.id, p.client_id, p.tool, p.durata_ore, p.scade_il, p.primo_accesso,
-           p.created_at,
+           p.attende_sessione, p.created_at,
            CASE
              WHEN p.scade_il IS NOT NULL      THEN p.scade_il
+             WHEN p.attende_sessione          THEN COALESCE(
+                    (SELECT ((s.scadenza::date + INTERVAL '1 day' - INTERVAL '1 second')
+                             AT TIME ZONE 'Europe/Rome')
+                       FROM sedute s
+                      WHERE s.client_id = p.client_id AND s.stato = 'confermata'
+                        AND s.scadenza ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+                        AND s.scadenza::date >= (NOW() AT TIME ZONE 'Europe/Rome')::date
+                      ORDER BY s.scadenza LIMIT 1),
+                    TIMESTAMPTZ 'infinity')
              WHEN p.primo_accesso IS NOT NULL THEN p.primo_accesso + (COALESCE(p.durata_ore,0) || ' hours')::interval
              ELSE p.created_at + INTERVAL '30 days'
            END AS fine
