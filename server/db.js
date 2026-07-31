@@ -491,8 +491,16 @@ async function init() {
   //     - a ore e già aperto    → prima apertura + le ore
   //     - a ore e MAI aperto    → 30 giorni dalla creazione. Un link preparato e mai
   //                               usato non può restare buono a vita.
+  // ⚠️ DROP e non CREATE OR REPLACE. Il 31/07 l'Hub è andato giù proprio qui:
+  // `CREATE OR REPLACE VIEW` sa solo AGGIUNGERE colonne IN FONDO — se se ne
+  // infila una in mezzo (era `attende_sessione` prima di `created_at`) il
+  // database risponde *cannot change name of view column*, l'avvio si ferma su
+  // quell'errore e l'applicazione NON PARTE. Con DROP + CREATE qualunque cambio
+  // futuro passa. La vista non contiene dati, solo il modo di calcolare la
+  // scadenza: buttarla e rifarla a ogni avvio non perde niente.
+  await query(`DROP VIEW IF EXISTS permessi_validi`);
   await query(`
-    CREATE OR REPLACE VIEW permessi_validi AS
+    CREATE VIEW permessi_validi AS
     SELECT p.id, p.client_id, p.tool, p.durata_ore, p.scade_il, p.primo_accesso,
            p.attende_sessione, p.created_at,
            CASE
