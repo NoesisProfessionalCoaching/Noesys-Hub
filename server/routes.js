@@ -349,7 +349,7 @@ router.get('/dashboard/clients/:id', requireCoach, async (req, res) => {
       // `permessi_validi` (una sola verità, la legge anche Coaching-Tools).
       // Se la lettura fallisse, la scheda cliente si deve aprire lo stesso: è la
       // pagina che Germano usa tutti i giorni, non la si blocca per un elenco.
-      db.query(`SELECT id, tool, durata_ore, primo_accesso, attende_sessione, fine,
+      db.query(`SELECT id, tool, durata_ore, primo_accesso, fine,
                        (fine >= NOW()) AS valido
                   FROM permessi_validi WHERE client_id=$1
                  ORDER BY fine DESC`, [req.params.id]).catch(() => ({ rows: [] })),
@@ -440,20 +440,14 @@ router.post('/dashboard/clients/:id/permessi', requireCoach, express.json(), asy
       const scad = sr.rows[0] && sr.rows[0].scadenza;
       const oggiRoma = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Rome' });
       if (!scad || scad < oggiRoma) {
-        // Regola di Germano (31/07): se la prossima sessione non è ancora
-        // pianificata, il permesso NON si rifiuta — resta libero finché la data
-        // non viene decisa, e allora si aggancia da sé a quel giorno.
-        await db.query(
-          `INSERT INTO permessi_strumenti (id, client_id, tool, attende_sessione)
-           VALUES ($1, $2, $3, TRUE)`, [pid, client.id, tool]);
-      } else {
-        // Fine giornata di quel giorno, ora italiana: durante la sessione successiva
-        // il lavoro si deve poter ancora aprire, per guardarlo insieme.
-        await db.query(
-          `INSERT INTO permessi_strumenti (id, client_id, tool, scade_il)
-           VALUES ($1, $2, $3, ((($4::date + INTERVAL '1 day') - INTERVAL '1 second') AT TIME ZONE 'Europe/Rome'))`,
-          [pid, client.id, tool, scad]);
+        return res.status(400).json({ ok: false, error: 'Non risulta una prossima sessione futura nei report di questo cliente: usa «per la sessione di oggi».' });
       }
+      // Fine giornata di quel giorno, ora italiana: durante la sessione successiva
+      // il lavoro si deve poter ancora aprire, per guardarlo insieme.
+      await db.query(
+        `INSERT INTO permessi_strumenti (id, client_id, tool, scade_il)
+         VALUES ($1, $2, $3, ((($4::date + INTERVAL '1 day') - INTERVAL '1 second') AT TIME ZONE 'Europe/Rome'))`,
+        [pid, client.id, tool, scad]);
     } else {
       // A ore: scade_il resta vuoto, il conto parte alla prima apertura (lo segna
       // Coaching-Tools). Vedi la vista `permessi_validi`.
@@ -463,25 +457,6 @@ router.post('/dashboard/clients/:id/permessi', requireCoach, express.json(), asy
     }
 
     const url = PLATFORM_URL + '/c/' + client.token + (tool ? '/tool/' + tool : '');
-
-    // Invio per email (solo per gli strumenti singoli). Il permesso è già aperto:
-    // se la mail non parte lo si dice, ma il link resta valido e copiabile — non
-    // si butta via il permesso per un guasto della posta.
-    const mail = req.body.email;
-    if (mail && mail.to) {
-      if (!tool) return res.status(400).json({ ok: false, error: 'La mail si manda per un singolo strumento, non per il portale.' });
-      try {
-        await mailer.sendMail({
-          to: String(mail.to).trim(),
-          subject: String(mail.subject || '').trim() || (STRUMENTI.find(t => t.key === tool) || {}).nome,
-          text: String(mail.body || ''),
-        });
-        return res.json({ ok: true, link: url, inviata: true });
-      } catch (e) {
-        console.error('[permessi/mail]', e);
-        return res.json({ ok: true, link: url, inviata: false, avviso: 'Il permesso è aperto, ma la mail non è partita: ' + e.message });
-      }
-    }
     res.json({ ok: true, link: url });
   } catch (err) {
     console.error('[permessi]', err);
@@ -2466,7 +2441,7 @@ function clientDetailPage(client, sessions, percorsi, payments, sedute, progetti
   // percorsi individuali; i Progetti Strutturati avranno varianti). Neutro rispetto al
   // genere (la lettera allegata gestisce Caro/Cara), unica variabile il nome.
   const mail1Body =
-`Ciao ${mailNome},
+`Buongiorno ${mailNome},
 
 ti scrivo perché a breve inizieremo la prima fase del tuo percorso di Coaching.
 
@@ -2491,7 +2466,7 @@ Germano`;
   // ── Mail 2 (Fetta 2): contratto + agenda, dopo l'Intake ──
   const mail2Subject = 'Contratto per Servizi di Coaching e Agenda di sessione';
   const mail2Body =
-`Ciao ${mailNome},
+`Buongiorno ${mailNome},
 
 come anticipato, ti invio i documenti per formalizzare e accompagnare il tuo percorso di Coaching. In allegato a questa mail trovi:
 • il Contratto per Servizi di Coaching
@@ -2716,9 +2691,8 @@ Germano`;
   // frase — i pulsanti stanno tutti dentro la finestrella, così la riga resta
   // pulita come le altre.
   const permessiVivi = permessi.filter(p => p.valido);
-  const descrivi = p =>
-    p.attende_sessione ? 'fino alla prossima sessione, che non è ancora fissata'
-    : (p.primo_accesso || p.durata_ore == null) ? `fino al ${itDateTime(p.fine)}`
+  const descrivi = p => (p.primo_accesso || p.durata_ore == null)
+    ? `fino al ${itDateTime(p.fine)}`
     : `${p.durata_ore} ore da quando lo apre (non ancora aperto)`;
   const permessiSintesi = permessiVivi.length === 0
     ? 'Nessun permesso aperto: in questo momento il cliente non apre nulla.'
@@ -2923,21 +2897,11 @@ Germano`;
           <span>Per la sessione di oggi<br><span style="color:#8a94a6;font-size:12px">Vale ${PERMESSO_ORE_SESSIONE} ore, contate da quando il cliente apre il link — così puoi mandarglielo anche la sera prima.</span></span>
         </label>
         <label id="perm-lbl-sessione" style="display:flex;align-items:flex-start;gap:8px;margin:0;text-transform:none;letter-spacing:0;font-weight:400;font-size:13px">
-          <input type="radio" name="perm-durata" value="sessione" id="perm-r-sessione" style="width:auto;margin:3px 0 0">
+          <input type="radio" name="perm-durata" value="sessione" id="perm-r-sessione" style="width:auto;margin:3px 0 0" ${prossimaSess ? '' : 'disabled data-senza-data="1"'}>
           <span>${prossimaSess ? `Fino alla prossima sessione — <strong>${itDate(prossimaSess)}</strong>` : 'Fino alla prossima sessione'}<br><span style="color:#8a94a6;font-size:12px">${prossimaSess
             ? 'Arriva a fine giornata di quel giorno, così il lavoro lo aprite insieme in sessione. Vale per un solo strumento, non per tutto il portale.'
-            : 'La data non è ancora nei report: il collegamento resta aperto finché non la fissate, e allora si aggancia da sé a quel giorno.'}</span></span>
+            : 'Non disponibile: nei report approvati di questo cliente non c&rsquo;è ancora la data della prossima sessione.'}</span></span>
         </label>
-      </div>
-
-      <!-- La mail vale SOLO per uno strumento singolo: per il portale sparisce. -->
-      <div id="perm-mail" style="border-top:1px solid var(--line);padding-top:14px;margin-top:4px;display:none">
-        <div class="form-group"><label>Manda per email a</label>
-          <input id="perm-to" type="email" value="${attr(client.email)}" placeholder="email del cliente">
-          ${client.email ? '' : '<div style="font-size:12px;color:#B45309;margin-top:4px">In anagrafica non c&rsquo;è l&rsquo;email: scrivila qui, oppure copia il link e mandaglielo come preferisci.</div>'}
-        </div>
-        <div class="form-group"><label>Oggetto</label><input id="perm-subject" type="text"></div>
-        <div class="form-group"><label>Testo</label><textarea id="perm-body" style="min-height:150px;font-family:inherit"></textarea></div>
       </div>
 
       <div class="form-group" style="margin-bottom:14px">
@@ -2948,8 +2912,7 @@ Germano`;
       <div id="perm-error" style="display:none" class="flash-error"></div>
       <div style="display:flex;gap:8px;margin-top:4px">
         <button onclick="document.getElementById('modal-strumento').style.display='none'" class="btn btn-neutral" style="flex:1">Chiudi</button>
-        <button onclick="creaPermesso(false)" class="btn btn-neutral" style="flex:1">📋 Copia il link</button>
-        <button id="perm-btn-invia" onclick="creaPermesso(true)" class="btn btn-primary" style="flex:1;display:none">✉️ Invia la mail</button>
+        <button onclick="creaPermesso()" class="btn btn-primary" style="flex:1">📋 Crea il link e copialo</button>
       </div>
     </div>
   </div>
@@ -3083,12 +3046,6 @@ Germano`;
   <div id="toast" style="display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--navy);color:#fff;padding:10px 20px;border-radius:20px;font-size:13px;font-weight:600;z-index:200">Fatto!</div>
   <script>
     const CID = '${client.id}';
-    // Per comporre link e testo della mail dello strumento, senza chiedere al server.
-    const PERM_BASE = '${PLATFORM_URL}/c/${client.token}';
-    const PERM_NOMI = ${JSON.stringify(Object.fromEntries(STRUMENTI.map(t => [t.key, t.nome]))).replace(/</g, '\\u003c')};
-    const PERM_SCAD = ${prossimaSess ? `'${prossimaSess}'` : 'null'};
-    const PERM_NOME_CLIENTE = ${JSON.stringify(mailNome || client.name).replace(/</g, '\\u003c')};
-    const PERM_ORE = ${PERMESSO_ORE_SESSIONE};
     const SEDUTE = ${JSON.stringify(Object.fromEntries(sedute.map(s => [s.id, { id: s.id, percorso_id: s.percorso_id, tipo: s.tipo, data: s.data, ore: Number(s.ore), obiettivo: s.obiettivo || '', argomenti: s.argomenti || '', attivita: s.attivita || '', scadenza: s.scadenza || '', prossima_ora: s.prossima_ora || '', eseguita: s.eseguita || '', note: s.note || '' }]))).replace(/</g, '\\u003c')};
     const ORE_TIPO = { Intake: 2, Ongoing: 1, Final: null };
     function oreAuto() {
@@ -3266,11 +3223,6 @@ Germano`;
       document.getElementById('modal-strumento').style.display = 'flex';
       aggiornaDurate();
     }
-    // Cambiando la durata cambia la riga della scadenza nel testo della mail:
-    // dire "fino alla prossima sessione" per un permesso di poche ore sarebbe
-    // scrivere al cliente una cosa non vera.
-    document.querySelectorAll('input[name="perm-durata"]').forEach(
-      r => r.addEventListener('change', componiMail));
     // Il portale intero vale solo per la sessione di oggi: "fino alla prossima
     // sessione" ha senso per il compito su UN solo strumento, non per aprire tutto.
     // La scelta NON si nasconde quando non è disponibile — si spegne e resta
@@ -3280,78 +3232,22 @@ Germano`;
       const r    = document.getElementById('perm-r-sessione');
       const lbl  = document.getElementById('perm-lbl-sessione');
       if (!r) return;
-      // «Fino alla prossima sessione» vale per un solo strumento. La data può
-      // mancare: in quel caso il permesso resta libero finché non la fissate,
-      // quindi la scelta è comunque disponibile.
-      const disponibile = !!tool;
+      const disponibile = !!tool && !r.dataset.senzaData;
       r.disabled = !disponibile;
       lbl.style.opacity = disponibile ? '1' : '0.45';
       if (!disponibile) document.querySelector('input[name="perm-durata"][value="ore"]').checked = true;
-      // La mail si manda solo per uno strumento singolo, mai per il portale.
-      document.getElementById('perm-mail').style.display = tool ? 'block' : 'none';
-      document.getElementById('perm-btn-invia').style.display = tool ? 'block' : 'none';
-      componiMail();
     }
-
-    const PERM_MESI = ['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio',
-                       'agosto','settembre','ottobre','novembre','dicembre'];
-    // "il 7 agosto" ma "l'8 agosto" e "l'11 agosto": davanti a otto e undici
-    // l'articolo si apostrofa. Scritto male si nota, ed è una mail che legge un cliente.
-    function permDataInLettere(iso) {
-      const p = String(iso).split('-');
-      const g = parseInt(p[2], 10);
-      const art = (g === 8 || g === 11) ? "l'" : 'il ';
-      return art + g + ' ' + PERM_MESI[parseInt(p[1], 10) - 1];
-    }
-    function componiMail() {
-      const tool = document.getElementById('perm-tool').value;
-      if (!tool) return;
-      const durata = document.querySelector('input[name="perm-durata"]:checked').value;
-      const nome = PERM_NOMI[tool] || tool;
-      const link = PERM_BASE + '/tool/' + tool;
-      let scadenza;
-      if (durata !== 'sessione') {
-        scadenza = 'Resta attivo per ' + PERM_ORE + ' ore da quando lo apri.';
-      } else if (PERM_SCAD) {
-        scadenza = 'Resta attivo fino alla nostra prossima sessione, ' + permDataInLettere(PERM_SCAD) + ', così lo guardiamo insieme.';
-      } else {
-        scadenza = 'Resta attivo fino alla nostra prossima sessione: appena fissiamo la data lo guardiamo insieme.';
-      }
-      document.getElementById('perm-subject').value = nome;
-      document.getElementById('perm-body').value =
-        'Ciao ' + PERM_NOME_CLIENTE + ',\\n\\n' +
-        'qui sotto trovi il collegamento per lavorare sulla ' + nome +
-        ': puoi aprirlo quando vuoi e riprenderlo più volte, quello che scrivi resta salvato.\\n' +
-        scadenza + '\\n\\n' + link + '\\n\\nA presto,\\nGermano';
-    }
-    async function creaPermesso(conMail) {
+    async function creaPermesso() {
       const tool   = document.getElementById('perm-tool').value;
       const durata = document.querySelector('input[name="perm-durata"]:checked').value;
       const err    = document.getElementById('perm-error');
       err.style.display = 'none';
-      let email = null;
-      if (conMail) {
-        const to = document.getElementById('perm-to').value.trim();
-        if (!to) { err.textContent = 'Manca l\\'indirizzo a cui mandare la mail.'; err.style.display = 'block'; return; }
-        email = { to: to,
-                  subject: document.getElementById('perm-subject').value,
-                  body: document.getElementById('perm-body').value };
-      }
       const r = await fetch('/dashboard/clients/'+CID+'/permessi', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tool: tool || null, durata: durata, email: email })
+        body: JSON.stringify({ tool: tool || null, durata: durata })
       });
       const d = await r.json().catch(() => ({}));
       if (!d.ok) { err.textContent = d.error || 'Non sono riuscito a creare il permesso.'; err.style.display = 'block'; return; }
-      if (d.avviso) { err.textContent = d.avviso; err.style.display = 'block'; }
-      if (d.inviata) {
-        const t = document.getElementById('toast');
-        t.textContent = 'Mail inviata! Il permesso è aperto.';
-        t.style.display = 'block';
-        setTimeout(() => location.reload(), 1500);
-        return;
-      }
-      if (d.avviso) return;
       // La copia automatica può essere bloccata dal browser (succede su Safari
       // quando fra il clic e la copia c\'è una chiamata al server): in quel caso
       // il link non si perde, si mostra e lo si copia a mano.
