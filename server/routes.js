@@ -1993,6 +1993,37 @@ function baseStyle() {
       .nh-bric b { color: var(--ink); font-weight: 600; }
       .nh-accent { height: 3px; background: var(--grad); }
       @media (max-width: 640px) { .nh-search, .nh-payoff { display: none; } }
+
+      /* ── COL DITO (31/07) ───────────────────────────────────────────────
+         Germano ha usato l'Hub dal telefono e ha dovuto ruotarlo più volte per
+         riuscire a toccare le cose. Questo foglio di stile sta in OGNI pagina
+         dell'Hub, quindi qui si sistemano tutte in un punto solo.
+         44px è la misura sotto la quale un dito non prende il bersaglio al
+         primo colpo; i campi di testo a 16px perché sotto quella soglia Safari
+         su iPhone ingrandisce da solo la pagina appena li tocchi — ed è uno dei
+         motivi per cui la pagina "salta" mentre scrivi.
+         Fino a 1024px: telefoni e tablet. Sul Mac a schermo intero non cambia
+         niente. La misura si controlla con la prova di portabilità. */
+      @media (max-width: 1024px) {
+        .btn { min-height: 44px; padding: 12px 20px; display: inline-flex; align-items: center; justify-content: center; }
+        .btn-sm { min-height: 44px; padding: 11px 16px; font-size: 13px; }
+        input, select, textarea { min-height: 44px; font-size: 16px; }
+        input[type="checkbox"], input[type="radio"] { min-height: 0; width: 22px; height: 22px; }
+        .field-label, .az-nome, .az-arrivo, .nh-tag, .zona-tit { font-size: 11px; }
+        /* Una finestrella con sei campi non ci sta in uno schermo di telefono:
+           si scorre, e va bene — purché TITOLO e PULSANTI restino appesi in
+           alto e in basso (lo fa il foglio di stile delle finestrelle, che i
+           controlli verificano). Qui si toglie solo il superfluo, per accorciare
+           quanto si deve scorrere. */
+        .modal-box { width: auto !important; max-width: 100%; }
+        .modal-box textarea { min-height: 110px !important; }
+        /* I link di NAVIGAZIONE (i tre mondi, il menu, le briciole) sono
+           bersagli come i pulsanti. I link dentro un testo NON si toccano:
+           ingrandirli spezzerebbe la riga in cui stanno. */
+        .nh-mondo { padding: 13px 14px; }
+        .nh-menu-box a, .nh-menu-box .nh-off { padding: 13px 12px; }
+        .nh-bric a { display: inline-block; padding: 14px 0; }
+      }
     </style>
   `;
 }
