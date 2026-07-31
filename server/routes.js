@@ -15,6 +15,34 @@ const router = express.Router();
 // porta agli STRUMENTI, non all'Hub: qui gestiamo solo il CRM.
 const PLATFORM_URL = process.env.PLATFORM_URL || 'https://coaching-tools-production.up.railway.app';
 
+// Gli strumenti della piattaforma, NELL'ORDINE IN CUI LI VEDE IL CLIENTE nel suo
+// portale: le tre famiglie decise da Germano il 28/07 — chi sei · cosa senti ·
+// cosa fai. Le famiglie non hanno un titolo scritto nemmeno lì: a farle leggere
+// sono l'ordine e lo stacco. Qui servono a due cose che devono restare d'accordo:
+// la tendina «scegli lo strumento» (senza icone) e le etichette dello storico
+// «Strumenti utilizzati» (con icone). Una lista sola, perciò, non due.
+// Aggiungendo uno strumento in Coaching-Tools: aggiungerlo anche qui.
+const STRUMENTI = [
+  { key: 'valori',            nome: 'Scheda Valori',             icona: '💎' },
+  { key: 'abilita',           nome: 'Scheda Abilità',            icona: '⭐' },
+  { key: 'genogramma',        nome: 'Genogramma Relazionale',    icona: '🔗' },
+  { key: 'lineavita',         nome: 'Linea della Vita',          icona: '📈' },
+  { key: 'ruotavita',         nome: 'Ruota della Vita',          icona: '🎯' },
+  { key: 'ruota-leadership',  nome: 'Ruota della Leadership',    icona: '👑' },
+  { key: 'ruota-management',  nome: 'Ruota del Management',      icona: '📊' },
+  { key: 'logica-cartesiana', nome: 'Logica Cartesiana',         icona: '🧭' },
+  { key: 'swot',              nome: 'SWOT Analysis',             icona: '⚖️' },
+  { key: 'covey-eisenhower',  nome: 'Matrice Covey/Eisenhower',  icona: '⏳' },
+  { key: 'brainstorming',     nome: 'Brainstorming',             icona: '💡' },
+];
+const TOOL_LABEL = Object.fromEntries(STRUMENTI.map(t => [t.key, `${t.icona} ${t.nome}`]));
+
+// Quante ore dura il permesso "per oggi" (il link dell'intake, e il compito che
+// il cliente deve fare durante la sessione). Il conto NON parte quando il coach
+// copia il link, ma quando il cliente lo apre la prima volta: così il link si può
+// preparare la sera prima senza che arrivi già scaduto.
+const PERMESSO_ORE_SESSIONE = 3;
+
 // Fonti condivise tra lead e clienti (niente Calendly: non è una fonte).
 const FONTI = ['sito', 'social', 'linkedin', 'passaparola', 'ebook', 'altro'];
 const FONTE_LABEL = { sito:'Sito', social:'Social', linkedin:'LinkedIn', passaparola:'Passaparola', ebook:'E-book', altro:'Altro' };
@@ -300,7 +328,7 @@ router.get('/dashboard/clients/:id', requireCoach, async (req, res) => {
     const cr = await db.query('SELECT * FROM clients WHERE id = $1', [req.params.id]);
     const client = cr.rows[0];
     if (!client) return res.redirect('/dashboard/individuali');
-    const [sr, pr, payr, sedr, prjr] = await Promise.all([
+    const [sr, pr, payr, sedr, prjr, permr] = await Promise.all([
       db.query('SELECT * FROM sessions WHERE client_id=$1 ORDER BY tool, created_at DESC', [req.params.id]),
       db.query(`SELECT p.*, prj.titolo AS progetto_titolo
                 FROM percorsi p LEFT JOIN progetti prj ON prj.id = p.progetto_id
@@ -317,8 +345,16 @@ router.get('/dashboard/clients/:id', requireCoach, async (req, res) => {
                 JOIN progetti pr ON pr.id = pa.progetto_id
                 JOIN committenti c ON c.id = pr.committente_id
                 WHERE pa.client_id=$1 ORDER BY pr.titolo`, [req.params.id]),
+      // Permessi a termine sugli strumenti. La scadenza la calcola la vista
+      // `permessi_validi` (una sola verità, la legge anche Coaching-Tools).
+      // Se la lettura fallisse, la scheda cliente si deve aprire lo stesso: è la
+      // pagina che Germano usa tutti i giorni, non la si blocca per un elenco.
+      db.query(`SELECT id, tool, durata_ore, primo_accesso, fine,
+                       (fine >= NOW()) AS valido
+                  FROM permessi_validi WHERE client_id=$1
+                 ORDER BY fine DESC`, [req.params.id]).catch(() => ({ rows: [] })),
     ]);
-    res.send(clientDetailPage(client, sr.rows, pr.rows, payr.rows, sedr.rows, prjr.rows, req));
+    res.send(clientDetailPage(client, sr.rows, pr.rows, payr.rows, sedr.rows, prjr.rows, permr.rows, req));
   } catch (err) {
     console.error(err);
     res.redirect('/dashboard');
@@ -369,6 +405,76 @@ router.post('/dashboard/clients/:id/toggle', requireCoach, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Errore' });
+  }
+});
+
+// ── Permessi a termine sugli strumenti (2026-07-31) ────
+// Il coach sceglie lo strumento (o «il portale») e per quanto vale, l'Hub apre il
+// permesso e restituisce il link da mandare. Il link è sempre lo stesso indirizzo:
+// a decidere se si apre è il permesso, non l'indirizzo.
+router.post('/dashboard/clients/:id/permessi', requireCoach, express.json(), async (req, res) => {
+  try {
+    const cr = await db.query('SELECT * FROM clients WHERE id = $1', [req.params.id]);
+    const client = cr.rows[0];
+    if (!client) return res.status(404).json({ ok: false, error: 'Cliente non trovato' });
+
+    const tool = req.body.tool ? String(req.body.tool) : null;
+    if (tool && !STRUMENTI.some(t => t.key === tool)) {
+      return res.status(400).json({ ok: false, error: 'Strumento sconosciuto' });
+    }
+    const durata = req.body.durata === 'sessione' ? 'sessione' : 'ore';
+    const pid = uuidv4();
+
+    if (durata === 'sessione') {
+      // Aprire TUTTO fino alla sessione successiva non è previsto: il portale
+      // intero è il link della sessione in corso, il compito è su uno strumento.
+      if (!tool) return res.status(400).json({ ok: false, error: 'Fino alla prossima sessione vale per un solo strumento, non per tutto il portale.' });
+      // La data non la digita il coach: è quella che i report hanno già scritto.
+      // Stessa regola della home: la seduta confermata più recente che porti una
+      // data vera, e solo se quella data non è già passata.
+      const sr = await db.query(
+        `SELECT s.scadenza FROM sedute s
+          WHERE s.client_id = $1 AND s.stato = 'confermata'
+            AND s.scadenza ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+          ORDER BY s.data DESC NULLS LAST LIMIT 1`, [req.params.id]);
+      const scad = sr.rows[0] && sr.rows[0].scadenza;
+      const oggiRoma = new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Rome' });
+      if (!scad || scad < oggiRoma) {
+        return res.status(400).json({ ok: false, error: 'Non risulta una prossima sessione futura nei report di questo cliente: usa «per la sessione di oggi».' });
+      }
+      // Fine giornata di quel giorno, ora italiana: durante la sessione successiva
+      // il lavoro si deve poter ancora aprire, per guardarlo insieme.
+      await db.query(
+        `INSERT INTO permessi_strumenti (id, client_id, tool, scade_il)
+         VALUES ($1, $2, $3, ((($4::date + INTERVAL '1 day') - INTERVAL '1 second') AT TIME ZONE 'Europe/Rome'))`,
+        [pid, client.id, tool, scad]);
+    } else {
+      // A ore: scade_il resta vuoto, il conto parte alla prima apertura (lo segna
+      // Coaching-Tools). Vedi la vista `permessi_validi`.
+      await db.query(
+        `INSERT INTO permessi_strumenti (id, client_id, tool, durata_ore) VALUES ($1, $2, $3, $4)`,
+        [pid, client.id, tool, PERMESSO_ORE_SESSIONE]);
+    }
+
+    const url = PLATFORM_URL + '/c/' + client.token + (tool ? '/tool/' + tool : '');
+    res.json({ ok: true, link: url });
+  } catch (err) {
+    console.error('[permessi]', err);
+    res.status(500).json({ ok: false, error: 'Non sono riuscito a creare il permesso.' });
+  }
+});
+
+// Chiudere un permesso prima della sua scadenza. Non si cancella la riga: resta
+// la traccia di cosa era stato aperto e quando lo si è chiuso.
+router.post('/dashboard/clients/:id/permessi/:pid/chiudi', requireCoach, async (req, res) => {
+  try {
+    await db.query(
+      'UPDATE permessi_strumenti SET revocato_il = NOW() WHERE id = $1 AND client_id = $2',
+      [req.params.pid, req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[permessi]', err);
+    res.status(500).json({ ok: false, error: 'Errore' });
   }
 });
 
@@ -2317,9 +2423,10 @@ function renderSedutaRow(s) {
   </tr>`;
 }
 
-function clientDetailPage(client, sessions, percorsi, payments, sedute, progetti, req) {
+function clientDetailPage(client, sessions, percorsi, payments, sedute, progetti, permessi, req) {
   const link = PLATFORM_URL + '/c/' + client.token;
   sedute = sedute || [];
+  permessi = permessi || [];
   const area = client.area || 'Personal';
   const ac = AREA_COLOR[area] || '#1A5280';
   const st = STATO_CLIENTE[client.stato_cliente] || STATO_CLIENTE.attivo;
@@ -2526,19 +2633,8 @@ Germano`;
   // Nomi e icone IDENTICI a quelli che il cliente vede in Coaching-Tools: uno
   // strumento si chiama allo stesso modo nelle due app. Mancavano i quattro più
   // recenti (le due ruote, SWOT, Covey/Eisenhower): comparivano col nome tecnico.
-  const TOOL_LABEL = {
-    valori:'💎 Scheda Valori',
-    abilita:'⭐ Scheda Abilità',
-    lineavita:'📈 Linea della Vita',
-    genogramma:'🔗 Genogramma Relazionale',
-    ruotavita:'🎯 Ruota della Vita',
-    'ruota-leadership':'👑 Ruota della Leadership',
-    'ruota-management':'📊 Ruota del Management',
-    brainstorming:'💡 Brainstorming',
-    'logica-cartesiana':'🧭 Logica Cartesiana',
-    swot:'⚖️ SWOT Analysis',
-    'covey-eisenhower':'⏳ Matrice Covey/Eisenhower',
-  };
+  // Le etichette vengono da STRUMENTI (in cima al file), la stessa lista che
+  // riempie la tendina dei permessi: così non possono divergere.
   const strumentiItems = sessions.length === 0
     ? `<div class="empty">Nessuno strumento compilato dal cliente.</div>`
     : sessions.map(s => `
@@ -2574,6 +2670,36 @@ Germano`;
   // il link d'accesso e le date delle mail stavano sia tra i dati sia sui
   // pulsanti (Germano 27/07: "raggruppa tutti i link e i pulsanti, fai in modo
   // che non ci siano duplicazioni"). Solo forma: le funzioni sono quelle di ieri.
+  // ── Permessi a termine sugli strumenti (2026-07-31) ────
+  // La data della prossima sessione NON si chiede al coach: sta già nel database,
+  // scritta dai report (`sedute.scadenza`), la stessa che alimenta il reminder in
+  // home. Qui si prende, del cliente, la seduta confermata più recente che porti
+  // una data vera; se non è passata, è la scadenza da proporre per il compito.
+  const prossimaSess = sedute
+    .filter(s => s.stato === 'confermata' && /^\d{4}-\d{2}-\d{2}$/.test(String(s.scadenza || '')))
+    .sort((a, b) => String(b.data || '').localeCompare(String(a.data || '')))
+    .map(s => s.scadenza)
+    .find(d => d >= new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Rome' })) || null;
+
+  // Nomi degli strumenti per la tendina: senza icone (la pagina è del coach) e
+  // nell'ordine in cui li vede il cliente.
+  const opzioniStrumenti = STRUMENTI
+    .map(t => `<option value="${attr(t.key)}">${esc(t.nome)}</option>`).join('');
+
+  // Cosa è aperto adesso, in parole. Un permesso scaduto non si mostra: conta
+  // quello che il cliente può fare ORA.
+  const permessiVivi = permessi.filter(p => p.valido);
+  const permessiTxt = permessiVivi.length === 0
+    ? 'Nessun permesso aperto: in questo momento il cliente non apre nulla.'
+    : permessiVivi.map(p => {
+        const cosa = p.tool ? (TOOL_LABEL[p.tool] || esc(p.tool)) : 'Tutti gli strumenti';
+        const quando = p.primo_accesso || p.durata_ore == null
+          ? `fino al ${itDateTime(p.fine)}`
+          : `${p.durata_ore} ore da quando lo apre (non ancora aperto)`;
+        return `<div style="margin-top:3px">✓ <strong>${cosa}</strong> — ${quando}
+          <button onclick="chiudiPermesso('${attr(p.id)}')" class="btn btn-off btn-sm" style="padding:1px 7px;font-size:11px;margin-left:6px">chiudi</button></div>`;
+      }).join('');
+
   const azioniHtml = `
     <div class="az-bar">
       <div class="zona-tit">Azioni e collegamenti</div>
@@ -2618,12 +2744,27 @@ Germano`;
 
         <div class="az-gruppo">
           <div class="az-nome">Accesso agli strumenti</div>
-          <div class="az-link">${link}</div>
-          <div class="az-btns">
-            <button onclick="copyLink('${link}')" class="btn btn-neutral btn-sm">📋 Copia il link</button>
-            <button onclick="toggleAccess()" class="btn btn-neutral btn-sm">${client.active ? "Disattiva l'accesso" : "Riattiva l'accesso"}</button>
+          <div class="az-btns" style="flex-wrap:wrap">
+            <select id="perm-tool" onchange="aggiornaDurate()" class="btn btn-neutral btn-sm" style="max-width:250px">
+              <option value="">Il portale — tutti gli strumenti</option>
+              ${opzioniStrumenti}
+            </select>
+            <select id="perm-durata" class="btn btn-neutral btn-sm" style="max-width:230px">
+              <option value="ore">per la sessione di oggi</option>
+              ${prossimaSess ? `<option value="sessione">fino alla prossima sessione (${itDate(prossimaSess)})</option>` : ''}
+            </select>
+            <button onclick="creaPermesso()" class="btn btn-primary btn-sm">📋 Crea il link e copialo</button>
           </div>
-          <div class="az-stato">${client.active ? 'Attivo — il cliente può aprire i suoi strumenti.' : 'Disattivato — il cliente non può aprire i suoi strumenti.'}</div>
+          <div class="az-stato">
+            ${permessiTxt}
+            <div style="margin-top:6px;color:var(--hint);font-size:11px">
+              «Per la sessione di oggi» vale ${PERMESSO_ORE_SESSIONE} ore, contate da quando il cliente apre il link (così puoi mandarlo la sera prima).${prossimaSess ? ' «Fino alla prossima sessione» arriva a fine giornata, per poterlo guardare insieme.' : ' Per questo cliente non c&rsquo;è ancora una data di prossima sessione nei report.'}
+            </div>
+            ${client.active ? '' : '<div style="margin-top:6px;color:#B45309">⚠️ L&rsquo;accesso generale è spento: finché resta così, nessun permesso funziona.</div>'}
+          </div>
+          <div class="az-btns" style="margin-top:8px">
+            <button onclick="toggleAccess()" class="btn btn-neutral btn-sm">${client.active ? "Disattiva tutto l'accesso" : "Riattiva l'accesso"}</button>
+          </div>
         </div>
 
       </div>
@@ -3035,6 +3176,46 @@ Germano`;
       location.reload();
     }
     async function toggleAccess() { await fetch('/dashboard/clients/'+CID+'/toggle',{method:'POST'}); location.reload(); }
+
+    // ── Permessi a termine sugli strumenti ────
+    // Il portale intero vale solo per la sessione di oggi: "fino alla prossima
+    // sessione" ha senso per il compito su UN solo strumento, non per aprire tutto.
+    function aggiornaDurate() {
+      const tool = document.getElementById('perm-tool').value;
+      const dur  = document.getElementById('perm-durata');
+      const sess = dur.querySelector('option[value="sessione"]');
+      if (!sess) return;
+      sess.hidden = !tool;
+      if (!tool) dur.value = 'ore';
+    }
+    async function creaPermesso() {
+      const tool   = document.getElementById('perm-tool').value;
+      const durata = document.getElementById('perm-durata').value;
+      const r = await fetch('/dashboard/clients/'+CID+'/permessi', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tool: tool || null, durata: durata })
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!d.ok) { alert(d.error || 'Non sono riuscito a creare il permesso.'); return; }
+      // La copia automatica può essere bloccata dal browser (succede su Safari
+      // quando fra il clic e la copia c\'è una chiamata al server): in quel caso
+      // il link non si perde, si mostra e lo si copia a mano.
+      try {
+        await navigator.clipboard.writeText(d.link);
+        const t = document.getElementById('toast');
+        t.textContent = 'Link copiato! Il permesso è aperto.';
+        t.style.display = 'block';
+      } catch (e) {
+        window.prompt('Ecco il link da mandare al cliente (copialo):', d.link);
+      }
+      setTimeout(() => location.reload(), 1200);
+    }
+    async function chiudiPermesso(id) {
+      if (!confirm('Chiudo questo permesso? Da subito il cliente non potrà più aprirlo.')) return;
+      await fetch('/dashboard/clients/'+CID+'/permessi/'+id+'/chiudi', { method: 'POST' });
+      location.reload();
+    }
+    aggiornaDurate();
     async function deleteClient() {
       if (!confirm('Eliminare ${attr(client.name)} e tutti i suoi dati? Operazione irreversibile.')) return;
       await fetch('/dashboard/clients/'+CID,{method:'DELETE'}); location.href='/dashboard/individuali';
@@ -4560,6 +4741,20 @@ function itDate(d) {
   const s = String(d).slice(0, 10);
   const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   return m ? `${m[3]}/${m[2]}/${m[1]}` : s;
+}
+
+// Momento preciso (data + ora) in ORA ITALIANA: '11/08/2026 alle 10:30'.
+// Serve per le scadenze dei permessi, dove l'ora conta davvero. Non si può usare
+// fmtDate: quella taglia la stringa ISO, cioè mostra l'ora di Greenwich, e d'estate
+// scriverebbe due ore in meno di quella che il coach e il cliente hanno all'orologio.
+function itDateTime(d) {
+  if (!d) return '—';
+  const dt = d instanceof Date ? d : new Date(d);
+  if (isNaN(dt.getTime())) return String(d);
+  return new Intl.DateTimeFormat('it-IT', {
+    timeZone: 'Europe/Rome', day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  }).format(dt).replace(', ', ' alle ');
 }
 
 // Data ISO (2026-07-11) → nome cartella Drive italiano con trattini (11-07-2026).

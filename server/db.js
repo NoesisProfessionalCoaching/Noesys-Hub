@@ -444,6 +444,55 @@ async function init() {
   await query(`UPDATE progetti SET stato='attivo'   WHERE stato IN ('pre-intake','proposta')`);
   await query(`UPDATE progetti SET stato='concluso' WHERE stato IN ('chiuso','perso')`);
 
+  // 2026-07-31 — PERMESSI A TERMINE sugli strumenti (decisione di Germano).
+  // Fino a oggi l'accesso era tutto-o-niente e senza scadenza: `clients.active`
+  // acceso = il cliente apre tutti gli strumenti, per sempre. Il nuovo modello:
+  // ogni permesso ha una fine.
+  //   tool NULL      = il portale intero (tutti gli strumenti) — link dell'intake
+  //   tool 'swot'    = quel solo strumento — il compito fra una sessione e l'altra
+  //   durata_ore     = permesso "a ore": il conto NON parte quando il coach copia
+  //                    il link, ma quando il cliente lo apre la PRIMA volta (così
+  //                    il link si può mandare la sera prima senza che muoia)
+  //   scade_il       = permesso a data fissa (fine giornata della sessione successiva,
+  //                    compresa: durante quella sessione il lavoro si apre insieme)
+  // Un permesso ha SEMPRE una sola delle due (ore oppure data). `clients.active`
+  // resta l'interruttore generale: spento, non entra comunque.
+  await query(`
+    CREATE TABLE IF NOT EXISTS permessi_strumenti (
+      id            TEXT PRIMARY KEY,
+      client_id     TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+      tool          TEXT,
+      durata_ore    INTEGER,
+      scade_il      TIMESTAMPTZ,
+      primo_accesso TIMESTAMPTZ,
+      revocato_il   TIMESTAMPTZ,
+      created_at    TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  await query(`CREATE INDEX IF NOT EXISTS permessi_strumenti_client_idx ON permessi_strumenti (client_id)`);
+
+  // UNA SOLA VERITÀ sulla scadenza. La regola la leggono due applicazioni diverse
+  // (l'Hub per dire al coach com'è messo, Coaching-Tools per aprire o non aprire la
+  // porta): se vivesse scritta due volte, prima o poi direbbero cose diverse. Vive
+  // qui, e tutt'e due interrogano questa vista.
+  //   `fine` = quando il permesso smette di valere:
+  //     - data fissa            → quella data
+  //     - a ore e già aperto    → prima apertura + le ore
+  //     - a ore e MAI aperto    → 30 giorni dalla creazione. Un link preparato e mai
+  //                               usato non può restare buono a vita.
+  await query(`
+    CREATE OR REPLACE VIEW permessi_validi AS
+    SELECT p.id, p.client_id, p.tool, p.durata_ore, p.scade_il, p.primo_accesso,
+           p.created_at,
+           CASE
+             WHEN p.scade_il IS NOT NULL      THEN p.scade_il
+             WHEN p.primo_accesso IS NOT NULL THEN p.primo_accesso + (COALESCE(p.durata_ore,0) || ' hours')::interval
+             ELSE p.created_at + INTERVAL '30 days'
+           END AS fine
+      FROM permessi_strumenti p
+     WHERE p.revocato_il IS NULL
+  `);
+
   // Stesso account coach della piattaforma strumenti (solo per il DB di test:
   // sul DB reale condiviso la riga esiste già).
   const existing = await query('SELECT id FROM coach WHERE username = $1', ['Germano']);
