@@ -299,6 +299,24 @@ async function downloadFileBuffer(fileId) {
   return Buffer.from(await res.arrayBuffer());
 }
 
+// Elimina un file DEFINITIVAMENTE, senza passare dal cestino (scelta di Germano
+// 07/08 per il modulo vuoto rimasto nella cartella quando arriva quello compilato).
+// ⚠️ Non si torna indietro. Chi chiama deve essere sicuro di che file è: nello
+// scanner dei moduli si cancella SOLO dopo che i dati sono stati letti e scritti,
+// mai prima, e solo il file riconosciuto come modulo vuoto.
+async function deleteFileForever(fileId) {
+  const token = await getAccessToken();
+  const res = await fetch(DRIVE_API + '/files/' + fileId + '?supportsAllDrives=true', {
+    method: 'DELETE',
+    headers: { Authorization: 'Bearer ' + token },
+  });
+  if (!res.ok && res.status !== 404) {
+    const t = await res.text().catch(() => '');
+    throw new Error('Eliminazione Drive ' + res.status + ': ' + t.slice(0, 200));
+  }
+  return true;
+}
+
 // Estrae l'id-cartella da un link Drive incollato nell'Hub (campo drive_url).
 // Accetta ".../folders/<id>", "?id=<id>" o direttamente un id nudo.
 function folderIdFromUrl(url) {
@@ -319,6 +337,7 @@ module.exports = {
   findNoesysRoot,
   isFolder,
   downloadFileBuffer,
+  deleteFileForever,
   folderIdFromUrl,
   findFolderByName,
   createFolder,

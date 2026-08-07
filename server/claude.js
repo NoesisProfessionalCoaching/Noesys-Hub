@@ -269,4 +269,89 @@ Estrai le voci elencate secondo le regole. Rispondi SOLO con l'oggetto JSON.`;
   return out;
 }
 
-module.exports = { MODEL, hasApiKey, generaRiga, generaRigaCollettiva, generaRigaFase, FASE_SPEC };
+// ── ANAGRAFICA DAI MODULI COMPILATI (07/08) ─────────────────────────────────
+// Dal modulo che il cliente rimanda arrivano i VALORI che ha scritto, in ordine
+// di lettura, ma SENZA sapere a quale domanda rispondono: nel PDF sono foglietti
+// appoggiati sopra la pagina. L'abbinamento per posizione non regge (provato: si
+// sfasa di una riga), mentre qui basta il buon senso — "23 Agosto 1970" è una
+// data di nascita, "DVDGLN70M23F205V" un codice fiscale. Perciò lo fa Claude.
+const CAMPI_ANAGRAFICA = {
+  data_nascita:    'data di nascita, in formato AAAA-MM-GG (es. "23 Agosto 1970" → "1970-08-23")',
+  luogo_nascita:   'comune di nascita, senza provincia',
+  via:             'indirizzo di residenza: via e numero civico, nient\'altro',
+  citta:           'comune di residenza, SENZA la provincia fra parentesi',
+  provincia:       'sigla della provincia, 2 lettere maiuscole (es. "Quartu S. Elena (CA)" → "CA")',
+  cap:             'CAP, 5 cifre',
+  telefono:        'numero di telefono',
+  email:           'indirizzo email ordinario (NON la PEC)',
+  professione:     'professione o ruolo. Se ci sono più voci (es. "Libero professionista" e la descrizione del ruolo) scegli quella che dice CHE LAVORO FA',
+  societa:         'azienda o studio. Se è un libero professionista senza azienda, "—"',
+  codice_fiscale:  'codice fiscale, 16 caratteri maiuscoli. Se è una partita IVA di 11 cifre mettila comunque qui',
+  pec:             'indirizzo PEC (posta certificata). Spesso vicino al codice destinatario SDI',
+  codice_sdi:      'codice destinatario SDI, 7 caratteri (per i privati è "0000000")',
+};
+
+// I moduli sono documenti di identità e contratti: capita che il classificatore
+// di sicurezza si insospettisca. Il messaggio dice a chiare lettere di che si
+// tratta — è il coach che legge la scheda del proprio cliente, con il suo
+// consenso — così la richiesta non viene scambiata per altro.
+const SYSTEM_ANAGRAFICA = `Sei l'assistente di un coach professionista (Noesys). Il suo cliente gli ha rimandato compilato il modulo di anagrafica (o il contratto) che il coach stesso gli aveva inviato. Il coach sta aggiornando la scheda del cliente nel proprio gestionale, con il consenso dell'interessato.
+
+Ti arriva l'ELENCO DEI VALORI che il cliente ha scritto sul modulo, nell'ordine in cui compaiono sulla pagina, ma senza l'etichetta del campo: nel PDF sono annotazioni appoggiate sopra il modulo. Il tuo compito è capire, per ciascun campo richiesto, QUALE di quei valori gli corrisponde.
+
+Regole ferme:
+- Usa SOLO i valori dell'elenco. Non inventare, non completare, non correggere.
+- Un valore può servire a un campo solo. Se per un campo non c'è nulla, scrivi "—".
+- Se un valore contiene più informazioni, prendi solo la parte che serve al campo (es. "Quartu S. Elena (CA)" → città "Quartu S. Elena", provincia "CA").
+- Le risposte discorsive alle domande aperte (motivazioni, aspettative, cosa lo motiva) NON servono: ignorale.
+- In caso di dubbio fra due valori, scegli "—" invece di rischiare.
+
+Italiano. Rispondi SOLO con l'oggetto JSON richiesto.`;
+
+async function estraiAnagrafica({ valori, tipoModulo, nomeCliente }) {
+  if (!hasApiKey()) throw new Error('ANTHROPIC_API_KEY non configurata');
+  const client = new Anthropic();
+
+  const schema = {
+    type: 'object',
+    properties: Object.fromEntries(Object.keys(CAMPI_ANAGRAFICA).map(k => [k, { type: 'string' }])),
+    required: Object.keys(CAMPI_ANAGRAFICA),
+    additionalProperties: false,
+  };
+  const elenco = Object.entries(CAMPI_ANAGRAFICA).map(([k, d]) => `- ${k}: ${d}`).join('\n');
+
+  const user = `Cliente: ${nomeCliente || '(nome non indicato)'}
+Modulo: ${tipoModulo === 'contratto' ? 'contratto di coaching firmato' : 'scheda anagrafica del cliente'}
+
+=== VALORI SCRITTI SUL MODULO, in ordine di lettura ===
+${valori.map((v, i) => `${i + 1}. ${v}`).join('\n')}
+
+=== CAMPI DA RICAVARE ===
+${elenco}
+
+Rispondi SOLO con l'oggetto JSON.`;
+
+  const resp = await client.messages.create({
+    model: MODEL,
+    max_tokens: 1500,
+    output_config: { format: { type: 'json_schema', schema } },
+    system: SYSTEM_ANAGRAFICA,
+    messages: [{ role: 'user', content: user }],
+  });
+
+  if (resp.stop_reason === 'refusal') {
+    throw new Error('Richiesta rifiutata dal classificatore di sicurezza (anagrafica non estratta)');
+  }
+  const txt = (resp.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
+  const data = parseJsonLoose(txt);
+  if (!data) throw new Error('Risposta non in formato atteso: ' + txt.slice(0, 160));
+
+  const out = {};
+  for (const k of Object.keys(CAMPI_ANAGRAFICA)) {
+    const v = data[k];
+    out[k] = (v == null || String(v).trim() === '' || String(v).trim() === '—') ? null : String(v).trim();
+  }
+  return out;
+}
+
+module.exports = { MODEL, hasApiKey, generaRiga, generaRigaCollettiva, generaRigaFase, FASE_SPEC, estraiAnagrafica, CAMPI_ANAGRAFICA };

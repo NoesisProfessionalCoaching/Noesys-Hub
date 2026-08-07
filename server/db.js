@@ -444,6 +444,32 @@ async function init() {
   await query(`UPDATE progetti SET stato='attivo'   WHERE stato IN ('pre-intake','proposta')`);
   await query(`UPDATE progetti SET stato='concluso' WHERE stato IN ('chiuso','perso')`);
 
+  // 2026-08-07 — DATI CHE ARRIVANO DAI MODULI COMPILATI (scheda anagrafica e
+  // contratto firmato che il cliente rimanda). Germano: «le mettiamo in
+  // anagrafica». Servono a fatturare: codice fiscale (o partita IVA), PEC e
+  // codice destinatario SDI. `luogo_nascita` non era stato chiesto, ma la scheda
+  // lo raccoglie e senza una colonna andrebbe perso: additivo e innocuo, si
+  // toglie in un minuto se non lo si vuole.
+  await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS codice_fiscale TEXT`);
+  await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS pec            TEXT`);
+  await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS codice_sdi     TEXT`);
+  await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS luogo_nascita  TEXT`);
+  // Traccia di cosa è già stato letto: un modulo si elabora UNA volta sola.
+  // Senza questo, a ogni giro l'automazione rileggerebbe gli stessi documenti e
+  // riscriverebbe l'anagrafica ogni tre ore.
+  await query(`
+    CREATE TABLE IF NOT EXISTS moduli_letti (
+      id         TEXT PRIMARY KEY,
+      client_id  TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+      file_id    TEXT NOT NULL,
+      nome_file  TEXT,
+      tipo       TEXT,
+      esito      TEXT,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE (file_id)
+    )
+  `);
+
   // 2026-07-31 — PERMESSI A TERMINE sugli strumenti (decisione di Germano).
   // Fino a oggi l'accesso era tutto-o-niente e senza scadenza: `clients.active`
   // acceso = il cliente apre tutti gli strumenti, per sempre. Il nuovo modello:

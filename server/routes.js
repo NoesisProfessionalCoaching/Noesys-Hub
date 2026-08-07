@@ -8,6 +8,7 @@ const drive = require('./google-drive');
 const scan = require('./scan');
 const documenti = require('./documenti');
 const mailer = require('./mailer');
+const moduli = require('./moduli');
 
 const router = express.Router();
 
@@ -377,16 +378,20 @@ router.post('/dashboard/clients/:id', requireCoach, express.json(), async (req, 
         via=$6, cap=$7, citta=$8, provincia=$9, data_nascita=$10,
         professione=$11, area=$12, fonte=$13, obiettivo=$14, stato_cliente=$15,
         prossima_azione=$16, prossima_azione_data=$17, drive_url=$18, note_preliminari=$19,
+        luogo_nascita=$25, codice_fiscale=$26, pec=$27, codice_sdi=$28,
         consenso_privacy=$20,
         consenso_data = CASE WHEN $20 AND consenso_data IS NULL THEN CURRENT_DATE
                              WHEN $20 THEN consenso_data ELSE NULL END
        WHERE id=$21`,
-      [name, (b.email||'').trim(), (b.telefono||'').trim(), (b.altro_recapito||'').trim(),
+      [name, (b.email||'').trim(), moduli.normalizzaTelefono((b.telefono||'').trim()), (b.altro_recapito||'').trim(),
        (b.social_tipo||'').trim(), (b.via||'').trim(), (b.cap||'').trim(), (b.citta||'').trim(),
        (b.provincia||'').trim(), b.data_nascita||null, (b.professione||'').trim(),
        b.area||'Personal', b.fonte||'altro', (b.obiettivo||'').trim(), b.stato_cliente||'attivo',
        (b.prossima_azione||'').trim(), b.prossima_azione_data||null, (b.drive_url||'').trim(),
-       (b.note_preliminari||'').trim(), consenso, req.params.id, nome, cognome, (b.societa||'').trim()]
+       (b.note_preliminari||'').trim(), consenso, req.params.id, nome, cognome, (b.societa||'').trim(),
+       // dal contratto firmato, ma correggibili a mano
+       (b.luogo_nascita||'').trim(), (b.codice_fiscale||'').trim().toUpperCase(),
+       (b.pec||'').trim(), (b.codice_sdi||'').trim()]
     );
     res.json({ ok: true });
   } catch (err) {
@@ -2845,12 +2850,22 @@ Germano`;
         </div>
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-top:12px">
-        <div><div class="field-label">Data di nascita</div><div class="field-value">${client.data_nascita ? itDate(client.data_nascita) : '<span style="color:#ccc">—</span>'}</div></div>
+        <div><div class="field-label">Data di nascita</div><div class="field-value">${client.data_nascita ? itDate(client.data_nascita) : '<span style="color:#ccc">—</span>'}${client.luogo_nascita ? `<span style="color:var(--hint)"> · ${esc(client.luogo_nascita)}</span>` : ''}</div></div>
         <div><div class="field-label">Professione</div><div class="field-value">${val(client.professione)}</div></div>
         <div><div class="field-label">Società</div><div class="field-value">${val(client.societa)}</div></div>
         <div><div class="field-label">Come ci ha conosciuto</div><div class="field-value">${FONTE_LABEL[client.fonte]||val(client.fonte)}</div></div>
         <div><div class="field-label">Consenso privacy</div><div class="field-value">${client.consenso_privacy ? `Sì${client.consenso_data ? ` (${itDate(client.consenso_data)})` : ''}` : '<span style="color:#ccc">No</span>'}</div></div>
       </div>
+      ${/* Dati per la fatturazione: arrivano dal contratto firmato che il cliente
+            rimanda (automazione moduli, 07/08). Riga a sé perché si guardano
+            insieme, e solo quando ci sono: su un cliente senza contratto la riga
+            non compare e la scheda resta com'era. */ ''}
+      ${(client.codice_fiscale || client.pec || client.codice_sdi) ? `
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px;margin-top:12px">
+        <div><div class="field-label">Codice fiscale / P.IVA</div><div class="field-value">${val(client.codice_fiscale)}</div></div>
+        <div><div class="field-label">PEC</div><div class="field-value">${val(client.pec)}</div></div>
+        <div><div class="field-label">Codice destinatario SDI</div><div class="field-value">${val(client.codice_sdi)}</div></div>
+      </div>` : ''}
       ${client.note_preliminari ? `<div style="margin-top:12px"><div class="field-label">Note CRM</div><div style="font-size:13px;color:#6B7280">${esc(client.note_preliminari)}</div></div>` : ''}
       ${recallHtml}
 
@@ -2890,6 +2905,16 @@ Germano`;
         <div class="form-group"><label>Data di nascita</label><input id="e-nascita" type="date" value="${client.data_nascita ? String(client.data_nascita).slice(0,10) : ''}"></div>
       </div>
       <div class="form-group"><label>Società / azienda</label><input id="e-societa" type="text" value="${attr(client.societa)}"></div>
+      ${/* Li riempie da sé l'automazione leggendo il contratto firmato, ma restano
+            correggibili a mano: se il cliente scrive male un codice, si sistema qui. */ ''}
+      <div style="display:grid;grid-template-columns:1.2fr 1fr;gap:12px">
+        <div class="form-group"><label>Luogo di nascita</label><input id="e-luogo-nascita" type="text" value="${attr(client.luogo_nascita)}"></div>
+        <div class="form-group"><label>Codice fiscale / P.IVA</label><input id="e-cf" type="text" value="${attr(client.codice_fiscale)}"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:12px">
+        <div class="form-group"><label>PEC</label><input id="e-pec" type="email" value="${attr(client.pec)}"></div>
+        <div class="form-group"><label>Codice destinatario SDI</label><input id="e-sdi" type="text" value="${attr(client.codice_sdi)}"></div>
+      </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
         <div class="form-group"><label>Area</label><select id="e-area">${areaOptions(area)}</select></div>
         <div class="form-group"><label>Come ci ha conosciuto</label><select id="e-fonte">${fonteOptions(client.fonte||'altro')}</select></div>
@@ -3271,6 +3296,8 @@ Germano`;
         via:document.getElementById('e-via').value, cap:document.getElementById('e-cap').value,
         citta:document.getElementById('e-citta').value, provincia:document.getElementById('e-provincia').value,
         professione:document.getElementById('e-prof').value, societa:document.getElementById('e-societa').value, data_nascita:document.getElementById('e-nascita').value||null,
+        luogo_nascita:document.getElementById('e-luogo-nascita').value, codice_fiscale:document.getElementById('e-cf').value,
+        pec:document.getElementById('e-pec').value, codice_sdi:document.getElementById('e-sdi').value,
         area:document.getElementById('e-area').value, fonte:document.getElementById('e-fonte').value,
         obiettivo:document.getElementById('e-obiettivo').value, stato_cliente:document.getElementById('e-stato').value,
         prossima_azione:document.getElementById('e-azione').value, prossima_azione_data:document.getElementById('e-azione-data').value||null,

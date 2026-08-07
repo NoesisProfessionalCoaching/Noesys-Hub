@@ -21,6 +21,7 @@ const cron   = require('node-cron');
 const db     = require('./db');
 const routes = require('./routes');
 const scan   = require('./scan');
+const scanModuli = require('./scan-moduli');
 
 const app  = express();
 const PORT = process.env.PORT || 3100;
@@ -62,11 +63,18 @@ db.init().then(() => {
       const outC = await scan.scanCollectiveReports();
       console.log(`[scan-collettivo] ${new Date().toISOString()} — bozze:${outC.processed.length} saltati:${outC.skipped} percorsi:${outC.percorsi} errori:${outC.errors.length}`);
       if (outC.errors.length) console.log('[scan-collettivo] dettaglio errori:', JSON.stringify(outC.errors));
+      // Moduli compilati (scheda anagrafica, contratto) → anagrafica del cliente.
+      // A differenza dei report NON crea bozze: scrive in anagrafica, perché il
+      // modulo è compilato dal cliente stesso e vince su quello che c'è.
+      const outM = await scanModuli.scanModuliClienti();
+      console.log(`[scan-moduli] ${new Date().toISOString()} — aggiornati:${outM.aggiornati.length} letti:${outM.letti} vuoti-eliminati:${outM.eliminati} clienti:${outM.clients} errori:${outM.errors.length}`);
+      if (outM.aggiornati.length) console.log('[scan-moduli] dettaglio:', JSON.stringify(outM.aggiornati));
+      if (outM.errors.length) console.log('[scan-moduli] dettaglio errori:', JSON.stringify(outM.errors));
     } catch (e) {
       console.error('[scan] passata non eseguita:', e.message);
     }
   }, { timezone: 'Europe/Rome' });
-  console.log('   ⏱  Report Drive → bozza: 07:00 / 15:00 / 23:00 (Europe/Rome)\n');
+  console.log('   ⏱  Report Drive → bozza · Moduli → anagrafica: 07:00 / 15:00 / 23:00 (Europe/Rome)\n');
 }).catch(err => {
   console.error('❌ Errore inizializzazione DB:', err);
   process.exit(1);
