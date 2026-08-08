@@ -3484,7 +3484,11 @@ Germano`;
       location.reload();
     }
     async function scartaBozza() {
-      if (!confirm('Scarto quello che i documenti dicono? La scheda resta com\'è.')) return;
+      ${/* ⚠️ apostrofo: qui siamo dentro una template literal, quindi va scritto
+            \\' — con una barra sola sparisce e rompe TUTTO il JavaScript della
+            pagina (è successo l'08/08: scheda cliente inerte, nessun pulsante
+            rispondeva). Vedi la prova che ora controlla il JS renderizzato. */ ''}
+      if (!confirm('Scarto quello che i documenti dicono? La scheda resta com\\'è.')) return;
       await fetch('/dashboard/clients/'+CID+'/bozza-anagrafica/scarta', { method:'POST' });
       location.reload();
     }
