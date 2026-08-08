@@ -141,7 +141,8 @@ router.get('/dashboard/individuali', requireCoach, async (req, res) => {
 // Tutti i numeri vengono da dati che l'Hub ha già: nessun campo nuovo.
 async function mostraHome(req, res) {
   try {
-    const [ind, prog, comm, lead, bozze, daChiudere, azioni, richiami, appuntamenti] = await Promise.all([
+    const [ind, prog, comm, lead, bozze, daChiudere, azioni, richiami, appuntamenti,
+           anagrafiche, documenti] = await Promise.all([
       db.query(`SELECT count(*)::int n FROM clients c
                  WHERE EXISTS (SELECT 1 FROM percorsi pi WHERE pi.client_id = c.id AND pi.progetto_id IS NULL)
                     OR NOT EXISTS (SELECT 1 FROM percorsi pt WHERE pt.client_id = c.id
@@ -200,6 +201,34 @@ async function mostraHome(req, res) {
                  -- A parità di giorno conta l'ora: lpad perché l'orario è testo e
                  -- "9:00" senza lo zero finirebbe dopo "10:30".
                  ORDER BY u.scad, lpad(u.ora, 5, '0') NULLS LAST`),
+
+      // ── Proposte lette dai documenti, in attesa di controllo ───────────────
+      db.query(`SELECT id, name,
+                       COALESCE(jsonb_array_length(bozza_anagrafica->'proposte'), 0)
+                         + CASE WHEN (bozza_anagrafica->>'consenso')::boolean THEN 1 ELSE 0 END AS n
+                  FROM clients WHERE bozza_anagrafica IS NOT NULL
+                 ORDER BY name`),
+
+      // ── Documentazione che manca, sui soli percorsi ATTIVI ─────────────────
+      // Due situazioni diverse, e si distinguono da quello che l'automazione ha
+      // già visto su Drive:
+      //   · nessun modulo trovato          → il cliente non l'ha ancora mandata
+      //   · trovati solo moduli "in bianco" → li ha compilati su carta e
+      //     aspettano di essere scansionati (caso Davide Bozzoni)
+      // Si guarda anche il consenso privacy, che è la cosa che conta di più.
+      db.query(`
+        SELECT c.id, c.name,
+               COUNT(ml.id) FILTER (WHERE ml.esito <> 'in bianco') AS compilati,
+               COUNT(ml.id) FILTER (WHERE ml.esito = 'in bianco')  AS bianchi,
+               c.consenso_privacy
+          FROM clients c
+          JOIN percorsi p ON p.client_id = c.id AND p.stato = 'attivo'
+          LEFT JOIN moduli_letti ml ON ml.client_id = c.id
+         WHERE c.drive_url IS NOT NULL AND c.drive_url <> ''
+         GROUP BY c.id, c.name, c.consenso_privacy
+        HAVING COUNT(ml.id) FILTER (WHERE ml.esito <> 'in bianco') = 0
+            OR c.consenso_privacy IS NOT TRUE
+         ORDER BY c.name`),
     ]);
     res.send(homePage({
       nIndividuali: ind.rows[0].n,
@@ -209,6 +238,13 @@ async function mostraHome(req, res) {
       bozze: bozze.rows, daChiudere: daChiudere.rows,
       azioni: azioni.rows, richiami: richiami.rows,
       appuntamenti: appuntamenti.rows,
+      anagrafiche: anagrafiche.rows,
+      documenti: documenti.rows.map(x => ({
+        id: x.id, name: x.name,
+        stato: Number(x.compilati) > 0
+          ? 'manca il consenso privacy'
+          : (Number(x.bianchi) > 0 ? 'moduli ancora in bianco — da scansionare' : 'documentazione non ancora arrivata'),
+      })),
     }, req));
   } catch (err) {
     console.error('[home]', err);
@@ -405,6 +441,54 @@ router.post('/dashboard/clients/:id', requireCoach, express.json(), async (req, 
 // anche la rotta che lo spegneva — se restasse, basterebbe un vecchio
 // segnalibro per bloccare un cliente con un interruttore che non si vede più.
 // La colonna resta nel database: non si buttano dati, semplicemente è inerte.
+
+// ── Bozza di anagrafica letta dai moduli: approva / scarta (08/08) ────
+// L'automazione propone, il coach decide. All'approvazione si scrive in
+// anagrafica e SOLO ALLORA si eliminano i moduli rimasti in bianco: finché la
+// proposta non è accettata non si tocca niente, né nel database né su Drive.
+router.post('/dashboard/clients/:id/bozza-anagrafica/:azione', requireCoach, express.json(), async (req, res) => {
+  try {
+    const r = await db.query('SELECT id, name, bozza_anagrafica FROM clients WHERE id = $1', [req.params.id]);
+    const cl = r.rows[0];
+    if (!cl || !cl.bozza_anagrafica) return res.status(404).json({ ok: false, error: 'Nessuna proposta da approvare' });
+    const b = typeof cl.bozza_anagrafica === 'string' ? JSON.parse(cl.bozza_anagrafica) : cl.bozza_anagrafica;
+
+    if (req.params.azione === 'scarta') {
+      await db.query('UPDATE clients SET bozza_anagrafica = NULL WHERE id = $1', [cl.id]);
+      return res.json({ ok: true, scartata: true });
+    }
+    if (req.params.azione !== 'approva') return res.status(400).json({ ok: false, error: 'Azione sconosciuta' });
+
+    // Si applicano SOLO i campi che il coach ha lasciato spuntati.
+    const scelti = Array.isArray(req.body.campi) ? new Set(req.body.campi) : null;
+    const set = [], vals = [];
+    for (const p of (b.proposte || [])) {
+      if (scelti && !scelti.has(p.campo)) continue;
+      vals.push(p.dopo); set.push(`${p.campo} = $${vals.length}`);
+    }
+    if (b.consenso && req.body.consenso !== false) {
+      set.push('consenso_privacy = TRUE');
+      if (b.dataConsenso) { vals.push(b.dataConsenso); set.push(`consenso_data = $${vals.length}`); }
+    }
+    if (set.length) {
+      vals.push(cl.id);
+      await db.query(`UPDATE clients SET ${set.join(', ')} WHERE id = $${vals.length}`, vals);
+    }
+
+    // Ora che i dati sono al sicuro, via i moduli rimasti in bianco.
+    let eliminati = 0;
+    const avvisi = [];
+    for (const v of (b.daEliminare || [])) {
+      try { await drive.deleteFileForever(v.id); eliminati++; }
+      catch (e) { avvisi.push(`«${v.nome}» non si è potuto eliminare: ${e.message}`); }
+    }
+    await db.query('UPDATE clients SET bozza_anagrafica = NULL WHERE id = $1', [cl.id]);
+    res.json({ ok: true, scritti: set.length, eliminati, avvisi });
+  } catch (err) {
+    console.error('[bozza-anagrafica]', err);
+    res.status(500).json({ ok: false, error: 'Errore: ' + err.message });
+  }
+});
 
 // ── Permessi a termine sugli strumenti (2026-07-31) ────
 // Il coach sceglie lo strumento (o «il portale») e per quanto vale, l'Hub apre il
@@ -2178,7 +2262,19 @@ function homePage(d, req) {
     '/dashboard/leads', esc([l.nome, l.cognome].filter(Boolean).join(' ')),
     l.data_prossimo_contatto ? itDate(l.data_prossimo_contatto) : '')));
 
-  const attenzione = [gAppuntamenti, gBozze, gChiudere, gAzioni, gLead].filter(Boolean).join('');
+  // Proposte lette dai documenti, in attesa che il coach le guardi.
+  const gAnagrafiche = gruppo('Dati letti dai documenti, da controllare', d.anagrafiche.map(a => voce(
+    `/dashboard/clients/${a.id}`, esc(a.name),
+    a.n === 1 ? '1 dato' : a.n + ' dati')));
+
+  // Documentazione che manca, SOLO sui percorsi attivi (scelta di Germano 08/08).
+  // I due casi restano distinti perché l'azione è diversa: «non arrivata» aspetta
+  // il cliente, «ancora in bianco» aspetta il coach — è il caso di chi compila su
+  // carta e va scansionato.
+  const gDocumenti = gruppo('Documentazione da completare', d.documenti.map(x => voce(
+    `/dashboard/clients/${x.id}`, esc(x.name), x.stato)));
+
+  const attenzione = [gAppuntamenti, gBozze, gAnagrafiche, gChiudere, gDocumenti, gAzioni, gLead].filter(Boolean).join('');
 
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub</title>${baseStyle()}</head><body>
   ${headerNoesys({})}
@@ -2763,6 +2859,65 @@ Germano`;
           <button onclick="chiudiPermesso('${attr(p.id)}')" class="btn btn-off btn-sm" style="padding:2px 9px;font-size:11px">chiudi</button>
         </div>`).join('');
 
+  // ── PROPOSTA letta dai moduli, da approvare (08/08) ──────────────────
+  // Sta in cima alla scheda perché è una cosa che ASPETTA il coach. Mostra il
+  // confronto «c'è scritto X → il modulo dice Y»: i campi oggi vuoti arrivano
+  // già spuntati, quelli che SOSTITUIREBBERO un dato esistente arrivano spenti,
+  // perché è lì che si sbaglia (nella ricognizione dell'08/08 tre valori su
+  // tutti erano da non applicare, fra cui un'email scritta male dal cliente).
+  const NOMI_CAMPO = {
+    data_nascita:'Data di nascita', luogo_nascita:'Luogo di nascita', via:'Via',
+    citta:'Città', provincia:'Provincia', cap:'CAP', telefono:'Telefono', email:'Email',
+    professione:'Professione', societa:'Società', codice_fiscale:'Codice fiscale',
+    pec:'PEC', codice_sdi:'Codice SDI',
+  };
+  const bozza = client.bozza_anagrafica
+    ? (typeof client.bozza_anagrafica === 'string' ? JSON.parse(client.bozza_anagrafica) : client.bozza_anagrafica)
+    : null;
+  const bozzaHtml = !bozza ? '' : `
+    <div class="card" style="border-left:4px solid var(--gold);background:#FFFDF5">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+        <h2 style="margin:0;font-size:17px">Dati letti dai documenti</h2>
+        <span class="badge" style="background:#F3E5B5;color:#7a5c00">da controllare</span>
+      </div>
+      <div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">
+        Da ${bozza.moduli.map(m => esc(m.nome)).join(' · ')}. Spunta quello che vuoi tenere: quello che sostituisce un dato che hai già arriva <strong>non spuntato</strong>.
+      </div>
+      ${(bozza.proposte || []).length ? `
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="text-align:left;color:var(--hint);font-size:11px;text-transform:uppercase;letter-spacing:.06em">
+          <th style="padding:5px 8px 5px 0;width:26px"></th><th style="padding:5px 8px 5px 0">Campo</th>
+          <th style="padding:5px 8px 5px 0">C&rsquo;è scritto</th><th style="padding:5px 0">Il documento dice</th>
+        </tr></thead>
+        <tbody>
+        ${bozza.proposte.map(p => `
+          <tr style="border-top:1px solid var(--line)">
+            <td style="padding:9px 8px 9px 0"><input type="checkbox" class="bz-campo" value="${attr(p.campo)}" ${p.prima ? '' : 'checked'} style="width:20px;height:20px"></td>
+            <td style="padding:9px 8px 9px 0;color:var(--muted)">${esc(NOMI_CAMPO[p.campo] || p.campo)}</td>
+            <td style="padding:9px 8px 9px 0">${p.prima ? esc(p.prima) : '<span style="color:#ccc">— vuoto</span>'}</td>
+            <td style="padding:9px 0"><strong>${esc(p.dopo)}</strong></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>` : ''}
+      ${bozza.consenso ? `
+      <div style="margin-top:12px;padding:10px 12px;background:#fff;border:1px solid var(--line);border-radius:8px">
+        <label style="display:flex;gap:9px;align-items:flex-start;margin:0;text-transform:none;letter-spacing:0;font-weight:400;font-size:13px">
+          <input type="checkbox" id="bz-consenso" ${bozza.consensoNuovo || bozza.dataConsenso ? 'checked' : ''} style="width:20px;height:20px;margin-top:1px">
+          <span><strong>Consenso al trattamento dei dati</strong>${bozza.dataConsenso ? ` — sottoscritto il ${itDate(bozza.dataConsenso)}` : ''}
+          ${bozza.comeRisulta ? `<br><span style="color:var(--hint);font-size:12px">${esc(bozza.comeRisulta)}</span>` : ''}</span>
+        </label>
+      </div>` : ''}
+      ${(bozza.daEliminare || []).length ? `
+      <div style="margin-top:10px;font-size:12px;color:#B45309">
+        🗑 Approvando, ${bozza.daEliminare.length === 1 ? 'verrà eliminato da Drive il modulo rimasto in bianco' : 'verranno eliminati da Drive i moduli rimasti in bianco'}: ${bozza.daEliminare.map(v => esc(v.nome)).join(', ')}.
+      </div>` : ''}
+      <div id="bz-error" style="display:none" class="flash-error"></div>
+      <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
+        <button onclick="approvaBozza()" class="btn btn-primary btn-sm">✓ Approva e scrivi</button>
+        <button onclick="scartaBozza()" class="btn btn-neutral btn-sm">Scarta</button>
+      </div>
+    </div>`;
+
   const azioniHtml = `
     <div class="az-bar">
       <div class="zona-tit">Azioni e collegamenti</div>
@@ -2827,6 +2982,8 @@ Germano`;
     { label: client.name },
   ] })}
   <div class="container" style="max-width:980px">
+
+    ${bozzaHtml}
 
     <!-- SCHEDA ANAGRAFICA — due zone: sopra i dati, in fondo azioni e collegamenti -->
     <div class="card">
@@ -3311,6 +3468,27 @@ Germano`;
     }
 
     // ── Permessi a termine sugli strumenti ────
+    // ── Proposta letta dai documenti ────────────────────────────────
+    async function approvaBozza() {
+      const campi = [...document.querySelectorAll('.bz-campo:checked')].map(c => c.value);
+      const cons = document.getElementById('bz-consenso');
+      const err = document.getElementById('bz-error');
+      err.style.display = 'none';
+      const r = await fetch('/dashboard/clients/'+CID+'/bozza-anagrafica/approva', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ campi: campi, consenso: cons ? cons.checked : false })
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!d.ok) { err.textContent = d.error || 'Non sono riuscito ad approvare.'; err.style.display='block'; return; }
+      if (d.avvisi && d.avvisi.length) { alert('Fatto, ma: ' + d.avvisi.join(' · ')); }
+      location.reload();
+    }
+    async function scartaBozza() {
+      if (!confirm('Scarto quello che i documenti dicono? La scheda resta com\'è.')) return;
+      await fetch('/dashboard/clients/'+CID+'/bozza-anagrafica/scarta', { method:'POST' });
+      location.reload();
+    }
+
     function openStrumento() {
       document.getElementById('perm-error').style.display = 'none';
       document.getElementById('modal-strumento').style.display = 'flex';

@@ -107,4 +107,73 @@ function normalizzaTelefono(v) {
   return cifre;
 }
 
-module.exports = { leggiModulo, normalizzaTelefono, tipoDalNome };
+// ── COME SI SCRIVONO I DATI (standard deciso l'08/08) ─────────────────────
+// Germano: «bisogna creare uno standard di inserimento delle informazioni come
+// fatto per i numeri di telefono; scegliamo un criterio e lo applichiamo a
+// tutti». Vale sia per quello che arriva dai moduli sia per quello che il coach
+// scrive a mano: altrimenti lo stesso dato si scrive in due modi a seconda di
+// come è entrato.
+//
+// ⚠️ REGOLA DI PRUDENZA sulle maiuscole: si sistemano SOLO i testi arrivati
+// tutti maiuscoli o tutti minuscoli. Un testo già scritto in modo sensato non si
+// tocca — «Quartu Sant'Elena» e «San Donà di Piave» hanno maiuscole e minuscole
+// che nessuna regola automatica indovina, e riscriverli significherebbe
+// peggiorarli.
+const PARTICELLE = new Set(['di','da','de','del','dello','della','dei','degli','delle',
+                            'd','e','in','su','al','alla','ai','agli','a','il','lo','la','i','gli','le']);
+
+function tuttoUgualeCaso(s) {
+  const lettere = s.replace(/[^a-zà-ùA-ZÀ-Ù]/g, '');
+  if (lettere.length < 3) return false;
+  return lettere === lettere.toUpperCase() || lettere === lettere.toLowerCase();
+}
+
+function iniziali(v) {
+  if (!v) return v;
+  const s = String(v).trim().replace(/\s+/g, ' ');
+  if (!tuttoUgualeCaso(s)) return s;         // già scritto bene: non si tocca
+  return s.toLowerCase().split(' ').map((p, i) => {
+    if (i > 0 && PARTICELLE.has(p.replace(/[.']/g, ''))) return p;
+    // "sant'elena" → "Sant'Elena"; "10h" resta com'è
+    return p.replace(/^([a-zà-ù])/, (m) => m.toUpperCase())
+            .replace(/'([a-zà-ù])/, (m, c) => "'" + c.toUpperCase());
+  }).join(' ');
+}
+
+// Indirizzo: tipo + nome + civico, senza virgola e senza "n." davanti al numero.
+// "Degli Eroi, 8" e "Degli Eroi n.8" diventano tutt'e due "Degli Eroi 8".
+function normalizzaVia(v) {
+  if (!v) return v;
+  let s = String(v).trim().replace(/\s+/g, ' ');
+  s = s.replace(/,\s*(?=\d)/g, ' ');                 // via la virgola prima del civico
+  s = s.replace(/\bn[.°]?\s*(?=\d)/gi, '');          // via "n." / "n°" / "n "
+  s = s.replace(/\s+/g, ' ').trim();
+  return iniziali(s);
+}
+
+function normalizzaEmail(v)     { return v ? String(v).trim().toLowerCase() : v; }
+function normalizzaCodice(v)    { return v ? String(v).trim().toUpperCase().replace(/\s+/g, '') : v; }
+function normalizzaProvincia(v) { return v ? String(v).trim().toUpperCase().replace(/[^A-Z]/g, '').slice(0, 2) : v; }
+function normalizzaCap(v)       { return v ? String(v).replace(/\D/g, '').slice(0, 5) : v; }
+
+// Applica lo standard a un campo, in base a come si chiama.
+function normalizzaCampo(nome, valore) {
+  if (valore == null || String(valore).trim() === '') return valore;
+  switch (nome) {
+    case 'telefono':                              return normalizzaTelefono(valore);
+    case 'email': case 'pec':                     return normalizzaEmail(valore);
+    case 'codice_fiscale': case 'codice_sdi':     return normalizzaCodice(valore);
+    case 'via':                                   return normalizzaVia(valore);
+    case 'provincia':                             return normalizzaProvincia(valore);
+    case 'cap':                                   return normalizzaCap(valore);
+    case 'citta': case 'luogo_nascita':
+    case 'nome': case 'cognome': case 'societa':
+    case 'professione':                           return iniziali(valore);
+    default:                                      return String(valore).trim();
+  }
+}
+
+module.exports = {
+  leggiModulo, normalizzaTelefono, tipoDalNome,
+  normalizzaCampo, normalizzaVia, normalizzaEmail, normalizzaCodice, iniziali,
+};

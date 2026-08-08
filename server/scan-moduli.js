@@ -4,11 +4,12 @@
 // il cliente li rimanda compilati e il coach li salva nella cartella Drive del
 // cliente, sotto "Documentazione". Da lì questa automazione:
 //   1. dà ogni modulo a Claude, che lo GUARDA come lo guarderebbe una persona
-//   2. ne scrive i dati in anagrafica — il modulo VINCE su quello che c'è
-//      (Germano 07/08: «a breve l'obiettivo sarà usare solo le automazioni»)
+//   2. PROPONE i dati al coach (bozza da approvare nella scheda cliente): non
+//      scrive niente da sé — Germano 08/08, dopo una ricognizione in cui tre
+//      valori su tutti erano da NON applicare
 //   3. dal contratto ricava se il cliente ha sottoscritto il CONSENSO al
 //      trattamento dei dati, e con che DATA
-//   4. elimina il modulo rimasto in bianco (quello inviato con la mail)
+//   4. il modulo rimasto in bianco si elimina all'APPROVAZIONE, non qui
 //
 // ⚠️ Rifatto l'08/08 dopo il caso Giulio Sudano: il primo disegno leggeva le
 // annotazioni del PDF e vedeva ZERO su documenti compilati in un altro modo,
@@ -69,13 +70,13 @@ function unisci(daScheda, daContratto) {
   const out = {};
   for (const k of Object.keys(MAPPA)) {
     const v = (daScheda && daScheda[k]) || (daContratto && daContratto[k]) || null;
-    if (v) out[k] = k === 'telefono' ? moduli.normalizzaTelefono(v) : v;
+    if (v) out[k] = moduli.normalizzaCampo(k, v);   // standard di scrittura, uguale per tutti
   }
   return out;
 }
 
 async function scanModuliClienti({ onlyClientId } = {}) {
-  const out = { aggiornati: [], letti: 0, saltati: 0, eliminati: 0, clients: 0, errors: [] };
+  const out = { proposte: [], letti: 0, saltati: 0, eliminati: 0, clients: 0, errors: [] };
   if (drive.missingEnv().length || !claude.hasApiKey()) {
     out.errors.push({ dove: 'configurazione', errore: 'Google Drive o Claude non configurati' });
     return out;
@@ -147,44 +148,62 @@ async function scanModuliClienti({ onlyClientId } = {}) {
       const campi = unisci(daScheda, daContratto);
       if (!Object.keys(campi).length && !consenso) continue;
 
-      // Scrittura in anagrafica. Il modulo vince su quello che c'è già.
-      const set = [], vals = [];
+      // ── NON si scrive: si PROPONE ────────────────────────────────────
+      // La proposta resta in `clients.bozza_anagrafica` finché il coach non
+      // approva (Germano 08/08). Si tiene anche il valore che c'è ADESSO, così
+      // la scheda può mostrare il confronto "c'è scritto X → il modulo dice Y"
+      // senza rileggere niente, e si tiene l'elenco dei moduli in bianco: si
+      // eliminano SOLO all'approvazione.
+      const attuale = (await db.query(
+        `SELECT ${Object.values(MAPPA).join(', ')}, consenso_privacy, consenso_data
+           FROM clients WHERE id = $1`, [cl.id])).rows[0] || {};
+      const proposte = [];
       for (const [k, col] of Object.entries(MAPPA)) {
         if (campi[k] == null) continue;
-        vals.push(campi[k]); set.push(`${col} = $${vals.length}`);
+        const prima = col === 'data_nascita' && attuale[col]
+          ? new Date(attuale[col]).toISOString().slice(0, 10)
+          : (attuale[col] == null ? null : String(attuale[col]));
+        if (prima !== null && String(prima).trim() === String(campi[k]).trim()) continue; // uguale: non è una proposta
+        proposte.push({ campo: col, prima, dopo: campi[k] });
       }
-      if (consenso) {
-        set.push('consenso_privacy = TRUE');
-        if (dataConsenso) { vals.push(dataConsenso); set.push(`consenso_data = $${vals.length}`); }
-        else set.push('consenso_data = COALESCE(consenso_data, CURRENT_DATE)');
-      }
-      if (set.length) {
-        vals.push(cl.id);
-        await db.query(`UPDATE clients SET ${set.join(', ')} WHERE id = $${vals.length}`, vals);
+      const consensoNuovo = consenso && !attuale.consenso_privacy;
+      const dataDiversa = consenso && dataConsenso &&
+        String(attuale.consenso_data ? new Date(attuale.consenso_data).toISOString().slice(0, 10) : '') !== dataConsenso;
+      if (!proposte.length && !consensoNuovo && !dataDiversa) {
+        // tutto già uguale: niente da far approvare, ma i moduli sono letti
+        for (const m of compilati) {
+          await db.query(
+            `INSERT INTO moduli_letti (id, client_id, file_id, nome_file, tipo, esito)
+             VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (file_id) DO NOTHING`,
+            [uuidv4(), cl.id, m.id, m.name, m.tipo, 'ok (nulla di nuovo)']);
+        }
+        continue;
       }
 
-      // Traccia: questi moduli sono stati elaborati.
+      const bozza = {
+        proposte,
+        consenso: !!consenso,
+        consensoNuovo,
+        dataConsenso: dataConsenso || null,
+        comeRisulta: comeRisulta || '',
+        moduli: compilati.map(m => ({ nome: m.name, tipo: m.tipo })),
+        daEliminare: vuoti.filter(v => compilati.some(c => c.tipo === v.tipo))
+                          .map(v => ({ id: v.id, nome: v.name })),
+        creata: new Date().toISOString(),
+      };
+      await db.query('UPDATE clients SET bozza_anagrafica = $1 WHERE id = $2',
+        [JSON.stringify(bozza), cl.id]);
+
+      // I moduli sono stati guardati: non si rileggono più, la proposta aspetta.
       for (const m of compilati) {
         await db.query(
           `INSERT INTO moduli_letti (id, client_id, file_id, nome_file, tipo, esito)
            VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (file_id) DO NOTHING`,
-          [uuidv4(), cl.id, m.id, m.name, m.tipo, m.letto.consenso ? ('consenso: ' + (m.letto.comeRisulta || 'si')).slice(0, 300) : 'ok']);
+          [uuidv4(), cl.id, m.id, m.name, m.tipo,
+           (m.letto.consenso ? 'consenso: ' + (m.letto.comeRisulta || 'si') : 'proposta da approvare').slice(0, 300)]);
       }
 
-      // ⚠️ SOLO ORA il modulo vuoto si può eliminare: i dati sono già al sicuro
-      // nel database. Si elimina il vuoto dello STESSO tipo che è stato compilato
-      // (arrivata la scheda compilata, via la scheda vuota), mai altro.
-      for (const v of vuoti) {
-        if (!compilati.some(c => c.tipo === v.tipo)) continue;
-        try {
-          await drive.deleteFileForever(v.id);
-          out.eliminati++;
-        } catch (e) {
-          out.errors.push({ cliente: cl.name, file: v.name, errore: 'eliminazione: ' + e.message });
-        }
-      }
-
-      out.aggiornati.push({ cliente: cl.name, campi: Object.keys(campi), consenso, dataConsenso, comeRisulta });
+      out.proposte.push({ cliente: cl.name, campi: proposte.length, consensoNuovo, dataConsenso });
     } catch (e) {
       out.errors.push({ cliente: cl.name, errore: e.message });
     }

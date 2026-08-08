@@ -454,6 +454,15 @@ async function init() {
   await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS pec            TEXT`);
   await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS codice_sdi     TEXT`);
   await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS luogo_nascita  TEXT`);
+  // 08/08 — L'anagrafica letta dai moduli NON si scrive più da sola: si propone.
+  // Germano: «utilizzerei anche per le schede anagrafiche il modello bozza/approva:
+  // tu estrai e compili, io controllo e approvo». Nasce dalla ricognizione dell'08/08,
+  // dove tre valori su tutti erano da non applicare (un'email scritta male a mano dal
+  // cliente, una professione ambigua, un indirizzo peggiorato): scrivendo di forza si
+  // sarebbero persi dati buoni. Qui sta la PROPOSTA finché il coach non decide; il
+  // modulo in bianco si elimina solo dopo l'approvazione, mai prima.
+  await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS bozza_anagrafica JSONB`);
+
   // Traccia di cosa è già stato letto: un modulo si elabora UNA volta sola.
   // Senza questo, a ogni giro l'automazione rileggerebbe gli stessi documenti e
   // riscriverebbe l'anagrafica ogni tre ore.
