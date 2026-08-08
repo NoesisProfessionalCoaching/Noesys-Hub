@@ -460,11 +460,18 @@ router.post('/dashboard/clients/:id/bozza-anagrafica/:azione', requireCoach, exp
     if (req.params.azione !== 'approva') return res.status(400).json({ ok: false, error: 'Azione sconosciuta' });
 
     // Si applicano SOLO i campi che il coach ha lasciato spuntati.
-    const scelti = Array.isArray(req.body.campi) ? new Set(req.body.campi) : null;
+    // `campi` arriva come [{campo, valore}]: il valore è quello che il coach ha
+    // sotto gli occhi, corretto se l'ha corretto. Si riapplica lo standard di
+    // scrittura anche a quello che scrive lui, così il dato entra nello stesso
+    // modo comunque sia arrivato.
+    const scelti = new Map((req.body.campi || [])
+      .filter(x => x && x.campo).map(x => [x.campo, x.valore]));
     const set = [], vals = [];
     for (const p of (b.proposte || [])) {
-      if (scelti && !scelti.has(p.campo)) continue;
-      vals.push(p.dopo); set.push(`${p.campo} = $${vals.length}`);
+      if (!scelti.has(p.campo)) continue;
+      const grezzo = scelti.get(p.campo);
+      const valore = moduli.normalizzaCampo(p.campo, grezzo == null || grezzo === '' ? p.dopo : grezzo);
+      vals.push(valore); set.push(`${p.campo} = $${vals.length}`);
     }
     if (b.consenso && req.body.consenso !== false) {
       set.push('consenso_privacy = TRUE');
@@ -2887,7 +2894,7 @@ Germano`;
       <table style="width:100%;border-collapse:collapse;font-size:13px">
         <thead><tr style="text-align:left;color:var(--hint);font-size:11px;text-transform:uppercase;letter-spacing:.06em">
           <th style="padding:5px 8px 5px 0;width:26px"></th><th style="padding:5px 8px 5px 0">Campo</th>
-          <th style="padding:5px 8px 5px 0">C&rsquo;è scritto</th><th style="padding:5px 0">Il documento dice</th>
+          <th style="padding:5px 8px 5px 0">C&rsquo;è scritto</th><th style="padding:5px 0">Il documento dice <span style="text-transform:none;font-weight:400">(correggibile)</span></th>
         </tr></thead>
         <tbody>
         ${bozza.proposte.map(p => `
@@ -2895,7 +2902,13 @@ Germano`;
             <td style="padding:9px 8px 9px 0"><input type="checkbox" class="bz-campo" value="${attr(p.campo)}" ${p.prima ? '' : 'checked'} style="width:20px;height:20px"></td>
             <td style="padding:9px 8px 9px 0;color:var(--muted)">${esc(NOMI_CAMPO[p.campo] || p.campo)}</td>
             <td style="padding:9px 8px 9px 0">${p.prima ? esc(p.prima) : '<span style="color:#ccc">— vuoto</span>'}</td>
-            <td style="padding:9px 0"><strong>${esc(p.dopo)}</strong></td>
+            ${/* Il valore è MODIFICABILE (Germano 08/08: «non c'è modo di fare
+                  eventuali correzioni»). Quello che si scrive qui è quello che
+                  viene salvato: se il documento è stato letto male, o il cliente
+                  ha scritto male, si corregge subito senza dover riaprire la
+                  scheda dopo. */ ''}
+            <td style="padding:9px 0"><input class="bz-valore" data-campo="${attr(p.campo)}" value="${attr(p.dopo)}"
+                 style="width:100%;font-weight:600;padding:7px 9px;border:1px solid var(--line);border-radius:7px;font-family:inherit;font-size:13px"></td>
           </tr>`).join('')}
         </tbody>
       </table>` : ''}
@@ -3470,7 +3483,12 @@ Germano`;
     // ── Permessi a termine sugli strumenti ────
     // ── Proposta letta dai documenti ────────────────────────────────
     async function approvaBozza() {
-      const campi = [...document.querySelectorAll('.bz-campo:checked')].map(c => c.value);
+      // si mandano i campi spuntati CON il valore che si legge nella casella:
+      // se il coach l'ha corretto, vale la sua correzione
+      const campi = [...document.querySelectorAll('.bz-campo:checked')].map(c => {
+        const cassetta = document.querySelector('.bz-valore[data-campo="' + c.value + '"]');
+        return { campo: c.value, valore: cassetta ? cassetta.value : null };
+      });
       const cons = document.getElementById('bz-consenso');
       const err = document.getElementById('bz-error');
       err.style.display = 'none';
