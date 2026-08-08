@@ -269,89 +269,110 @@ Estrai le voci elencate secondo le regole. Rispondi SOLO con l'oggetto JSON.`;
   return out;
 }
 
-// ── ANAGRAFICA DAI MODULI COMPILATI (07/08) ─────────────────────────────────
-// Dal modulo che il cliente rimanda arrivano i VALORI che ha scritto, in ordine
-// di lettura, ma SENZA sapere a quale domanda rispondono: nel PDF sono foglietti
-// appoggiati sopra la pagina. L'abbinamento per posizione non regge (provato: si
-// sfasa di una riga), mentre qui basta il buon senso — "23 Agosto 1970" è una
-// data di nascita, "DVDGLN70M23F205V" un codice fiscale. Perciò lo fa Claude.
-const CAMPI_ANAGRAFICA = {
-  data_nascita:    'data di nascita, in formato AAAA-MM-GG (es. "23 Agosto 1970" → "1970-08-23")',
+// ── MODULI COMPILATI → ANAGRAFICA (07/08, rifatto l'08/08) ──────────────────
+// Il PDF si dà DIRETTAMENTE a Claude, che lo guarda come lo guarderebbe una
+// persona. È l'unica strada che regge, e il perché vale la pena scriverlo.
+//
+// Il primo tentativo leggeva le ANNOTAZIONI del PDF (i "foglietti" che si
+// appoggiano sopra il modulo quando lo si compila con Anteprima). Funzionava
+// sui documenti di Giuliano e vedeva ZERO su quelli di Giulio, perché lui ha
+// compilato con uno strumento che scrive i valori DENTRO la pagina. Stessa
+// scheda, stesso contratto, due modi di compilare, un lettore solo che ne
+// capiva uno. E le firme: Giuliano firma con timbri grafici, Giulio con firma
+// disegnata più "Luogo e data" scritto — e il vecchio criterio "conta i timbri"
+// dichiarava Giulio NON consenziente, mentre il consenso c'era, del 15/04/2026.
+// Rincorrere ogni modo di compilare è una battaglia persa; Claude li vede tutti.
+const CAMPI_MODULO = {
+  data_nascita:    'data di nascita, formato AAAA-MM-GG',
   luogo_nascita:   'comune di nascita, senza provincia',
-  via:             'indirizzo di residenza: via e numero civico, nient\'altro',
+  via:             'indirizzo di residenza: via e numero civico',
   citta:           'comune di residenza, SENZA la provincia fra parentesi',
-  provincia:       'sigla della provincia, 2 lettere maiuscole (es. "Quartu S. Elena (CA)" → "CA")',
+  provincia:       'sigla della provincia, 2 lettere maiuscole',
   cap:             'CAP, 5 cifre',
   telefono:        'numero di telefono',
   email:           'indirizzo email ordinario (NON la PEC)',
-  professione:     'professione o ruolo. Se ci sono più voci (es. "Libero professionista" e la descrizione del ruolo) scegli quella che dice CHE LAVORO FA',
-  societa:         'azienda o studio. Se è un libero professionista senza azienda, "—"',
-  codice_fiscale:  'codice fiscale, 16 caratteri maiuscoli. Se è una partita IVA di 11 cifre mettila comunque qui',
-  pec:             'indirizzo PEC (posta certificata). Spesso vicino al codice destinatario SDI',
-  codice_sdi:      'codice destinatario SDI, 7 caratteri (per i privati è "0000000")',
+  professione:     'che lavoro fa. Se il modulo ha sia "Reparto" sia "Responsabilità/Ruolo", scegli ciò che dice il MESTIERE',
+  societa:         'azienda o studio; se lavora in proprio senza azienda, "—"',
+  codice_fiscale:  'codice fiscale (16 caratteri) o partita IVA (11 cifre)',
+  pec:             'indirizzo PEC (posta certificata)',
+  codice_sdi:      'codice destinatario SDI, 7 caratteri (per i privati "0000000")',
 };
 
-// I moduli sono documenti di identità e contratti: capita che il classificatore
-// di sicurezza si insospettisca. Il messaggio dice a chiare lettere di che si
-// tratta — è il coach che legge la scheda del proprio cliente, con il suo
-// consenso — così la richiesta non viene scambiata per altro.
-const SYSTEM_ANAGRAFICA = `Sei l'assistente di un coach professionista (Noesys). Il suo cliente gli ha rimandato compilato il modulo di anagrafica (o il contratto) che il coach stesso gli aveva inviato. Il coach sta aggiornando la scheda del cliente nel proprio gestionale, con il consenso dell'interessato.
+const SYSTEM_MODULO = `Sei l'assistente di un coach professionista (Noesys). Il cliente gli ha rimandato compilato un modulo che il coach stesso gli aveva inviato — la scheda anagrafica oppure il contratto di coaching — e il coach sta aggiornando la scheda del proprio cliente nel gestionale, con il consenso dell'interessato.
 
-Ti arriva l'ELENCO DEI VALORI che il cliente ha scritto sul modulo, nell'ordine in cui compaiono sulla pagina, ma senza l'etichetta del campo: nel PDF sono annotazioni appoggiate sopra il modulo. Il tuo compito è capire, per ciascun campo richiesto, QUALE di quei valori gli corrisponde.
+Guarda il documento e riporta quello che c'è scritto.
 
 Regole ferme:
-- Usa SOLO i valori dell'elenco. Non inventare, non completare, non correggere.
-- Un valore può servire a un campo solo. Se per un campo non c'è nulla, scrivi "—".
-- Se un valore contiene più informazioni, prendi solo la parte che serve al campo (es. "Quartu S. Elena (CA)" → città "Quartu S. Elena", provincia "CA").
-- Le risposte discorsive alle domande aperte (motivazioni, aspettative, cosa lo motiva) NON servono: ignorale.
-- In caso di dubbio fra due valori, scegli "—" invece di rischiare.
+- Riporta SOLO ciò che è scritto sul documento. Non inventare, non dedurre, non completare. Campo in bianco → "—".
+- ⚠️ Un modulo può essere compilato SOLO IN PARTE: è normale e va benissimo. Prendi tutto quello che c'è e lascia "—" per il resto. Un documento parziale NON è un documento vuoto.
+- Distingui le ETICHETTE STAMPATE del modulo (le domande) da quello che ha scritto il cliente: ti servono solo le risposte.
+- Le risposte alle domande aperte (motivazioni, aspettative, cosa lo motiva) NON servono: ignorale.
+- compilato: true se il cliente ha scritto ANCHE UNA SOLA cosa o ha firmato; false solo se il modulo è del tutto in bianco.
 
-Italiano. Rispondi SOLO con l'oggetto JSON richiesto.`;
+Sul CONTRATTO, in più:
+- firmato_dal_cliente: se il cliente ha sottoscritto il contratto.
+- consenso_dati_personali: se ha sottoscritto ANCHE la clausola sul trattamento dei dati personali, che è una sezione a sé in fondo al documento, con una propria sottoscrizione. Attento: una firma sul contratto NON basta se manca quella del consenso.
+- ⚠️ Una sottoscrizione può risultare in modi diversi, e valgono TUTTI: una firma grafica, una firma scritta a mano sopra il documento, oppure il "Luogo e data" compilato sotto quella clausola.
+- data_consenso: la data con cui è stato sottoscritto il consenso (di norma il "Luogo e data" accanto alla firma), formato AAAA-MM-GG. Se non è scritta da nessuna parte, "—". Non inventarla e non usare la data di oggi.
+- come_risulta: UNA frase che dice DOVE hai visto la firma o la data, così il coach può controllare (es. «firma grafica a pag. 4 sotto il consenso, con "Bologna, 15/04/2026"»).
+Sulla SCHEDA ANAGRAFICA le tre voci sulle firme sono false e data_consenso "—": lì non si firma niente.
 
-async function estraiAnagrafica({ valori, tipoModulo, nomeCliente }) {
+Nel dubbio scegli "—" o false, mai un valore a caso. Italiano.`;
+
+// Legge un modulo (PDF) e ne ricava i campi dell'anagrafica + lo stato delle firme.
+async function leggiModuloPdf({ pdfBuffer, tipoModulo, nomeCliente }) {
   if (!hasApiKey()) throw new Error('ANTHROPIC_API_KEY non configurata');
   const client = new Anthropic();
 
-  const schema = {
-    type: 'object',
-    properties: Object.fromEntries(Object.keys(CAMPI_ANAGRAFICA).map(k => [k, { type: 'string' }])),
-    required: Object.keys(CAMPI_ANAGRAFICA),
-    additionalProperties: false,
-  };
-  const elenco = Object.entries(CAMPI_ANAGRAFICA).map(([k, d]) => `- ${k}: ${d}`).join('\n');
+  const props = Object.fromEntries(Object.keys(CAMPI_MODULO).map(k => [k, { type: 'string' }]));
+  props.compilato = { type: 'boolean' };
+  props.firmato_dal_cliente = { type: 'boolean' };
+  props.consenso_dati_personali = { type: 'boolean' };
+  props.data_consenso = { type: 'string' };
+  props.come_risulta = { type: 'string' };
+  const schema = { type: 'object', properties: props, required: Object.keys(props), additionalProperties: false };
 
-  const user = `Cliente: ${nomeCliente || '(nome non indicato)'}
-Modulo: ${tipoModulo === 'contratto' ? 'contratto di coaching firmato' : 'scheda anagrafica del cliente'}
-
-=== VALORI SCRITTI SUL MODULO, in ordine di lettura ===
-${valori.map((v, i) => `${i + 1}. ${v}`).join('\n')}
-
-=== CAMPI DA RICAVARE ===
-${elenco}
-
-Rispondi SOLO con l'oggetto JSON.`;
-
+  const elenco = Object.entries(CAMPI_MODULO).map(([k, d]) => `- ${k}: ${d}`).join('\n');
   const resp = await client.messages.create({
     model: MODEL,
-    max_tokens: 1500,
+    max_tokens: 2000,
     output_config: { format: { type: 'json_schema', schema } },
-    system: SYSTEM_ANAGRAFICA,
-    messages: [{ role: 'user', content: user }],
+    system: SYSTEM_MODULO,
+    messages: [{ role: 'user', content: [
+      { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdfBuffer.toString('base64') } },
+      { type: 'text', text:
+`Cliente: ${nomeCliente || '(nome non indicato)'}
+Modulo: ${tipoModulo === 'contratto' ? 'contratto di coaching' : 'scheda anagrafica'}
+
+Campi da ricavare:
+${elenco}
+
+Rispondi SOLO con l'oggetto JSON.` },
+    ] }],
   });
 
   if (resp.stop_reason === 'refusal') {
-    throw new Error('Richiesta rifiutata dal classificatore di sicurezza (anagrafica non estratta)');
+    throw new Error('Richiesta rifiutata dal classificatore di sicurezza (modulo non letto)');
   }
   const txt = (resp.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
   const data = parseJsonLoose(txt);
   if (!data) throw new Error('Risposta non in formato atteso: ' + txt.slice(0, 160));
 
-  const out = {};
-  for (const k of Object.keys(CAMPI_ANAGRAFICA)) {
+  const campi = {};
+  for (const k of Object.keys(CAMPI_MODULO)) {
     const v = data[k];
-    out[k] = (v == null || String(v).trim() === '' || String(v).trim() === '—') ? null : String(v).trim();
+    campi[k] = (v == null || String(v).trim() === '' || String(v).trim() === '—') ? null : String(v).trim();
   }
-  return out;
+  const dataConsenso = /^\d{4}-\d{2}-\d{2}$/.test(String(data.data_consenso || '')) ? data.data_consenso : null;
+  return {
+    campi,
+    compilato: !!data.compilato || Object.values(campi).some(Boolean),
+    firmato: !!data.firmato_dal_cliente,
+    consenso: !!data.consenso_dati_personali,
+    dataConsenso,
+    comeRisulta: String(data.come_risulta || '').trim(),
+  };
 }
 
-module.exports = { MODEL, hasApiKey, generaRiga, generaRigaCollettiva, generaRigaFase, FASE_SPEC, estraiAnagrafica, CAMPI_ANAGRAFICA };
+
+module.exports = { MODEL, hasApiKey, generaRiga, generaRigaCollettiva, generaRigaFase, FASE_SPEC, leggiModuloPdf, CAMPI_MODULO };

@@ -3,16 +3,24 @@
 // Il coach manda al cliente la scheda anagrafica (Mail 1) e il contratto (Mail 2);
 // il cliente li rimanda compilati e il coach li salva nella cartella Drive del
 // cliente, sotto "Documentazione". Da lì questa automazione:
-//   1. riconosce i moduli COMPILATI (hanno valori scritti sopra; i vuoti no)
-//   2. ne estrae i dati (pdf-lib legge i valori, Claude li abbina ai campi)
-//   3. li scrive in anagrafica — il modulo VINCE su quello che c'è (Germano 07/08:
-//      «a breve l'obiettivo sarà usare solo le automazioni»)
-//   4. dal contratto: la SECONDA firma vale come consenso al trattamento dei dati
-//   5. elimina il modulo VUOTO rimasto (quello inviato con la mail)
+//   1. dà ogni modulo a Claude, che lo GUARDA come lo guarderebbe una persona
+//   2. ne scrive i dati in anagrafica — il modulo VINCE su quello che c'è
+//      (Germano 07/08: «a breve l'obiettivo sarà usare solo le automazioni»)
+//   3. dal contratto ricava se il cliente ha sottoscritto il CONSENSO al
+//      trattamento dei dati, e con che DATA
+//   4. elimina il modulo rimasto in bianco (quello inviato con la mail)
+//
+// ⚠️ Rifatto l'08/08 dopo il caso Giulio Sudano: il primo disegno leggeva le
+// annotazioni del PDF e vedeva ZERO su documenti compilati in un altro modo,
+// dichiarandoli vuoti — e dava per non consenziente un cliente che il consenso
+// l'aveva dato. Un modulo PARZIALMENTE compilato non è un modulo vuoto.
+// Perciò "compilato" non si decide più da come è fatto il file, ma da quello che
+// se ne ricava. Vedi claude.leggiModuloPdf.
 //
 // Gira insieme all'automazione dei report, alle 07:00 / 15:00 / 23:00.
-// Ogni modulo si elabora UNA volta sola (tabella `moduli_letti`): senza, ogni tre
-// ore riscriverebbe l'anagrafica daccapo.
+// Ogni modulo si elabora UNA volta sola (tabella `moduli_letti`), i moduli in
+// bianco compresi: senza, ogni otto ore si riscriverebbe tutto daccapo e si
+// richiederebbe a Claude di rileggere gli stessi documenti.
 const { v4: uuidv4 } = require('uuid');
 const db = require('./db');
 const drive = require('./google-drive');
@@ -90,40 +98,51 @@ async function scanModuliClienti({ onlyClientId } = {}) {
       const giaLetti = new Set((await db.query(
         'SELECT file_id FROM moduli_letti WHERE client_id = $1', [cl.id])).rows.map(r => r.file_id));
 
+      // Ogni modulo si legge dando il PDF a Claude: è l'unico modo che regge
+      // TUTTI i modi di compilare (vedi claude.leggiModuloPdf). "Vuoto" non si
+      // decide più guardando come è fatto il file, ma da quello che ne esce:
+      // se non c'è dentro niente e nessuna firma, allora è il modulo in bianco.
       const compilati = [];
       const vuoti = [];
+      let consenso = false, dataConsenso = null, comeRisulta = '';
       for (const f of trovati) {
+        if (giaLetti.has(f.id)) { out.saltati++; continue; }
         if (out.letti >= MAX_PER_RUN) break;
         let letto;
         try {
           const buf = await drive.downloadFileBuffer(f.id);
-          letto = await moduli.leggiModulo(buf, f.name);
+          letto = await claude.leggiModuloPdf({ pdfBuffer: buf, tipoModulo: f.tipo, nomeCliente: cl.name });
+          out.letti++;
         } catch (e) {
           out.errors.push({ cliente: cl.name, file: f.name, errore: 'lettura: ' + e.message });
           continue;
         }
-        if (!letto.compilato) { vuoti.push({ ...f, letto }); continue; }
-        if (giaLetti.has(f.id)) { out.saltati++; continue; }
+        if (!letto.compilato && !letto.firmato) { vuoti.push({ ...f, letto }); continue; }
         compilati.push({ ...f, letto });
+        if (f.tipo === 'contratto' && letto.consenso) {
+          consenso = true;
+          // La data del consenso è quella con cui il cliente ha sottoscritto la
+          // clausola (Germano 08/08). Se sul documento non è scritta, si ripiega
+          // sulla data in cui il file è stato messo su Drive: è comunque più
+          // vicina al vero della data di oggi.
+          dataConsenso = letto.dataConsenso || (f.modifiedTime ? String(f.modifiedTime).slice(0, 10) : null);
+          comeRisulta = letto.comeRisulta;
+        }
+      }
+      // I moduli in bianco si segnano SEMPRE, anche quando poi vengono
+      // eliminati: se l'eliminazione non riuscisse, senza questa riga si
+      // richiederebbe a Claude di rileggere lo stesso documento vuoto ogni
+      // otto ore, per sempre.
+      for (const v of vuoti) {
+        await db.query(
+          `INSERT INTO moduli_letti (id, client_id, file_id, nome_file, tipo, esito)
+           VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (file_id) DO NOTHING`,
+          [uuidv4(), cl.id, v.id, v.name, v.tipo, 'in bianco']);
       }
       if (!compilati.length) continue;
 
-      // Estrazione dei dati (una chiamata per modulo).
-      let daScheda = null, daContratto = null, consenso = false;
-      for (const m of compilati) {
-        out.letti++;
-        const dati = await claude.estraiAnagrafica({
-          valori: m.letto.valori, tipoModulo: m.tipo, nomeCliente: cl.name,
-        });
-        if (m.tipo === 'scheda') daScheda = dati;
-        else {
-          daContratto = dati;
-          // Regola di Germano: la SECONDA firma del contratto è l'autorizzazione
-          // all'uso dei dati personali. Una sola firma = contratto firmato ma
-          // consenso non dato: non si spunta niente.
-          if (m.letto.firme >= 2) consenso = true;
-        }
-      }
+      const daScheda = (compilati.find(m => m.tipo === 'scheda') || {}).letto?.campi || null;
+      const daContratto = (compilati.find(m => m.tipo === 'contratto') || {}).letto?.campi || null;
 
       const campi = unisci(daScheda, daContratto);
       if (!Object.keys(campi).length && !consenso) continue;
@@ -136,7 +155,8 @@ async function scanModuliClienti({ onlyClientId } = {}) {
       }
       if (consenso) {
         set.push('consenso_privacy = TRUE');
-        set.push('consenso_data = COALESCE(consenso_data, CURRENT_DATE)');
+        if (dataConsenso) { vals.push(dataConsenso); set.push(`consenso_data = $${vals.length}`); }
+        else set.push('consenso_data = COALESCE(consenso_data, CURRENT_DATE)');
       }
       if (set.length) {
         vals.push(cl.id);
@@ -148,7 +168,7 @@ async function scanModuliClienti({ onlyClientId } = {}) {
         await db.query(
           `INSERT INTO moduli_letti (id, client_id, file_id, nome_file, tipo, esito)
            VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (file_id) DO NOTHING`,
-          [uuidv4(), cl.id, m.id, m.name, m.tipo, 'ok']);
+          [uuidv4(), cl.id, m.id, m.name, m.tipo, m.letto.consenso ? ('consenso: ' + (m.letto.comeRisulta || 'si')).slice(0, 300) : 'ok']);
       }
 
       // ⚠️ SOLO ORA il modulo vuoto si può eliminare: i dati sono già al sicuro
@@ -164,7 +184,7 @@ async function scanModuliClienti({ onlyClientId } = {}) {
         }
       }
 
-      out.aggiornati.push({ cliente: cl.name, campi: Object.keys(campi), consenso });
+      out.aggiornati.push({ cliente: cl.name, campi: Object.keys(campi), consenso, dataConsenso, comeRisulta });
     } catch (e) {
       out.errors.push({ cliente: cl.name, errore: e.message });
     }
