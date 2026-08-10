@@ -619,9 +619,26 @@ router.delete('/dashboard/clients/:id', requireCoach, async (req, res) => {
 // PERCORSI
 // ═══════════════════════════════════════════════════════
 
+// Le quattro modalità di un percorso (decise con Germano il 10/08/2026). Il campo
+// `prezzo` resta UNO SOLO e cambia significato con la modalità:
+//   Standard        → si paga ogni sessione: `prezzo` è il costo DI UNA SESSIONE
+//   Pacchetto       → cifra unica per N sessioni: `prezzo` è il TOTALE
+//   Scambio servizi → nessuna cifra (senza valore dichiarato)
+//   Pro bono        → nessuna cifra
+// È il numero che finirà scritto nell'articolo sul compenso del contratto, quindi
+// nelle due modalità senza cifra il prezzo va azzerato: un numero orfano rimasto lì
+// da una modalità precedente verrebbe stampato su un contratto vero.
+const MODALITA_PERCORSO = ['Standard', 'Pacchetto', 'Scambio servizi', 'Pro bono'];
+const MODALITA_SENZA_PREZZO = ['Scambio servizi', 'Pro bono'];
+function prezzoPerModalita(modalita, prezzo) {
+  if (MODALITA_SENZA_PREZZO.includes(modalita)) return null;
+  return (prezzo === '' || prezzo === undefined) ? null : prezzo;
+}
+
 router.post('/dashboard/clients/:id/percorsi', requireCoach, express.json(), async (req, res) => {
-  const { tipo, n_sessioni_previste, n_sessioni_fatte, prezzo, promo, sconto_note,
+  const { tipo, n_sessioni_previste, n_sessioni_fatte, promo, sconto_note,
           data_inizio, data_fine, modalita, ore_fatte, stato, progetto_id } = req.body;
+  const prezzo = prezzoPerModalita(modalita || 'Standard', req.body.prezzo);
   try {
     const pid = uuidv4();
     await db.query(
@@ -800,6 +817,32 @@ router.get('/dashboard/diag/modelli', requireCoach, async (req, res) => {
     }
     res.json({ ok: true, attesi: drive.MODELLI_BASE, in_modelli: fileRientri, sottocartelle });
   } catch (err) { console.error('[diag/modelli]', err); res.status(500).json({ error: err.message }); }
+});
+
+// Modifica un percorso già creato. Serve perché il contratto si redige DOPO la seduta
+// di Intake (Germano, 10/08/2026): modalità di pagamento e prezzo si sanno solo allora,
+// mentre il percorso esiste già da prima. Prima di questa rotta l'unico rimedio era
+// cancellare il percorso e rifarlo, perdendo le sedute collegate.
+// Non tocca: stato, data_fine, progetto_id, e soprattutto ore_fatte/n_sessioni_fatte —
+// quelli li ricalcolano le sedute, e riscriverli da qui cancellerebbe ore vere.
+router.post('/dashboard/clients/:id/percorsi/:pid', requireCoach, express.json(), async (req, res) => {
+  const { tipo, n_sessioni_previste, promo, sconto_note, data_inizio, modalita } = req.body;
+  const prezzo = prezzoPerModalita(modalita || 'Standard', req.body.prezzo);
+  try {
+    const r = await db.query(
+      `UPDATE percorsi SET tipo=$3, n_sessioni_previste=$4, prezzo=$5, promo=$6,
+              sconto_note=$7, data_inizio=$8, modalita=$9
+         WHERE id=$1 AND client_id=$2`,
+      [req.params.pid, req.params.id, tipo || 'Individuale', n_sessioni_previste || 8,
+       prezzo, promo || false, sconto_note || '', data_inizio || null,
+       modalita || 'Standard']
+    );
+    if (!r.rowCount) return res.status(404).json({ error: 'Percorso non trovato' });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[percorso/modifica]', err);
+    res.status(500).json({ error: 'Modifica non riuscita: ' + err.message });
+  }
 });
 
 // Chiude il percorso. `data_fine` nel corpo è FACOLTATIVA: la manda la proposta che
@@ -2678,13 +2721,13 @@ Germano`;
               <span style="font-weight:700;color:var(--green)">${fmtOre(p.ore_fatte)}</span> <span style="font-size:11px;color:#aaa">h</span>
               ${Number(p.ore_storiche) > 0 ? `<div style="font-size:11px;color:#aaa;margin-top:4px">di cui ${fmtOre(p.ore_storiche)} h prima dell'automazione</div>` : ''}
             </td>
-            <td>${p.modalita==='Scambio servizi' ? `<span class="badge" style="background:#e8f4fd;color:#1A5280">Scambio servizi</span>` : p.modalita==='Pro bono' ? `<span class="badge badge-pausa">Pro bono</span>` : `<span style="font-size:12px;color:#4a5568">Standard</span>`}</td>
-            <td>${p.prezzo ? `€ ${Number(p.prezzo).toLocaleString('it-IT',{minimumFractionDigits:2})}` : '<span style="color:#aaa">—</span>'}${p.promo ? `<br><span class="badge badge-pausa">Promo</span>${p.sconto_note ? ` <span style="font-size:11px;color:#aaa">${esc(p.sconto_note)}</span>` : ''}` : ''}</td>
+            <td>${p.modalita==='Scambio servizi' ? `<span class="badge" style="background:#e8f4fd;color:#1A5280">Scambio servizi</span>` : p.modalita==='Pro bono' ? `<span class="badge badge-pausa">Pro bono</span>` : p.modalita==='Pacchetto' ? `<span class="badge" style="background:#eaf5ee;color:#2f6b46">Pacchetto</span>` : `<span style="font-size:12px;color:#4a5568">Standard</span>`}</td>
+            <td>${prezzoPercorso(p)}${p.promo ? `<br><span class="badge badge-pausa">Promo</span>${p.sconto_note ? ` <span style="font-size:11px;color:#aaa">${esc(p.sconto_note)}</span>` : ''}` : ''}</td>
             <td style="font-size:12px;color:#aaa">${p.data_inizio ? itDate(p.data_inizio) : '—'}${p.data_fine ? `<br>→ ${itDate(p.data_fine)}` : ''}</td>
             <td><span class="badge ${p.stato==='attivo'?'badge-active':'badge-inactive'}">${p.stato==='attivo'?'Attivo':'Concluso'}</span></td>
             <td style="white-space:nowrap;text-align:right">${condiviso
               ? `<a href="/dashboard/progetti/${p.progetto_id}" class="btn btn-neutral btn-sm">Gestisci nel progetto</a>`
-              : `${p.stato==='attivo' ? `<button onclick="chiudiPercorso('${p.id}','${fineIso}','${fineIt}')" class="btn btn-neutral btn-sm">Chiudi il percorso</button>` : ''}<span style="display:inline-block;width:14px"></span><button onclick="delPercorso('${p.id}')" class="btn btn-danger btn-sm" title="Elimina il percorso">🗑</button>`}</td>
+              : `<button onclick="editPercorso('${p.id}')" class="btn btn-neutral btn-sm" title="Correggi modalità, prezzo, sessioni previste">Modifica</button> ${p.stato==='attivo' ? `<button onclick="chiudiPercorso('${p.id}','${fineIso}','${fineIt}')" class="btn btn-neutral btn-sm">Chiudi il percorso</button>` : ''}<span style="display:inline-block;width:14px"></span><button onclick="delPercorso('${p.id}')" class="btn btn-danger btn-sm" title="Elimina il percorso">🗑</button>`}</td>
           </tr>`; }).join('')}
         </tbody>
       </table>`}
@@ -3219,20 +3262,22 @@ Germano`;
     </div>
   </div>
 
-  <!-- MODAL NUOVO PERCORSO -->
+  <!-- MODAL PERCORSO (serve sia a crearne uno nuovo sia a correggerne uno esistente) -->
   <div id="modal-percorso" class="modal-overlay">
     <div class="modal-box" style="width:420px">
-      <h2 style="margin-bottom:16px">Nuovo percorso</h2>
+      <h2 id="p-titolo" style="margin-bottom:16px">Nuovo percorso</h2>
+      <input id="p-id" type="hidden">
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
         <div class="form-group"><label>Tipo</label>
           <select id="p-tipo"><option>Individuale</option><option>Business</option><option>Young</option><option>Team</option><option>Group</option></select></div>
         <div class="form-group"><label>Modalità</label>
-          <select id="p-modalita"><option value="Scambio servizi" selected>Scambio servizi</option><option value="Standard">Pagamento standard</option><option value="Pro bono">Pro bono</option></select></div>
+          <select id="p-modalita" onchange="modalitaCambiata()"><option value="Standard" selected>Standard (si paga ogni sessione)</option><option value="Pacchetto">Pacchetto (cifra unica per N sessioni)</option><option value="Scambio servizi">Scambio servizi</option><option value="Pro bono">Pro bono</option></select></div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div class="form-group"><label>Ore svolte</label><input id="p-ore" type="number" step="0.5" min="0" value="0"></div>
-        <div class="form-group"><label>Prezzo (€)</label><input id="p-prezzo" type="number" step="0.01" placeholder="es. 900"></div>
+        <div class="form-group"><label>Sessioni previste</label><input id="p-sessioni" type="number" step="1" min="1" value="8"></div>
+        <div class="form-group" id="p-prezzo-box"><label id="p-prezzo-label">Prezzo a sessione (€)</label><input id="p-prezzo" type="number" step="0.01" placeholder="es. 150"></div>
       </div>
+      <div class="form-group" id="p-ore-box"><label>Ore già svolte (percorsi iniziati prima dell'Hub)</label><input id="p-ore" type="number" step="0.5" min="0" value="0"></div>
       ${progetti.length ? `<div class="form-group"><label>Progetto (facoltativo)</label>
         <select id="p-progetto"><option value="">— nessuno (percorso individuale) —</option>${progetti.map(pr => `<option value="${pr.progetto_id}">${esc(pr.titolo)} · ${esc(pr.committente_nome)}</option>`).join('')}</select></div>` : ''}
       <div class="form-group"><label>Data inizio</label><input id="p-data" type="date"></div>
@@ -3309,6 +3354,8 @@ Germano`;
     const PERM_NOME_CLIENTE = ${JSON.stringify(mailNome || client.name).replace(/</g, '\\u003c')};
     const PERM_ORE = ${PERMESSO_ORE_SESSIONE};
     const SEDUTE = ${JSON.stringify(Object.fromEntries(sedute.map(s => [s.id, { id: s.id, percorso_id: s.percorso_id, tipo: s.tipo, data: s.data, ore: Number(s.ore), obiettivo: s.obiettivo || '', argomenti: s.argomenti || '', attivita: s.attivita || '', scadenza: s.scadenza || '', prossima_ora: s.prossima_ora || '', eseguita: s.eseguita || '', note: s.note || '' }]))).replace(/</g, '\\u003c')};
+    // Dati dei percorsi per riempire la finestra quando si preme "Modifica".
+    const PERCORSI_DATI = ${JSON.stringify(Object.fromEntries(percorsi.map(p => [p.id, { id: p.id, tipo: p.tipo || 'Individuale', modalita: p.modalita || 'Standard', prezzo: p.prezzo === null || p.prezzo === undefined ? '' : String(p.prezzo), n_sessioni_previste: Number(p.n_sessioni_previste) || 8, promo: !!p.promo, sconto_note: p.sconto_note || '', data_inizio: p.data_inizio ? String(p.data_inizio).slice(0, 10) : '' }]))).replace(/</g, '\\u003c')};
     const ORE_TIPO = { Intake: 2, Ongoing: 1, Final: null };
     function oreAuto() {
       const t = document.getElementById('s-tipo').value;
@@ -3624,19 +3671,74 @@ Germano`;
       if (!confirm('Eliminare ${attr(client.name)} e tutti i suoi dati? Operazione irreversibile.')) return;
       await fetch('/dashboard/clients/'+CID,{method:'DELETE'}); location.href='/dashboard/individuali';
     }
-    function openPercorso() { document.getElementById('modal-percorso').style.display='flex'; }
+    // Il prezzo è un campo solo che cambia significato con la modalità: qui si limita
+    // a cambiare etichetta, e sparisce del tutto quando non c'è nessuna cifra da dire.
+    function modalitaCambiata() {
+      const m = document.getElementById('p-modalita').value;
+      const box = document.getElementById('p-prezzo-box');
+      const senzaPrezzo = (m === 'Scambio servizi' || m === 'Pro bono');
+      box.style.display = senzaPrezzo ? 'none' : '';
+      if (!senzaPrezzo) {
+        document.getElementById('p-prezzo-label').textContent =
+          (m === 'Pacchetto') ? 'Prezzo del pacchetto (€)' : 'Prezzo a sessione (€)';
+        document.getElementById('p-prezzo').placeholder = (m === 'Pacchetto') ? 'es. 900' : 'es. 150';
+      }
+    }
+    function openPercorso() {
+      document.getElementById('p-titolo').textContent = 'Nuovo percorso';
+      document.getElementById('p-id').value = '';
+      document.getElementById('p-tipo').value = 'Individuale';
+      document.getElementById('p-modalita').value = 'Standard';
+      document.getElementById('p-sessioni').value = 8;
+      document.getElementById('p-prezzo').value = '';
+      document.getElementById('p-ore').value = 0;
+      document.getElementById('p-promo').checked = false;
+      document.getElementById('p-sconto').value = '';
+      document.getElementById('p-data').value = '';
+      document.getElementById('p-ore-box').style.display = '';
+      if (document.getElementById('p-progetto')) document.getElementById('p-progetto').parentElement.style.display = '';
+      modalitaCambiata();
+      document.getElementById('modal-percorso').style.display='flex';
+    }
+    function editPercorso(pid) {
+      const p = PERCORSI_DATI[pid];
+      if (!p) { alert('Percorso non trovato: ricarica la pagina.'); return; }
+      document.getElementById('p-titolo').textContent = 'Modifica percorso';
+      document.getElementById('p-id').value = p.id;
+      document.getElementById('p-tipo').value = p.tipo;
+      document.getElementById('p-modalita').value = p.modalita;
+      document.getElementById('p-sessioni').value = p.n_sessioni_previste;
+      document.getElementById('p-prezzo').value = p.prezzo;
+      document.getElementById('p-promo').checked = p.promo;
+      document.getElementById('p-sconto').value = p.sconto_note;
+      document.getElementById('p-data').value = p.data_inizio;
+      // Ore già svolte e progetto non si toccano in modifica: le ore le ricalcolano le
+      // sedute, e spostare un percorso di progetto è un'altra cosa dal correggere il prezzo.
+      document.getElementById('p-ore-box').style.display = 'none';
+      if (document.getElementById('p-progetto')) document.getElementById('p-progetto').parentElement.style.display = 'none';
+      modalitaCambiata();
+      document.getElementById('modal-percorso').style.display='flex';
+    }
     async function savePercorso() {
-      const r = await fetch('/dashboard/clients/'+CID+'/percorsi',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      const pid = document.getElementById('p-id').value;
+      const modalita = document.getElementById('p-modalita').value;
+      const dati = {
         tipo: document.getElementById('p-tipo').value,
-        modalita: document.getElementById('p-modalita').value,
-        ore_fatte: document.getElementById('p-ore').value || 0,
+        modalita,
+        n_sessioni_previste: document.getElementById('p-sessioni').value || 8,
         prezzo: document.getElementById('p-prezzo').value || null,
         promo: document.getElementById('p-promo').checked,
         sconto_note: document.getElementById('p-sconto').value,
         data_inizio: document.getElementById('p-data').value || null,
-        progetto_id: (document.getElementById('p-progetto') ? document.getElementById('p-progetto').value : '') || null,
-      })});
+      };
+      if (!pid) {
+        dati.ore_fatte = document.getElementById('p-ore').value || 0;
+        dati.progetto_id = (document.getElementById('p-progetto') ? document.getElementById('p-progetto').value : '') || null;
+      }
+      const url = '/dashboard/clients/'+CID+'/percorsi' + (pid ? '/'+pid : '');
+      const r = await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(dati)});
       const d = await r.json().catch(()=>({}));
+      if (d && d.error) { alert(d.error); return; }
       if (d && d.driveWarning) alert(d.driveWarning);
       location.reload();
     }
@@ -5166,6 +5268,19 @@ function itDateTime(d) {
 function itFolderDate(d) {
   const m = String(d || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
   return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
+}
+
+// Il prezzo di un percorso da solo è ambiguo: 900 € può essere il costo di una sessione
+// o il totale di un pacchetto. Qui si scrive sempre accanto cosa significa, così la
+// cifra che finirà nel contratto si legge senza doverla interpretare.
+function prezzoPercorso(p) {
+  if (!p.prezzo) return '<span style="color:#aaa">—</span>';
+  const cifra = `€ ${Number(p.prezzo).toLocaleString('it-IT', { minimumFractionDigits: 2 })}`;
+  if (p.modalita === 'Pacchetto') {
+    const n = Number(p.n_sessioni_previste) || 0;
+    return `${cifra}<br><span style="font-size:11px;color:#aaa">pacchetto${n ? ` di ${n} sessioni` : ''}</span>`;
+  }
+  return `${cifra}<br><span style="font-size:11px;color:#aaa">a sessione</span>`;
 }
 
 function esc(str) {
