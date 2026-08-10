@@ -2773,6 +2773,52 @@ Germano`;
   const totRicevuto  = payRicevuto + projRicevuto;
   const totAtteso    = payAtteso + projAtteso;
 
+  // ── Maturato ─────────────────────────────────────────
+  // Con la modalità Standard si paga OGNI SESSIONE, quindi quello che hai maturato
+  // è una moltiplicazione — sessioni confermate × prezzo di una sessione — non un
+  // dato da salvare. Tenerlo come calcolo vuol dire che correggere o cancellare una
+  // sessione aggiorna tutto da solo, senza righe rimaste indietro a mentire (stessa
+  // regola della "una sola verità" già applicata alle quote dei progetti).
+  // Diventerà una riga con l'importo congelato solo quando si chiuderà il mese per
+  // fatturare: da lì in poi il numero non deve più cambiare.
+  // Contano solo le sedute CONFERMATE: una bozza nata da un report non è ancora
+  // un fatto finché il coach non l'ha approvata.
+  // La seduta di Intake VALE DUE SESSIONI (Germano, 10/08/2026): dura il doppio e
+  // si paga il doppio. Vale solo qui, nel pagamento a sessione: in un Pacchetto il
+  // prezzo è già un totale e non si moltiplica niente.
+  const maturatoMesi = new Map();          // 'AAAA-MM' → { n, nIntake, importo }
+  for (const p of percorsi) {
+    // I percorsi CONDIVISI (quelli di un progetto) compaiono qui ma i loro soldi
+    // vivono sul progetto: contarli anche come maturato personale del coachee
+    // significherebbe contarli due volte.
+    if (!p.client_id) continue;
+    if (p.modalita !== 'Standard' || !p.prezzo) continue;
+    const prezzoSessione = Number(p.prezzo);
+    for (const s of sedute) {
+      if (s.percorso_id !== p.id || s.stato !== 'confermata' || !s.data) continue;
+      const intake = s.tipo === 'Intake';
+      const mese = String(s.data).slice(0, 7);
+      const acc = maturatoMesi.get(mese) || { n: 0, nIntake: 0, importo: 0 };
+      acc.n += 1;
+      if (intake) acc.nIntake += 1;
+      acc.importo += prezzoSessione * (intake ? 2 : 1);
+      maturatoMesi.set(mese, acc);
+    }
+  }
+  const maturatoTot = [...maturatoMesi.values()].reduce((s, m) => s + m.importo, 0);
+  const maturatoBlock = maturatoMesi.size === 0 ? '' : `
+      <div style="margin-bottom:18px">
+        <div class="field-label" style="margin-bottom:2px">Maturato <span style="font-weight:400;color:#aaa">— sessioni svolte, non ancora fatturate (l'intake vale due sessioni)</span></div>
+        ${[...maturatoMesi.entries()].sort((a, b) => b[0].localeCompare(a[0])).map(([mese, m]) => `
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid #eef1f5;flex-wrap:wrap">
+            <div style="font-size:14px;text-transform:capitalize">${meseEsteso(mese)}</div>
+            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+              <span style="font-size:12px;color:#aaa">${m.n} ${m.n === 1 ? 'sessione' : 'sessioni'}${m.nIntake ? ` · ${m.nIntake === 1 ? 'intake' : m.nIntake + ' intake'} ×2` : ''}</span>
+              <strong style="font-size:14px">€ ${m.importo.toLocaleString('it-IT', { minimumFractionDigits: 2 })}</strong>
+            </div>
+          </div>`).join('')}
+      </div>`;
+
   const progettiRows = progetti.map(pr => {
     const ric = (pr.stato_pag_coachee || 'atteso') === 'ricevuto';
     const q   = pr.quota_coachee != null ? Number(pr.quota_coachee) : null;
@@ -2821,10 +2867,12 @@ Germano`;
           <span style="font-size:12px;font-weight:400;color:#aaa;margin-left:10px">
             Incassato: <strong style="color:#4F8B73">€ ${totRicevuto.toLocaleString('it-IT',{minimumFractionDigits:2})}</strong>
             ${totAtteso > 0 ? ` · Da incassare: <strong style="color:#D8AE2E">€ ${totAtteso.toLocaleString('it-IT',{minimumFractionDigits:2})}</strong>` : ''}
+            ${maturatoTot > 0 ? ` · Maturato: <strong style="color:#1A5280">€ ${maturatoTot.toLocaleString('it-IT',{minimumFractionDigits:2})}</strong>` : ''}
           </span>
         </h2>
         <button onclick="openPayment()" class="btn btn-primary btn-sm">+ Pagamento</button>
       </div>
+      ${maturatoBlock}
       ${progettiBlock}
       ${paymentsTable}
     </div>`;
@@ -5268,6 +5316,15 @@ function itDateTime(d) {
 function itFolderDate(d) {
   const m = String(d || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
   return m ? `${m[3]}-${m[2]}-${m[1]}` : null;
+}
+
+// '2026-01' → 'gennaio 2026'. Il giorno 15 e il fuso di Roma evitano che il mese
+// scivoli a quello prima passando per l'ora di Greenwich.
+function meseEsteso(aaaaMm) {
+  const m = String(aaaaMm || '').match(/^(\d{4})-(\d{2})$/);
+  if (!m) return String(aaaaMm || '');
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, 15));
+  return new Intl.DateTimeFormat('it-IT', { timeZone: 'Europe/Rome', month: 'long', year: 'numeric' }).format(d);
 }
 
 // Il prezzo di un percorso da solo è ambiguo: 900 € può essere il costo di una sessione
