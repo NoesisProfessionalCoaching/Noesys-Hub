@@ -44,6 +44,22 @@ prova('persona GIURIDICA in regime ordinario → stessa categoria: la forma non 
   'sostituto_it', f.categoriaFiscale({
     ...base, natura_giuridica: 'persona_giuridica', partita_iva: '12345678901', regime: 'ordinario' }));
 
+console.log('\n— UNA SOCIETÀ NON È UN PRIVATO (segnalato da Germano su Flamingo Beauty) —');
+prova('società senza partita IVA → nessuna categoria, NON «privato»',
+  null, f.categoriaFiscale({ ...base, natura_giuridica: 'persona_giuridica' }));
+prova('e le si chiede la partita IVA, non il codice fiscale',
+  ['partita IVA', 'regime fiscale (ordinario o forfettario)'],
+  f.datiMancanti({ ...base, natura_giuridica: 'persona_giuridica' }));
+prova('una PERSONA senza partita IVA resta un privato: per lei è un’informazione, non un buco',
+  'privato_it', f.categoriaFiscale({ ...base, natura_giuridica: 'persona_fisica' }));
+prova('società con partita IVA e regime → torna tutto normale',
+  'sostituto_it', f.categoriaFiscale({ ...base, natura_giuridica: 'persona_giuridica',
+    partita_iva: '12345678901', regime: 'ordinario' }));
+prova('il caso vero di Flamingo Beauty, com’era nel database',
+  'Manca: indirizzo, CAP, città, provincia, partita IVA, regime fiscale (ordinario o forfettario)',
+  f.statoFatturabilita(f.daCommittente({ denominazione: 'Flamingo Beauty', tipo: 'azienda',
+    natura_giuridica: 'persona_giuridica', paese: 'IT' })).messaggio);
+
 console.log('\n— QUANDO NON SI PUÒ DECIDERE —');
 prova('partita IVA ma regime non indicato → nessuna categoria (mai "privato" per ripiego)',
   null, f.categoriaFiscale({ ...base, partita_iva: '12345678901' }));

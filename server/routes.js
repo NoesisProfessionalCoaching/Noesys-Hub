@@ -2075,7 +2075,12 @@ function baseStyle() {
           radial-gradient(1100px 640px at 50% -14%, rgba(255,255,255,1), rgba(255,255,255,0) 66%),
           radial-gradient(1300px 480px at 50% 106%, rgba(206,216,228,0.5), rgba(206,216,228,0) 72%);
         background-repeat: no-repeat; background-attachment: fixed; }
-      .container { max-width: 900px; margin: 0 auto; padding: 28px 18px; }
+      ${/* 11/08 — le pagine passano da 980 a 1200px. Le schede si sono riempite
+            (anagrafica + fatturazione + azioni + percorsi + amministrazione) e in
+            una colonna sola diventavano lunghe da scorrere. 1200 e non di più:
+            oltre, su un monitor grande, le righe diventano lunghe da seguire con
+            l'occhio. Sotto i 1200 il limite non fa niente — decide la finestra. */ ''}
+      .container { max-width: 1200px; margin: 0 auto; padding: 28px 18px; }
       /* La scheda è un oggetto appoggiato, non un rettangolo: DUE ombre
          sovrapposte — una stretta di contatto sotto il bordo, una più larga
          intorno — più un filo di luce sul bordo alto e una schiaritura verso
@@ -2104,6 +2109,17 @@ function baseStyle() {
          dati, niente stessa cosa in due posti). .az-bar esce dai margini della
          card (padding 22px) per fare fascia piena in fondo. */
       .zona-tit { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; font-weight: 700; margin-bottom: 14px; }
+      ${/* Le due colonne della scheda cliente. `align-items: start` perché le due
+            colonne hanno altezze diverse e non devono stirarsi a pareggio.
+            Il filo verticale separa senza pesare; sotto i 1024px diventa un filo
+            orizzontale, che è il modo giusto di separare due blocchi impilati. */ ''}
+      ${/* La colonna DESTRA è la più larga anche se sembra controintuitivo: è
+            quella che cresce (dati fiscali + note + prossima azione), mentre a
+            sinistra i campi sono pochi e corti. Dandole più spazio i dati fiscali
+            stanno su tre colonne invece che due e le due metà finiscono più o
+            meno alla stessa altezza, invece di lasciare un buco bianco. */ ''}
+      .scheda-2col { display: grid; grid-template-columns: 1fr 1.1fr; gap: 30px; align-items: start; }
+      .scheda-2col > div + div { border-left: 1px solid var(--line); padding-left: 30px; }
       .az-bar { background: #FAFBFC; border-top: 1px solid var(--line); border-radius: 0 0 14px 14px; margin: 22px -22px -22px; padding: 18px 22px 14px; }
       .az-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 26px; }
       .az-gruppo { border-left: 2px solid var(--line); padding-left: 14px; min-width: 0; }
@@ -2171,8 +2187,13 @@ function baseStyle() {
       .modal-box > h2 { position:sticky; top:-26px; z-index:2; background:#fff; margin:-26px -26px 12px; padding:26px 26px 12px; border-radius:12px 12px 0 0; }
       .modal-box > div:last-child { position:sticky; bottom:-26px; z-index:2; background:#fff; margin:8px -26px -26px; padding:14px 26px 26px; border-top:1px solid var(--line); border-radius:0 0 12px 12px; }
       @supports (max-height: 90dvh) { .modal-box { max-height:90dvh; } }
-      .field-label { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:0.06em; font-weight:600; margin-bottom:3px; }
-      .field-value { font-size:13px; color:var(--ink); }
+      ${/* 11/08 — etichette 11→12px, valori 13→15px. Erano misure tarate su una
+            scheda che conteneva la metà delle cose di oggi. Il valore deve
+            risaltare sull'etichetta: è il dato che si legge, l'etichetta dice
+            solo che cos'è. Sotto i 1024px l'etichetta torna a 11px (regola della
+            portabilità), il valore no: sul telefono deve restare leggibile. */ ''}
+      .field-label { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:0.06em; font-weight:600; margin-bottom:4px; }
+      .field-value { font-size:15px; color:var(--ink); line-height:1.45; }
       /* Accordion — report sessioni / strumenti */
       details > summary { list-style: none; }
       details > summary::-webkit-details-marker { display: none; }
@@ -2259,6 +2280,10 @@ function baseStyle() {
         input, select, textarea { min-height: 44px; font-size: 16px; }
         input[type="checkbox"], input[type="radio"] { min-height: 0; width: 22px; height: 22px; }
         .field-label, .az-nome, .az-arrivo, .nh-tag, .zona-tit { font-size: 11px; }
+        ${/* Due colonne su un telefono sarebbero due strisce strette: si impilano,
+              e il filo che le separava passa da verticale a orizzontale. */ ''}
+        .scheda-2col { grid-template-columns: 1fr; gap: 22px; }
+        .scheda-2col > div + div { border-left: none; padding-left: 0; border-top: 1px solid var(--line); padding-top: 22px; }
         /* Una finestrella con sei campi non ci sta in uno schermo di telefono:
            si scorre, e va bene — purché TITOLO e PULSANTI restino appesi in
            alto e in basso (lo fa il foglio di stile delle finestrelle, che i
@@ -2450,7 +2475,7 @@ function homePage(d, req) {
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub</title>${baseStyle()}</head><body>
   ${headerNoesys({})}
   <div class="hm-picto">${logoPicto(1080)}</div>
-  <div class="container" style="max-width:980px;position:relative;z-index:1">
+  <div class="container" style="position:relative;z-index:1">
 
     <section class="hm-hero">
       <div class="hm-porte">
@@ -2517,7 +2542,7 @@ function dashboardPage(clients, req, { individuali = false, tutti = false } = {}
 
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — ${esc(titolo)}</title>${baseStyle()}</head><body>
   ${headerNoesys({ mondo: 'individuali' })}
-  <div class="container" style="max-width:980px">
+  <div class="container">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px">
       <div><h1>${esc(titolo)}</h1><p style="color:#aaa;font-size:13px">${sotto}</p></div>
       <button onclick="openNewClient()" class="btn btn-primary">+ Nuovo cliente</button>
@@ -2929,7 +2954,7 @@ Germano`;
   const maturatoTot = [...maturatoMesi.values()].reduce((s, m) => s + m.importo, 0);
   const maturatoBlock = maturatoMesi.size === 0 ? '' : `
       <div style="margin-bottom:18px">
-        <div class="field-label" style="margin-bottom:2px">Maturato <span style="font-weight:400;color:#aaa">— sessioni svolte, non ancora fatturate (l'intake vale due sessioni)</span></div>
+        <div class="field-label" style="margin-bottom:2px">Maturato</div>
         ${[...maturatoMesi.entries()].sort((a, b) => b[0].localeCompare(a[0])).map(([mese, m]) => `
           <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid #eef1f5;flex-wrap:wrap">
             <div style="font-size:14px;text-transform:capitalize">${meseEsteso(mese)}</div>
@@ -2959,7 +2984,7 @@ Germano`;
   }).join('');
   const progettiBlock = progetti.length ? `
       <div style="margin-bottom:${payments.length ? '18px' : '0'}">
-        <div class="field-label" style="margin-bottom:2px">Progetti (business) <span style="font-weight:400;color:#aaa">— sola lettura, si gestiscono nel progetto</span></div>
+        <div class="field-label" style="margin-bottom:2px">Progetti (business)</div>
         ${progettiRows}
       </div>` : '';
   const paymentsTable = payments.length ? `
@@ -3206,7 +3231,7 @@ Germano`;
     { label: 'Percorsi Individuali', href: '/dashboard/individuali' },
     { label: client.name },
   ] })}
-  <div class="container" style="max-width:980px">
+  <div class="container">
 
     ${bozzaHtml}
 
@@ -3222,6 +3247,13 @@ Germano`;
               decidono i permessi a termine. */ ''}
       </div>
 
+      ${/* 11/08 — due colonne affiancate invece di una fila lunga: a sinistra
+            CHI È, a destra i SOLDI e le cose da fare. La scheda si era riempita
+            e in colonna unica bisognava scorrere per arrivare in fondo.
+            Sotto i 1024px torna una colonna sola: su un telefono due colonne
+            sarebbero due strisce strette e illeggibili. */ ''}
+      <div class="scheda-2col">
+      <div>
       <div class="zona-tit">Dati del Cliente</div>
       <div><div class="field-label">Indirizzo</div><div class="field-value">${composeAddress(client) ? esc(composeAddress(client)) : '<span style="color:#ccc">—</span>'}</div></div>
       <div style="margin-top:12px"><div class="field-label">Contatti</div>
@@ -3231,13 +3263,15 @@ Germano`;
           <div><span style="font-size:11px;color:var(--hint)">Social</span><div class="field-value">${client.altro_recapito ? `${client.social_tipo ? `<strong>${esc(client.social_tipo)}</strong> · ` : ''}${esc(client.altro_recapito)}` : '<span style="color:#ccc">—</span>'}</div></div>
         </div>
       </div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-top:12px">
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(175px,1fr));gap:14px;margin-top:14px">
         <div><div class="field-label">Data di nascita</div><div class="field-value">${client.data_nascita ? itDate(client.data_nascita) : '<span style="color:#ccc">—</span>'}${client.luogo_nascita ? `<span style="color:var(--hint)"> · ${esc(client.luogo_nascita)}</span>` : ''}</div></div>
         <div><div class="field-label">Professione</div><div class="field-value">${val(client.professione)}</div></div>
         <div><div class="field-label">Società</div><div class="field-value">${val(client.societa)}</div></div>
         <div><div class="field-label">Come ci ha conosciuto</div><div class="field-value">${FONTE_LABEL[client.fonte]||val(client.fonte)}</div></div>
         <div><div class="field-label">Consenso privacy</div><div class="field-value">${client.consenso_privacy ? `Sì${client.consenso_data ? ` (${itDate(client.consenso_data)})` : ''}` : '<span style="color:#ccc">No</span>'}</div></div>
       </div>
+      </div>
+      <div>
       ${/* Dati per la fatturazione: arrivano dal contratto firmato che il cliente
             rimanda (automazione moduli, 07/08), e dall'11/08 portano il VERDETTO
             «pronto per fatturare» / «manca questo».
@@ -3261,16 +3295,16 @@ Germano`;
         }[st.stato];
         const REGIME_LABEL = { ordinario:'Regime ordinario', forfettario:'Regime forfettario' };
         return `
-      <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
-        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-          <div class="field-label" style="margin:0">Dati per la fatturazione</div>
+      <div>
+        <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+          <div class="zona-tit" style="margin:0">Dati per la fatturazione</div>
           <span style="font-size:11px;color:var(--hint)">${esc(st.etichettaCategoria)}</span>
         </div>
         ${cSoldi ? `
-        <div style="margin-top:8px;padding:10px 12px;border-left:3px solid ${STILE.bordo};background:${STILE.bg};color:${STILE.color};border-radius:4px;font-size:13px">
+        <div style="margin-bottom:14px;padding:11px 13px;border-left:3px solid ${STILE.bordo};background:${STILE.bg};color:${STILE.color};border-radius:4px;font-size:14px;line-height:1.45">
           ${st.stato === 'pronto' ? '✅ ' : '⚠️ '}${esc(st.messaggio)}
         </div>` : ''}
-        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px;margin-top:12px">
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(175px,1fr));gap:14px">
           <div><div class="field-label">Codice fiscale</div><div class="field-value">${val(client.codice_fiscale)}</div></div>
           <div><div class="field-label">Partita IVA</div><div class="field-value">${val(client.partita_iva)}</div></div>
           <div><div class="field-label">Regime fiscale</div><div class="field-value">${client.regime ? esc(REGIME_LABEL[client.regime] || client.regime) : '<span style="color:#ccc">—</span>'}</div></div>
@@ -3280,8 +3314,10 @@ Germano`;
         </div>
       </div>`;
       })()}
-      ${client.note_preliminari ? `<div style="margin-top:12px"><div class="field-label">Note CRM</div><div style="font-size:13px;color:#6B7280">${esc(client.note_preliminari)}</div></div>` : ''}
+      ${client.note_preliminari ? `<div style="margin-top:22px"><div class="zona-tit">Note CRM</div><div style="font-size:14px;color:#6B7280;line-height:1.55">${esc(client.note_preliminari)}</div></div>` : ''}
       ${recallHtml}
+      </div>
+      </div>
 
       ${azioniHtml}
     </div>
@@ -3331,10 +3367,10 @@ Germano`;
       <h2 style="font-size:13px;margin:6px 0 12px;color:var(--muted)">Dati per la fatturazione</h2>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
         <div class="form-group"><label>Codice fiscale</label><input id="e-cf" type="text" value="${attr(client.codice_fiscale)}"></div>
-        <div class="form-group"><label>Partita IVA <span style="color:var(--hint);font-weight:400">— solo se ce l'ha</span></label><input id="e-piva" type="text" value="${attr(client.partita_iva)}"></div>
+        <div class="form-group"><label>Partita IVA</label><input id="e-piva" type="text" value="${attr(client.partita_iva)}"></div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div class="form-group"><label>Regime fiscale <span style="color:var(--hint);font-weight:400">— serve se ha la partita IVA</span></label>
+        <div class="form-group"><label>Regime fiscale</label>
           <select id="e-regime">
             <option value=""${!client.regime ? ' selected' : ''}>— non indicato —</option>
             <option value="ordinario"${client.regime === 'ordinario' ? ' selected' : ''}>Ordinario</option>
@@ -3352,7 +3388,7 @@ Germano`;
       </div>
       <div style="display:grid;grid-template-columns:1fr 1.6fr;gap:12px">
         <div class="form-group"><label>Paese</label><input id="e-paese" type="text" value="${attr(client.paese || 'IT')}" maxlength="2" placeholder="IT" style="text-transform:uppercase"></div>
-        <div class="form-group"><label>Identificativo fiscale estero <span style="color:var(--hint);font-weight:400">— solo se non è italiano</span></label><input id="e-idestero" type="text" value="${attr(client.identificativo_estero)}"></div>
+        <div class="form-group"><label>Identificativo fiscale estero</label><input id="e-idestero" type="text" value="${attr(client.identificativo_estero)}"></div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
         <div class="form-group"><label>Area</label><select id="e-area">${areaOptions(area)}</select></div>
@@ -4044,7 +4080,7 @@ function leadsPage(leads, req) {
 
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Lead</title>${baseStyle()}</head><body>
   ${headerNoesys({ mondo: 'lead' })}
-  <div class="container" style="max-width:980px">
+  <div class="container">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px">
       <div><h1>Lead</h1><p style="color:#aaa;font-size:13px">${attivi.length} attivi · ${archiviati.length} archiviati</p></div>
       <button onclick="openNew()" class="btn btn-primary">+ Nuovo lead</button>
@@ -4300,7 +4336,7 @@ function committentiPage(committenti, req) {
 
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Committenti</title>${baseStyle()}</head><body>
   ${headerNoesys({ mondo: 'progetti', sub: 'committenti' })}
-  <div class="container" style="max-width:980px">
+  <div class="container">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:12px">
       <div><h1>Committenti</h1><p style="color:#aaa;font-size:13px">${committenti.length} ${committenti.length===1?'committente':'committenti'}</p></div>
       <button onclick="openNew()" class="btn btn-primary">+ Nuovo committente</button>
@@ -4346,7 +4382,7 @@ function committentiPage(committenti, req) {
             `pec_sdi` resta nel database e non si tocca: il suo contenuto è già
             finito nel campo giusto (chi ha la chiocciola è una PEC). */ ''}
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-        <div class="form-group"><label>Regime fiscale <span style="color:var(--hint);font-weight:400">— decide la ritenuta</span></label>
+        <div class="form-group"><label>Regime fiscale</label>
           <select id="c-regime">
             <option value="">— non indicato —</option>
             <option value="ordinario">Ordinario</option>
@@ -4359,7 +4395,7 @@ function committentiPage(committenti, req) {
             <option value="persona_giuridica">Persona giuridica</option>
           </select></div>
       </div>
-      <div class="form-group"><label>Indirizzo di fatturazione <span style="color:var(--hint);font-weight:400">— via e numero civico</span></label><input id="c-indirizzo" type="text" placeholder="es. Via Roma 12"></div>
+      <div class="form-group"><label>Indirizzo di fatturazione</label><input id="c-indirizzo" type="text" placeholder="es. Via Roma 12"></div>
       <div style="display:grid;grid-template-columns:1fr 1.6fr 0.8fr;gap:12px">
         <div class="form-group"><label>CAP</label><input id="c-cap" type="text"></div>
         <div class="form-group"><label>Città</label><input id="c-citta" type="text"></div>
@@ -4371,7 +4407,7 @@ function committentiPage(committenti, req) {
       </div>
       <div style="display:grid;grid-template-columns:1fr 1.6fr;gap:12px">
         <div class="form-group"><label>Paese</label><input id="c-paese" type="text" maxlength="2" placeholder="IT" style="text-transform:uppercase"></div>
-        <div class="form-group"><label>Identificativo fiscale estero <span style="color:var(--hint);font-weight:400">— solo se non è italiano</span></label><input id="c-idestero" type="text"></div>
+        <div class="form-group"><label>Identificativo fiscale estero</label><input id="c-idestero" type="text"></div>
       </div>
       <div class="form-group"><label>Note</label><input id="c-note" type="text" placeholder="osservazioni libere"></div>
       <div style="display:flex;gap:8px;margin-top:4px">
@@ -4478,7 +4514,7 @@ function progettiPage(progetti, committenti, req) {
 
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Progetti Strutturati</title>${baseStyle()}</head><body>
   ${headerNoesys({ mondo: 'progetti', sub: 'progetti' })}
-  <div class="container" style="max-width:980px">
+  <div class="container">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:12px">
       <div><h1>Progetti Strutturati</h1><p style="color:#aaa;font-size:13px">${progetti.length} ${progetti.length===1?'progetto':'progetti'}</p></div>
       ${noComm
@@ -4847,7 +4883,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
     { label: 'Progetti Strutturati', href: '/dashboard/progetti' },
     { label: p.titolo },
   ] })}
-  <div class="container" style="max-width:980px">
+  <div class="container">
     <div style="margin-bottom:18px">
       <h1>${esc(p.titolo)}</h1>
       <p style="color:#aaa;font-size:13px">Committente: <strong style="color:var(--ink)">${esc(p.committente_nome)}</strong>${p.committente_email ? ` · ${esc(p.committente_email)}` : ''}</p>
@@ -5744,7 +5780,7 @@ function cercaPage(q, ris, req) {
     .ce-vai:hover { color: var(--blue); }
   </style></head><body>
   ${headerNoesys({ q })}
-  <div class="container" style="max-width:980px">
+  <div class="container">
     <h1>Ricerca</h1>
     ${q ? `<p style="color:#aaa;font-size:13px">Risultati per <strong style="color:var(--ink)">${esc(q)}</strong></p>` : ''}
     ${corpo}
@@ -5769,7 +5805,7 @@ function icfPage(rows, tot, clientiUnici, req) {
 
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Estratto ICF</title>${baseStyle()}</head><body>
   ${headerNoesys({ briciole: [{ label: 'Estratto ICF' }] })}
-  <div class="container" style="max-width:980px">
+  <div class="container">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:12px">
       <div><h1>Estratto ICF</h1><p style="color:#aaa;font-size:13px">Log ore di coaching per la certificazione</p></div>
       <a href="/dashboard/icf/export.csv" class="btn btn-gold">⬇ Scarica CSV (Excel)</a>

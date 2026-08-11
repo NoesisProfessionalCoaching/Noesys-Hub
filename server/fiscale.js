@@ -46,7 +46,18 @@ function pulito(v) {
 function categoriaFiscale(s) {
   const paese = (pulito(s.paese) || 'IT').toUpperCase();
   if (paese !== 'IT') return 'estero_extra_ue';
-  if (!pulito(s.partita_iva)) return 'privato_it';
+  if (!pulito(s.partita_iva)) {
+    // ⚠️ Correzione dell'11/08 (segnalata da Germano su Flamingo Beauty).
+    // «Nessuna partita IVA» vuol dire due cose diverse a seconda di chi hai
+    // davanti. Per una PERSONA è un'informazione: non ce l'ha, è un privato.
+    // Per una SOCIETÀ è impossibile — una persona giuridica la partita IVA ce
+    // l'ha sempre — quindi vuol dire solo che nessuno l'ha ancora scritta.
+    // Trattarla da privato la mandava nella categoria sbagliata, e l'Hub le
+    // chiedeva il codice fiscale invece della partita IVA.
+    // La spec (§3.4) non copre il caso: dà `ha_partita_iva` per già saputo.
+    if (pulito(s.natura_giuridica) === 'persona_giuridica') return null;
+    return 'privato_it';
+  }
   const regime = pulito(s.regime).toLowerCase();
   if (regime === 'forfettario') return 'forfettario_it';
   if (regime === 'ordinario')   return 'sostituto_it';
@@ -73,10 +84,16 @@ function datiMancanti(s) {
   if (!pulito(s.paese))         manca.push('paese');
 
   if (cat === null) {
-    // Ha la partita IVA: senza il regime non si sa se va la ritenuta. È il dato
-    // che cambia l'importo che il cliente bonifica, quindi è mancante a tutti
-    // gli effetti.
-    manca.push('regime fiscale (ordinario o forfettario)');
+    // Non si riesce a dire che categoria è. Due cause possibili, e si elencano
+    // tutte e due insieme: chi va a correggere apre la scheda una volta sola.
+    //   · società senza partita IVA → manca la partita IVA
+    //   · partita IVA senza regime  → senza il regime non si sa se va la
+    //     ritenuta, ed è il dato che cambia quanto il cliente bonifica
+    if (!pulito(s.partita_iva)) manca.push('partita IVA');
+    const regime = pulito(s.regime).toLowerCase();
+    if (regime !== 'ordinario' && regime !== 'forfettario') {
+      manca.push('regime fiscale (ordinario o forfettario)');
+    }
     return manca;
   }
 
