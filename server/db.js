@@ -463,6 +463,67 @@ async function init() {
   // modulo in bianco si elimina solo dopo l'approvazione, mai prima.
   await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS bozza_anagrafica JSONB`);
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // 2026-08-11 — FASE 1 DEL CANTIERE FATTURAZIONE: i dati per fatturare.
+  // Servono a calcolare la CATEGORIA FISCALE (server/fiscale.js), che decide se
+  // in fattura ci va la ritenuta d'acconto, l'IVA, il bollo. La categoria non si
+  // sceglie da una tendina: si deduce da questi campi, perché una tendina è il
+  // punto in cui l'errore entra e non si vede più.
+  //
+  // Sui CLIENTI c'erano già codice fiscale, PEC, codice SDI, via/CAP/città/
+  // provincia (li porta l'automazione dei moduli dal 07/08). Qui si aggiunge solo
+  // ciò che manca davvero.
+  //
+  // ⚠️ `partita_iva` è un campo NUOVO e SEPARATO dal codice fiscale. Prima ce
+  // n'era uno solo, etichettato «Codice fiscale / P.IVA»: con un campo solo non si
+  // può sapere se il cliente è un privato o un professionista che si scarica il
+  // coaching — ed è esattamente la differenza che fa nascere la ritenuta. I valori
+  // già inseriti restano dove sono (sono tutti codici fiscali di 16 caratteri):
+  // nessun travaso automatico, nessuna indovinata.
+  await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS paese                 TEXT DEFAULT 'IT'`);
+  await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS partita_iva           TEXT`);
+  await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS regime                TEXT`);
+  await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS natura_giuridica      TEXT DEFAULT 'persona_fisica'`);
+  await query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS identificativo_estero TEXT`);
+  // Le righe già esistenti hanno NULL (il DEFAULT vale solo per le nuove): le
+  // allineiamo al valore di partenza, così nessuno deve ricompilare 15 schede.
+  await query(`UPDATE clients SET paese            = 'IT'             WHERE paese IS NULL`);
+  await query(`UPDATE clients SET natura_giuridica = 'persona_fisica' WHERE natura_giuridica IS NULL`);
+
+  // Sui COMMITTENTI l'indirizzo era una riga sola e PEC e codice destinatario
+  // stavano mescolati in un campo unico (`pec_sdi`). Per fatturare servono
+  // distinti. `pec_sdi` NON si tocca e non si cancella: si legge una volta sola
+  // per riempire i due campi nuovi dove sono ancora vuoti — la chiocciola dice
+  // qual è dei due, e non c'è modo di sbagliarsi.
+  await query(`ALTER TABLE committenti ADD COLUMN IF NOT EXISTS paese                 TEXT DEFAULT 'IT'`);
+  await query(`ALTER TABLE committenti ADD COLUMN IF NOT EXISTS regime                TEXT`);
+  await query(`ALTER TABLE committenti ADD COLUMN IF NOT EXISTS natura_giuridica      TEXT`);
+  await query(`ALTER TABLE committenti ADD COLUMN IF NOT EXISTS cap                   TEXT`);
+  await query(`ALTER TABLE committenti ADD COLUMN IF NOT EXISTS citta                 TEXT`);
+  await query(`ALTER TABLE committenti ADD COLUMN IF NOT EXISTS provincia             TEXT`);
+  await query(`ALTER TABLE committenti ADD COLUMN IF NOT EXISTS pec                   TEXT`);
+  await query(`ALTER TABLE committenti ADD COLUMN IF NOT EXISTS codice_sdi            TEXT`);
+  await query(`ALTER TABLE committenti ADD COLUMN IF NOT EXISTS identificativo_estero TEXT`);
+  await query(`UPDATE committenti SET paese = 'IT' WHERE paese IS NULL`);
+  // La natura giuridica parte da `tipo`, che il committente ha già dal giorno uno:
+  // 'azienda' → persona giuridica, 'persona' → persona fisica. Resta correggibile
+  // a mano (una ditta individuale è un'azienda ma è una persona fisica).
+  await query(`
+    UPDATE committenti SET natura_giuridica =
+      CASE WHEN tipo = 'persona' THEN 'persona_fisica' ELSE 'persona_giuridica' END
+    WHERE natura_giuridica IS NULL
+  `);
+  await query(`
+    UPDATE committenti SET pec = btrim(pec_sdi)
+    WHERE (pec IS NULL OR pec = '') AND pec_sdi IS NOT NULL AND position('@' in pec_sdi) > 0
+  `);
+  await query(`
+    UPDATE committenti SET codice_sdi = btrim(pec_sdi)
+    WHERE (codice_sdi IS NULL OR codice_sdi = '') AND pec_sdi IS NOT NULL
+      AND btrim(pec_sdi) <> '' AND position('@' in pec_sdi) = 0
+  `);
+  // ─────────────────────────────────────────────────────────────────────────
+
   // Traccia di cosa è già stato letto: un modulo si elabora UNA volta sola.
   // Senza questo, a ogni giro l'automazione rileggerebbe gli stessi documenti e
   // riscriverebbe l'anagrafica ogni tre ore.

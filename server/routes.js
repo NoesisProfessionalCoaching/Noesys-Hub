@@ -9,6 +9,7 @@ const scan = require('./scan');
 const documenti = require('./documenti');
 const mailer = require('./mailer');
 const moduli = require('./moduli');
+const fiscale = require('./fiscale');
 
 const router = express.Router();
 
@@ -415,6 +416,7 @@ router.post('/dashboard/clients/:id', requireCoach, express.json(), async (req, 
         professione=$11, area=$12, fonte=$13, obiettivo=$14, stato_cliente=$15,
         prossima_azione=$16, prossima_azione_data=$17, drive_url=$18, note_preliminari=$19,
         luogo_nascita=$25, codice_fiscale=$26, pec=$27, codice_sdi=$28,
+        partita_iva=$29, regime=$30, natura_giuridica=$31, paese=$32, identificativo_estero=$33,
         consenso_privacy=$20,
         consenso_data = CASE WHEN $20 AND consenso_data IS NULL THEN CURRENT_DATE
                              WHEN $20 THEN consenso_data ELSE NULL END
@@ -427,7 +429,15 @@ router.post('/dashboard/clients/:id', requireCoach, express.json(), async (req, 
        (b.note_preliminari||'').trim(), consenso, req.params.id, nome, cognome, (b.societa||'').trim(),
        // dal contratto firmato, ma correggibili a mano
        (b.luogo_nascita||'').trim(), (b.codice_fiscale||'').trim().toUpperCase(),
-       (b.pec||'').trim(), (b.codice_sdi||'').trim()]
+       (b.pec||'').trim(), (b.codice_sdi||'').trim(),
+       // Dati fiscali (11/08). Il regime accetta solo i due valori previsti: se
+       // arrivasse altro si salva vuoto, perché un regime inventato farebbe
+       // sbagliare la ritenuta in silenzio. Il paese vuoto vale Italia.
+       (b.partita_iva||'').trim(),
+       ['ordinario','forfettario'].includes(b.regime) ? b.regime : '',
+       b.natura_giuridica === 'persona_giuridica' ? 'persona_giuridica' : 'persona_fisica',
+       ((b.paese||'').trim().toUpperCase() || 'IT'),
+       (b.identificativo_estero||'').trim().toUpperCase()]
     );
     res.json({ ok: true });
   } catch (err) {
@@ -1373,7 +1383,15 @@ const TIPI_COMMITTENTE = ['azienda', 'persona'];
 
 router.get('/dashboard/committenti', requireCoach, async (req, res) => {
   try {
-    const result = await db.query('SELECT * FROM committenti ORDER BY denominazione');
+    // `quota_totale` serve solo a decidere se mostrare il verdetto «pronto per
+    // fatturare»: si segnala cosa manca a chi deve davvero pagare qualcosa,
+    // non a un committente registrato per prova (stessa regola dei clienti).
+    const result = await db.query(`
+      SELECT c.*,
+             COALESCE((SELECT SUM(p.quota_committente) FROM progetti p
+                        WHERE p.committente_id = c.id), 0) AS quota_totale
+        FROM committenti c
+       ORDER BY c.denominazione`);
     res.send(committentiPage(result.rows, req));
   } catch (err) {
     console.error(err);
@@ -1381,20 +1399,42 @@ router.get('/dashboard/committenti', requireCoach, async (req, res) => {
   }
 });
 
+// I dati fiscali di un committente, ripuliti (11/08). Una funzione sola per la
+// creazione e per la modifica: se fossero due, prima o poi direbbero cose diverse.
+// Un regime non previsto si salva vuoto invece di essere preso per buono: un
+// valore inventato farebbe sbagliare la ritenuta senza che nessuno se ne accorga.
+// La natura giuridica, se non indicata, la deduce dal tipo — che il committente ha
+// già dal giorno uno — così non c'è niente da ricompilare.
+function fiscaliCommittente(b, tipo) {
+  const natura = ['persona_fisica', 'persona_giuridica'].includes(b.natura_giuridica)
+    ? b.natura_giuridica
+    : (tipo === 'persona' ? 'persona_fisica' : 'persona_giuridica');
+  return [
+    ['ordinario', 'forfettario'].includes(b.regime) ? b.regime : '',
+    natura,
+    (b.cap||'').trim(), (b.citta||'').trim(), (b.provincia||'').trim().toUpperCase(),
+    (b.pec||'').trim(), (b.codice_sdi||'').trim().toUpperCase(),
+    ((b.paese||'').trim().toUpperCase() || 'IT'),
+    (b.identificativo_estero||'').trim().toUpperCase(),
+  ];
+}
+
 router.post('/dashboard/committenti', requireCoach, express.json(), async (req, res) => {
   const { tipo, denominazione, referente, ruolo, email, telefono,
-          codice_fiscale, partita_iva, indirizzo, pec_sdi, note } = req.body;
+          codice_fiscale, partita_iva, indirizzo, note } = req.body;
   if (!denominazione || !denominazione.trim()) return res.status(400).json({ error: 'Denominazione obbligatoria' });
+  const tipoOk = TIPI_COMMITTENTE.includes(tipo) ? tipo : 'azienda';
   try {
     const id = uuidv4();
     await db.query(
       `INSERT INTO committenti (id,tipo,denominazione,referente,ruolo,email,telefono,
-         codice_fiscale,partita_iva,indirizzo,pec_sdi,note)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-      [id, TIPI_COMMITTENTE.includes(tipo) ? tipo : 'azienda', denominazione.trim(),
+         codice_fiscale,partita_iva,indirizzo,note,
+         regime,natura_giuridica,cap,citta,provincia,pec,codice_sdi,paese,identificativo_estero)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
+      [id, tipoOk, denominazione.trim(),
        (referente||'').trim(), (ruolo||'').trim(), (email||'').trim(), (telefono||'').trim(),
        (codice_fiscale||'').trim(), (partita_iva||'').trim(), (indirizzo||'').trim(),
-       (pec_sdi||'').trim(), (note||'').trim()]
+       (note||'').trim(), ...fiscaliCommittente(req.body, tipoOk)]
     );
     res.json({ ok: true, id });
   } catch (err) {
@@ -1405,17 +1445,23 @@ router.post('/dashboard/committenti', requireCoach, express.json(), async (req, 
 
 router.post('/dashboard/committenti/:id', requireCoach, express.json(), async (req, res) => {
   const { tipo, denominazione, referente, ruolo, email, telefono,
-          codice_fiscale, partita_iva, indirizzo, pec_sdi, note } = req.body;
+          codice_fiscale, partita_iva, indirizzo, note } = req.body;
   if (!denominazione || !denominazione.trim()) return res.status(400).json({ error: 'Denominazione obbligatoria' });
+  const tipoOk = TIPI_COMMITTENTE.includes(tipo) ? tipo : 'azienda';
   try {
+    // `pec_sdi` non compare più: il vecchio campo unico resta nel database com'è,
+    // non si aggiorna e non si cancella. Toglierlo dalla scrittura è quello che
+    // impedisce a una modifica qualsiasi di svuotarlo.
     await db.query(
       `UPDATE committenti SET tipo=$1,denominazione=$2,referente=$3,ruolo=$4,email=$5,telefono=$6,
-         codice_fiscale=$7,partita_iva=$8,indirizzo=$9,pec_sdi=$10,note=$11,updated_at=NOW()
-       WHERE id=$12`,
-      [TIPI_COMMITTENTE.includes(tipo) ? tipo : 'azienda', denominazione.trim(),
+         codice_fiscale=$7,partita_iva=$8,indirizzo=$9,note=$10,
+         regime=$11,natura_giuridica=$12,cap=$13,citta=$14,provincia=$15,
+         pec=$16,codice_sdi=$17,paese=$18,identificativo_estero=$19,updated_at=NOW()
+       WHERE id=$20`,
+      [tipoOk, denominazione.trim(),
        (referente||'').trim(), (ruolo||'').trim(), (email||'').trim(), (telefono||'').trim(),
        (codice_fiscale||'').trim(), (partita_iva||'').trim(), (indirizzo||'').trim(),
-       (pec_sdi||'').trim(), (note||'').trim(), req.params.id]
+       (note||'').trim(), ...fiscaliCommittente(req.body, tipoOk), req.params.id]
     );
     res.json({ ok: true });
   } catch (err) {
@@ -3118,15 +3164,47 @@ Germano`;
         <div><div class="field-label">Consenso privacy</div><div class="field-value">${client.consenso_privacy ? `Sì${client.consenso_data ? ` (${itDate(client.consenso_data)})` : ''}` : '<span style="color:#ccc">No</span>'}</div></div>
       </div>
       ${/* Dati per la fatturazione: arrivano dal contratto firmato che il cliente
-            rimanda (automazione moduli, 07/08). Riga a sé perché si guardano
-            insieme, e solo quando ci sono: su un cliente senza contratto la riga
-            non compare e la scheda resta com'era. */ ''}
-      ${(client.codice_fiscale || client.pec || client.codice_sdi) ? `
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px;margin-top:12px">
-        <div><div class="field-label">Codice fiscale / P.IVA</div><div class="field-value">${val(client.codice_fiscale)}</div></div>
-        <div><div class="field-label">PEC</div><div class="field-value">${val(client.pec)}</div></div>
-        <div><div class="field-label">Codice destinatario SDI</div><div class="field-value">${val(client.codice_sdi)}</div></div>
-      </div>` : ''}
+            rimanda (automazione moduli, 07/08), e dall'11/08 portano il VERDETTO
+            «pronto per fatturare» / «manca questo».
+
+            ⚠️ Il verdetto compare SOLO se il cliente ha almeno un percorso con un
+            prezzo (scelta di Germano, 11/08). Motivo: metà dei clienti in archivio
+            sono gusci di prova o scambi di servizi — segnalare a tutti «manca il
+            codice fiscale» riempirebbe l'Hub di allarmi che non vogliono dire
+            niente. Nessun percorso a pagamento = niente da fatturare = niente da
+            segnalare. È la lezione dell'11/08: prima di trasformare un dato in un
+            allarme, sapere che cos'è. */ ''}
+      ${(() => {
+        const st = fiscale.statoFatturabilita(fiscale.daCliente(client));
+        const cSoldi = percorsi.some(p => Number(p.prezzo) > 0);
+        const cDati  = !!(client.codice_fiscale || client.partita_iva || client.pec || client.codice_sdi);
+        if (!cSoldi && !cDati) return '';
+        const STILE = {
+          pronto:        { bg:'#e7f1ec', color:'#2e6b52', bordo:'#4F8B73' },
+          incompleto:    { bg:'#fdf6e3', color:'#8a6d1a', bordo:'#D8AE2E' },
+          da_verificare: { bg:'#e8f4fd', color:'#1A5280', bordo:'#223B6E' },
+        }[st.stato];
+        const REGIME_LABEL = { ordinario:'Regime ordinario', forfettario:'Regime forfettario' };
+        return `
+      <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <div class="field-label" style="margin:0">Dati per la fatturazione</div>
+          <span style="font-size:11px;color:var(--hint)">${esc(st.etichettaCategoria)}</span>
+        </div>
+        ${cSoldi ? `
+        <div style="margin-top:8px;padding:10px 12px;border-left:3px solid ${STILE.bordo};background:${STILE.bg};color:${STILE.color};border-radius:4px;font-size:13px">
+          ${st.stato === 'pronto' ? '✅ ' : '⚠️ '}${esc(st.messaggio)}
+        </div>` : ''}
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px;margin-top:12px">
+          <div><div class="field-label">Codice fiscale</div><div class="field-value">${val(client.codice_fiscale)}</div></div>
+          <div><div class="field-label">Partita IVA</div><div class="field-value">${val(client.partita_iva)}</div></div>
+          <div><div class="field-label">Regime fiscale</div><div class="field-value">${client.regime ? esc(REGIME_LABEL[client.regime] || client.regime) : '<span style="color:#ccc">—</span>'}</div></div>
+          <div><div class="field-label">PEC</div><div class="field-value">${val(client.pec)}</div></div>
+          <div><div class="field-label">Codice destinatario SDI</div><div class="field-value">${val(client.codice_sdi)}</div></div>
+          <div><div class="field-label">Paese</div><div class="field-value">${val(client.paese || 'IT')}</div></div>
+        </div>
+      </div>`;
+      })()}
       ${client.note_preliminari ? `<div style="margin-top:12px"><div class="field-label">Note CRM</div><div style="font-size:13px;color:#6B7280">${esc(client.note_preliminari)}</div></div>` : ''}
       ${recallHtml}
 
@@ -3168,13 +3246,38 @@ Germano`;
       <div class="form-group"><label>Società / azienda</label><input id="e-societa" type="text" value="${attr(client.societa)}"></div>
       ${/* Li riempie da sé l'automazione leggendo il contratto firmato, ma restano
             correggibili a mano: se il cliente scrive male un codice, si sistema qui. */ ''}
-      <div style="display:grid;grid-template-columns:1.2fr 1fr;gap:12px">
-        <div class="form-group"><label>Luogo di nascita</label><input id="e-luogo-nascita" type="text" value="${attr(client.luogo_nascita)}"></div>
-        <div class="form-group"><label>Codice fiscale / P.IVA</label><input id="e-cf" type="text" value="${attr(client.codice_fiscale)}"></div>
+      <div class="form-group"><label>Luogo di nascita</label><input id="e-luogo-nascita" type="text" value="${attr(client.luogo_nascita)}"></div>
+      ${/* 11/08 — «Codice fiscale / P.IVA» era UN campo solo: così non si poteva
+            sapere se il cliente è un privato o un professionista con partita IVA,
+            ed è proprio quella differenza a decidere se in fattura ci va la
+            ritenuta d'acconto. Da qui in poi sono due campi distinti. I codici già
+            inseriti restano nel campo del codice fiscale: sono tutti codici
+            fiscali veri, nessuno è stato spostato d'ufficio. */ ''}
+      <h2 style="font-size:13px;margin:6px 0 12px;color:var(--muted)">Dati per la fatturazione</h2>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group"><label>Codice fiscale</label><input id="e-cf" type="text" value="${attr(client.codice_fiscale)}"></div>
+        <div class="form-group"><label>Partita IVA <span style="color:var(--hint);font-weight:400">— solo se ce l'ha</span></label><input id="e-piva" type="text" value="${attr(client.partita_iva)}"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group"><label>Regime fiscale <span style="color:var(--hint);font-weight:400">— serve se ha la partita IVA</span></label>
+          <select id="e-regime">
+            <option value=""${!client.regime ? ' selected' : ''}>— non indicato —</option>
+            <option value="ordinario"${client.regime === 'ordinario' ? ' selected' : ''}>Ordinario</option>
+            <option value="forfettario"${client.regime === 'forfettario' ? ' selected' : ''}>Forfettario</option>
+          </select></div>
+        <div class="form-group"><label>Natura giuridica</label>
+          <select id="e-natura">
+            <option value="persona_fisica"${client.natura_giuridica !== 'persona_giuridica' ? ' selected' : ''}>Persona fisica</option>
+            <option value="persona_giuridica"${client.natura_giuridica === 'persona_giuridica' ? ' selected' : ''}>Persona giuridica</option>
+          </select></div>
       </div>
       <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:12px">
         <div class="form-group"><label>PEC</label><input id="e-pec" type="email" value="${attr(client.pec)}"></div>
         <div class="form-group"><label>Codice destinatario SDI</label><input id="e-sdi" type="text" value="${attr(client.codice_sdi)}"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1.6fr;gap:12px">
+        <div class="form-group"><label>Paese</label><input id="e-paese" type="text" value="${attr(client.paese || 'IT')}" maxlength="2" placeholder="IT" style="text-transform:uppercase"></div>
+        <div class="form-group"><label>Identificativo fiscale estero <span style="color:var(--hint);font-weight:400">— solo se non è italiano</span></label><input id="e-idestero" type="text" value="${attr(client.identificativo_estero)}"></div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
         <div class="form-group"><label>Area</label><select id="e-area">${areaOptions(area)}</select></div>
@@ -3563,6 +3666,9 @@ Germano`;
         professione:document.getElementById('e-prof').value, societa:document.getElementById('e-societa').value, data_nascita:document.getElementById('e-nascita').value||null,
         luogo_nascita:document.getElementById('e-luogo-nascita').value, codice_fiscale:document.getElementById('e-cf').value,
         pec:document.getElementById('e-pec').value, codice_sdi:document.getElementById('e-sdi').value,
+        partita_iva:document.getElementById('e-piva').value, regime:document.getElementById('e-regime').value,
+        natura_giuridica:document.getElementById('e-natura').value, paese:document.getElementById('e-paese').value,
+        identificativo_estero:document.getElementById('e-idestero').value,
         area:document.getElementById('e-area').value, fonte:document.getElementById('e-fonte').value,
         obiettivo:document.getElementById('e-obiettivo').value, stato_cliente:document.getElementById('e-stato').value,
         prossima_azione:document.getElementById('e-azione').value, prossima_azione_data:document.getElementById('e-azione-data').value||null,
@@ -4010,6 +4116,18 @@ function committentiPage(committenti, req) {
     const tc = TIPO_CFG[k.tipo] || TIPO_CFG.azienda;
     const fatt = [k.partita_iva ? 'P.IVA '+esc(k.partita_iva) : '', k.codice_fiscale ? 'CF '+esc(k.codice_fiscale) : '']
       .filter(Boolean).join(' · ');
+    // Il verdetto «pronto per fatturare» (11/08). Come per i clienti, compare solo
+    // dove ci sono soldi veri in gioco: un committente senza quota da pagare non
+    // ha niente da fatturare, quindi non ha niente da segnalare.
+    const st = fiscale.statoFatturabilita(fiscale.daCommittente(k));
+    const STILE = {
+      pronto:        { bg:'#e7f1ec', color:'#2e6b52', segno:'✅ ' },
+      incompleto:    { bg:'#fdf6e3', color:'#8a6d1a', segno:'⚠️ ' },
+      da_verificare: { bg:'#e8f4fd', color:'#1A5280', segno:'⚠️ ' },
+    }[st.stato];
+    const verdetto = Number(k.quota_totale) > 0
+      ? `<div style="margin-top:5px"><span style="display:inline-block;padding:3px 8px;border-radius:4px;background:${STILE.bg};color:${STILE.color};font-size:11px;line-height:1.5">${STILE.segno}${esc(st.messaggio)}</span></div>`
+      : '';
     return `<tr>
       <td><strong>${esc(k.denominazione)}</strong>
         ${k.referente ? `<br><span style="font-size:11px;color:#aaa">${esc(k.referente)}${k.ruolo ? ' — '+esc(k.ruolo) : ''}</span>` : ''}
@@ -4018,7 +4136,7 @@ function committentiPage(committenti, req) {
       <td style="font-size:12px;color:#4a5568">
         ${k.email ? esc(k.email) : ''}${k.email && k.telefono ? '<br>' : ''}${k.telefono ? `<span style="color:#aaa">${esc(k.telefono)}</span>` : ''}${!k.email && !k.telefono ? '<span style="color:#ccc">—</span>' : ''}
       </td>
-      <td style="font-size:12px;color:#aaa">${fatt || '—'}</td>
+      <td style="font-size:12px;color:#aaa">${fatt || '—'}${verdetto}</td>
       <td style="white-space:nowrap">
         <button onclick='editComm(${JSON.stringify(k).replace(/'/g, "&#39;")})' class="btn btn-neutral btn-sm">Modifica</button>
         <span style="display:inline-block;width:10px"></span>
@@ -4070,8 +4188,38 @@ function committentiPage(committenti, req) {
         <div class="form-group"><label>Partita IVA</label><input id="c-piva" type="text"></div>
         <div class="form-group"><label>Codice fiscale</label><input id="c-cf" type="text"></div>
       </div>
-      <div class="form-group"><label>Indirizzo di fatturazione</label><input id="c-indirizzo" type="text" placeholder="Via, CAP Città (Prov.)"></div>
-      <div class="form-group"><label>PEC / Codice SDI</label><input id="c-pecsdi" type="text" placeholder="fattura elettronica"></div>
+      ${/* 11/08 — l'indirizzo era una riga sola e PEC e codice destinatario stavano
+            in un campo unico. Per fatturare servono separati. Il vecchio campo
+            `pec_sdi` resta nel database e non si tocca: il suo contenuto è già
+            finito nel campo giusto (chi ha la chiocciola è una PEC). */ ''}
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="form-group"><label>Regime fiscale <span style="color:var(--hint);font-weight:400">— decide la ritenuta</span></label>
+          <select id="c-regime">
+            <option value="">— non indicato —</option>
+            <option value="ordinario">Ordinario</option>
+            <option value="forfettario">Forfettario</option>
+          </select></div>
+        <div class="form-group"><label>Natura giuridica</label>
+          <select id="c-natura">
+            <option value="">— dal tipo —</option>
+            <option value="persona_fisica">Persona fisica</option>
+            <option value="persona_giuridica">Persona giuridica</option>
+          </select></div>
+      </div>
+      <div class="form-group"><label>Indirizzo di fatturazione <span style="color:var(--hint);font-weight:400">— via e numero civico</span></label><input id="c-indirizzo" type="text" placeholder="es. Via Roma 12"></div>
+      <div style="display:grid;grid-template-columns:1fr 1.6fr 0.8fr;gap:12px">
+        <div class="form-group"><label>CAP</label><input id="c-cap" type="text"></div>
+        <div class="form-group"><label>Città</label><input id="c-citta" type="text"></div>
+        <div class="form-group"><label>Prov.</label><input id="c-provincia" type="text" maxlength="4" placeholder="MI"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:12px">
+        <div class="form-group"><label>PEC</label><input id="c-pec" type="email"></div>
+        <div class="form-group"><label>Codice destinatario SDI</label><input id="c-sdi" type="text" maxlength="7"></div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1.6fr;gap:12px">
+        <div class="form-group"><label>Paese</label><input id="c-paese" type="text" maxlength="2" placeholder="IT" style="text-transform:uppercase"></div>
+        <div class="form-group"><label>Identificativo fiscale estero <span style="color:var(--hint);font-weight:400">— solo se non è italiano</span></label><input id="c-idestero" type="text"></div>
+      </div>
       <div class="form-group"><label>Note</label><input id="c-note" type="text" placeholder="osservazioni libere"></div>
       <div style="display:flex;gap:8px;margin-top:4px">
         <button onclick="closeCommModal()" class="btn btn-neutral" style="flex:1">Annulla</button>
@@ -4081,10 +4229,14 @@ function committentiPage(committenti, req) {
   </div>
 
   <script>
-    const F = ['tipo','denominazione','referente','ruolo','email','telefono','codice_fiscale','partita_iva','indirizzo','pec_sdi','note'];
+    const F = ['tipo','denominazione','referente','ruolo','email','telefono','codice_fiscale','partita_iva','indirizzo','note',
+               'regime','natura_giuridica','cap','citta','provincia','pec','codice_sdi','paese','identificativo_estero'];
     const ID = { tipo:'c-tipo', denominazione:'c-denominazione', referente:'c-referente', ruolo:'c-ruolo',
       email:'c-email', telefono:'c-tel', codice_fiscale:'c-cf', partita_iva:'c-piva',
-      indirizzo:'c-indirizzo', pec_sdi:'c-pecsdi', note:'c-note' };
+      indirizzo:'c-indirizzo', note:'c-note',
+      regime:'c-regime', natura_giuridica:'c-natura', cap:'c-cap', citta:'c-citta',
+      provincia:'c-provincia', pec:'c-pec', codice_sdi:'c-sdi', paese:'c-paese',
+      identificativo_estero:'c-idestero' };
     function filtra() {
       const q = document.getElementById('cerca').value.trim().toLowerCase();
       document.querySelectorAll('tbody tr').forEach(tr => {
@@ -4101,6 +4253,7 @@ function committentiPage(committenti, req) {
       document.getElementById('c-id').value = '';
       Object.values(ID).forEach(id => document.getElementById(id).value = '');
       document.getElementById('c-tipo').value = 'azienda';
+      document.getElementById('c-paese').value = 'IT';
       syncDenomLabel();
       document.getElementById('modal-comm').style.display = 'flex';
     }
