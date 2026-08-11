@@ -257,8 +257,34 @@ function anomalie({ clienti = [], committenti = [], progetti = [] } = {}) {
   return out;
 }
 
+/**
+ * Le anomalie raccolte PER SOGGETTO, non per tipo di problema.
+ *
+ * Scelta di Germano (11/08): «apro un cliente e gestisco due anomalie». Chi
+ * sistema i dati lavora su una persona per volta — apre la sua scheda, corregge
+ * tutto quello che manca, chiude. Raggruppare per tipo di problema costringeva a
+ * tornare sullo stesso nome in due riquadri diversi.
+ *
+ * L'ordine dei soggetti è quello di arrivo (clienti, poi committenti, poi
+ * progetti: lo decide `anomalie()`), e dentro ciascuno l'ordine dei suoi problemi.
+ *
+ * @returns {Array<{ruolo:string, id:string, nome:string, voci:Array}>}
+ */
+function anomaliePerSoggetto(lista) {
+  const gruppi = [];
+  for (const a of lista) {
+    // La chiave è ruolo+id: un cliente e un progetto potrebbero avere lo stesso
+    // id senza essere la stessa cosa.
+    const chiave = a.ruolo + ':' + a.id;
+    let g = gruppi.find(x => x.chiave === chiave);
+    if (!g) { g = { chiave, ruolo: a.ruolo, id: a.id, nome: a.nome, voci: [] }; gruppi.push(g); }
+    g.voci.push({ tipo: a.tipo, titolo: TIPI_ANOMALIA[a.tipo] || a.tipo, messaggio: a.messaggio });
+  }
+  return gruppi;
+}
+
 module.exports = {
   CATEGORIE, categoriaFiscale, datiMancanti, statoFatturabilita,
   daCliente, daCommittente,
-  TIPI_ANOMALIA, quoteProgetto, anomalie,
+  TIPI_ANOMALIA, quoteProgetto, anomalie, anomaliePerSoggetto,
 };

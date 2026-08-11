@@ -166,5 +166,32 @@ prova('il cliente estero completo compare comunque: non è pronto finché non pa
   f.anomalie({ clienti: [{ id: 'c1', nome: 'Hans', cognome: 'Meier', paese: 'CH',
     via: 'Bahnhofstrasse 1', citta: 'Lugano' }] })[0].tipo);
 
+console.log('\n— LE ANOMALIE RACCOLTE PER PERSONA —');
+{
+  // Un progetto con DUE problemi: è il caso che ha fatto cambiare idea a Germano.
+  // Deve venire fuori UN riquadro solo, con dentro tutte e due le cose.
+  const perSoggetto = f.anomaliePerSoggetto(f.anomalie({
+    clienti: [{ id: 'c1', nome: 'Anna', cognome: 'Verdi', paese: 'IT' }],
+    progetti: [{ id: 'p1', titolo: 'Doppio guaio', quota_totale: 1000,
+      quota_committente: 500, somma_coachee: 0, n_partecipanti: 0 }],
+  }));
+  prova('due soggetti → due riquadri, non quattro',
+    2, perSoggetto.length);
+  prova('il progetto coi due problemi sta in un riquadro solo',
+    2, perSoggetto[1].voci.length);
+  prova('e dentro ci sono tutti e due, col loro titolo in italiano',
+    ['Le quote del progetto non tornano', 'Progetto con una quota ma nessun partecipante'],
+    perSoggetto[1].voci.map(v => v.titolo));
+  prova('ogni riquadro sa chi è e come si chiama',
+    [{ ruolo: 'cliente', nome: 'Anna Verdi' }, { ruolo: 'progetto', nome: 'Doppio guaio' }],
+    perSoggetto.map(g => ({ ruolo: g.ruolo, nome: g.nome })));
+  prova('un cliente e un progetto con lo stesso id restano due riquadri distinti',
+    2, f.anomaliePerSoggetto([
+      { ruolo: 'cliente',  id: 'x', nome: 'Tizio',  tipo: 'dati_cliente', messaggio: 'a' },
+      { ruolo: 'progetto', id: 'x', nome: 'Cosino', tipo: 'quote_non_tornano', messaggio: 'b' },
+    ]).length);
+  prova('nessuna anomalia → nessun riquadro', [], f.anomaliePerSoggetto([]));
+}
+
 console.log(`\n${falliti ? '✗' : '✓'} ${falliti} prove fallite.`);
 process.exit(falliti ? 1 : 0);

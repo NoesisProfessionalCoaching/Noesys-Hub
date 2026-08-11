@@ -2220,13 +2220,22 @@ function baseStyle() {
       .nh-mondo { padding: 9px 14px; font-size: 13px; font-weight: 600; color: var(--muted); text-decoration: none; border-bottom: 2.5px solid transparent; white-space: nowrap; }
       .nh-mondo:hover { color: var(--ink); }
       .nh-mondo.on { color: var(--blue); border-bottom-color: var(--blue); }
-      ${/* `flex-wrap` aggiunto l'11/08 con la quarta voce: Amministrazione ha
-            quattro sotto-voci (352px in fila) e su uno schermo stretto uscivano
-            dal bordo. La riga dei mondi andava già a capo da sola; questa no. */ ''}
+      ${/* `flex-wrap` aggiunto l'11/08: la riga dei mondi andava già a capo da
+            sola, questa no, e su uno schermo stretto le sotto-voci uscivano dal
+            bordo. Vale anche con due sole voci, se i nomi sono lunghi. */ ''}
       .nh-sub { display: flex; align-items: center; gap: 3px; margin-left: auto; flex-wrap: wrap; }
       .nh-sub a { font-size: 12px; color: var(--muted); text-decoration: none; padding: 5px 11px; border-radius: 16px; white-space: nowrap; }
       .nh-sub a.on { background: #eef4f9; color: var(--blue); font-weight: 600; }
-      .nh-sub-off { font-size: 12px; color: #C4C9D0; padding: 5px 11px; white-space: nowrap; cursor: not-allowed; }
+      ${/* Le sezioni dell'area Amministrazione: stanno DENTRO la pagina, sotto il
+            titolo, non nella barra in alto (scelta di Germano, 11/08). Le voci
+            spente sono le fasi 3, 4 e 5 del cantiere: si vedono per far capire
+            dove si sta andando, e si accendono una per volta. */ ''}
+      .am-nav { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 22px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+      .am-nav a, .am-nav span { font-size: 13px; padding: 7px 14px; border-radius: 18px; text-decoration: none; white-space: nowrap; }
+      .am-nav a { color: var(--muted); }
+      .am-nav a:hover { background: #f4f7fa; color: var(--ink); }
+      .am-nav a.on { background: #eef4f9; color: var(--blue); font-weight: 700; }
+      .am-nav span { color: #C4C9D0; cursor: not-allowed; }
       .nh-bric { display: flex; align-items: center; gap: 7px; padding: 7px 0; font-size: 12px; color: var(--hint); flex-wrap: wrap; }
       .nh-bric a { color: var(--muted); text-decoration: none; }
       .nh-bric a:hover { color: var(--blue); text-decoration: underline; }
@@ -2263,6 +2272,7 @@ function baseStyle() {
         .nh-mondo { padding: 13px 14px; }
         .nh-menu-box a, .nh-menu-box .nh-off { padding: 13px 12px; }
         .nh-bric a { display: inline-block; padding: 14px 0; }
+        .am-nav a, .am-nav span { padding: 13px 16px; }
       }
     </style>
   `;
@@ -2293,21 +2303,14 @@ function headerNoesys({ mondo = '', sub = '', briciole = [], q = '' } = {}) {
       { key: 'progetti',    label: 'Progetti',    href: '/dashboard/progetti' },
       { key: 'committenti', label: 'Committenti', href: '/dashboard/committenti' },
     ],
-    // `off: true` = voce spenta, si vede ma non si clicca. Serve a far vedere la
-    // strada che manca: le tre voci grigie sono le fasi 3, 4 e 5 del cantiere
-    // fatturazione, e si accendono una per volta man mano che si costruiscono.
-    amministrazione: [
-      { key: 'anomalie', label: 'Anomalie', href: '/dashboard/amministrazione' },
-      { key: 'proforma', label: 'Proforma', off: true },
-      { key: 'incassi',  label: 'Incassi',  off: true },
-      { key: 'report',   label: 'Fatture da preparare', off: true },
-    ],
+    // ⚠️ Amministrazione NON ha sotto-voci qui: le sue sezioni stanno DENTRO la
+    // pagina (scelta di Germano, 11/08). La barra in alto porta ai mondi, non
+    // dentro un mondo.
   };
   const mondiHtml = MONDI.map(m =>
     `<a class="nh-mondo${m.key === mondo ? ' on' : ''}" href="${m.href}">${m.label}</a>`).join('');
-  const sottoHtml = (SOTTOVOCI[mondo] || []).map(s => s.off
-    ? `<span class="nh-sub-off" title="In arrivo">${s.label}</span>`
-    : `<a href="${s.href}"${s.key === sub ? ' class="on"' : ''}>${s.label}</a>`).join('');
+  const sottoHtml = (SOTTOVOCI[mondo] || []).map(s =>
+    `<a href="${s.href}"${s.key === sub ? ' class="on"' : ''}>${s.label}</a>`).join('');
   const bricHtml = briciole.map((b, i) => {
     const ultima = i === briciole.length - 1;
     const voce = (b.href && !ultima) ? `<a href="${b.href}">${esc(b.label)}</a>` : `<b>${esc(b.label)}</b>`;
@@ -4192,35 +4195,30 @@ function anomaliePage(anomalie, conteggi, req) {
     progetto:    { label: 'Progetto',    bg: '#fdf6e3', color: '#8a6d1a', href: a => `/dashboard/progetti/${a.id}` },
   };
 
-  // Raggruppate per tipo di problema, non per persona: si sistemano in serie,
-  // ed è lo stesso criterio con cui la spec raggruppa le fatture per categoria.
-  // ⚠️ Il raggruppamento va fatto sul TITOLO, non sulla chiave: «dati incompleti»
-  // di un cliente e di un committente sono due chiavi diverse ma lo stesso
-  // problema, e due riquadri con lo stesso titolo sembrano un errore. A
-  // distinguere chi è chi ci pensa già l'etichetta del ruolo.
-  const gruppi = [];
-  for (const a of anomalie) {
-    const titolo = fiscale.TIPI_ANOMALIA[a.tipo] || a.tipo;
-    let g = gruppi.find(x => x.titolo === titolo);
-    if (!g) { g = { titolo, voci: [] }; gruppi.push(g); }
-    g.voci.push(a);
-  }
+  // Un riquadro per SOGGETTO, con dentro tutti i suoi problemi (scelta di
+  // Germano, 11/08): si apre la scheda di quella persona e si sistema tutto in
+  // una volta, invece di ritrovare lo stesso nome in due riquadri diversi.
+  const gruppi = fiscale.anomaliePerSoggetto(anomalie);
 
-  const gruppiHtml = gruppi.map(g => `
+  const gruppiHtml = gruppi.map(g => {
+    const r = RUOLO[g.ruolo];
+    return `
     <div class="card" style="padding:0;overflow:hidden;margin-bottom:14px">
-      <div style="padding:14px 18px;border-bottom:1px solid var(--line);background:#fdfcf7">
-        <strong style="font-size:14px;color:var(--ink)">${esc(g.titolo)}</strong>
-        <span style="font-size:12px;color:var(--hint);margin-left:8px">${g.voci.length} ${g.voci.length === 1 ? 'voce' : 'voci'}</span>
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:14px 18px;border-bottom:1px solid var(--line);background:#fdfcf7">
+        <span class="badge" style="background:${r.bg};color:${r.color}">${r.label}</span>
+        <a href="${r.href(g)}" style="font-size:16px;font-weight:700;color:var(--blue);text-decoration:none">${esc(g.nome || '(senza nome)')}</a>
+        <span style="font-size:12px;color:var(--hint);margin-left:auto">${g.voci.length} ${g.voci.length === 1 ? 'cosa da sistemare' : 'cose da sistemare'}</span>
       </div>
-      ${g.voci.map(a => {
-        const r = RUOLO[a.ruolo];
-        return `<div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;padding:14px 18px;border-bottom:1px solid #f1f3f6">
-          <span class="badge" style="background:${r.bg};color:${r.color}">${r.label}</span>
-          <a href="${r.href(a)}" style="font-size:15px;font-weight:700;color:var(--blue);text-decoration:none;min-width:180px">${esc(a.nome || '(senza nome)')}</a>
-          <span style="font-size:14px;color:#4A4A4A;flex:1;min-width:240px">${esc(a.messaggio)}</span>
-        </div>`;
-      }).join('')}
-    </div>`).join('');
+      ${g.voci.map(v => `
+        <div style="padding:13px 18px;border-bottom:1px solid #f1f3f6">
+          <div style="font-size:12px;color:var(--muted);font-weight:600;margin-bottom:3px">${esc(v.titolo)}</div>
+          <div style="font-size:14px;color:#4A4A4A">${esc(v.messaggio)}</div>
+        </div>`).join('')}
+      <div style="padding:12px 18px">
+        <a href="${r.href(g)}" class="btn btn-neutral btn-sm">Apri la scheda →</a>
+      </div>
+    </div>`;
+  }).join('');
 
   const vuoto = `
     <div class="card" style="border-left:3px solid #4F8B73;background:#f4faf7">
@@ -4231,10 +4229,20 @@ function anomaliePage(anomalie, conteggi, req) {
       </div>
     </div>`;
 
-  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Anomalie</title>${baseStyle()}</head><body>
-  ${headerNoesys({ mondo: 'amministrazione', sub: 'anomalie' })}
+  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Amministrazione</title>${baseStyle()}</head><body>
+  ${headerNoesys({ mondo: 'amministrazione' })}
   <div class="container">
-    <h1>Anomalie</h1>
+    <h1>Amministrazione</h1>
+    ${/* Le sezioni dell'area stanno QUI, sotto il titolo, non nella barra in alto:
+          la barra porta ai quattro mondi, il resto è roba di questa pagina. Le tre
+          spente sono le fasi 3, 4 e 5 del cantiere fatturazione. */ ''}
+    <nav class="am-nav" style="margin-top:14px">
+      <a href="/dashboard/amministrazione" class="on">Anomalie</a>
+      <span title="In arrivo">Proforma</span>
+      <span title="In arrivo">Incassi</span>
+      <span title="In arrivo">Fatture da preparare</span>
+    </nav>
+    <h2 style="margin-bottom:4px">Anomalie</h2>
     <p style="color:var(--muted);font-size:13px;margin-bottom:6px">
       Quello che va sistemato <strong>prima</strong> di emettere una fattura.
     </p>
