@@ -171,7 +171,94 @@ function daCommittente(k) {
   };
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// LE ANOMALIE (spec §7.1 sezione B) — «chi non è fatturabile, e perché»
+//
+// Anche questa parte è pura: entrano tre elenchi già letti dal database, esce
+// l'elenco di ciò che non va. Nessuna query qui dentro, così le regole si
+// possono provare con dei numeri finti invece che con dei clienti veri.
+//
+// ⚠️ Si segnala solo dove ci sono SOLDI VERI in gioco (decisione B2 dell'11/08):
+// un cliente senza percorso a pagamento e un progetto senza quota non hanno
+// niente da fatturare, quindi non hanno niente da segnalare. Il filtro NON sta
+// qui: sta nella query che prepara gli elenchi, perché è lì che si sa chi ha un
+// prezzo. Qui si assume che arrivi già solo chi conta.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Confronto fra importi in CENTESIMI interi. Con i decimali, 10000 − 7000 − 3000
+// può non fare esattamente zero e la pagina segnalerebbe un'anomalia che non
+// esiste. È lo stesso motivo per cui le quote si tengono in euro e non in
+// percentuali.
+function centesimi(v) {
+  return Math.round(Number(v || 0) * 100);
+}
+
+// Gli importi si scrivono all'italiana — 10.000,00 e non 10000.00 — anche dentro
+// i messaggi. Chi legge sta confrontando cifre, e un punto al posto della virgola
+// nelle migliaia è il genere di cosa che fa sbagliare un numero a colpo d'occhio.
+function euro(v) {
+  return Number(v || 0).toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/**
+ * Le quote di un progetto tornano? totale = committente + somma dei coachee.
+ * @returns {{quadra:boolean, scarto:number}} scarto in euro, positivo se manca
+ *          qualcosa all'appello, negativo se le quote superano il totale.
+ */
+function quoteProgetto(p) {
+  const tot = centesimi(p.quota_totale);
+  const scarto = tot - centesimi(p.quota_committente) - centesimi(p.somma_coachee);
+  return { quadra: scarto === 0, scarto: scarto / 100 };
+}
+
+const TIPI_ANOMALIA = {
+  dati_cliente:       'Dati di fatturazione incompleti',
+  dati_committente:   'Dati di fatturazione incompleti',
+  quote_non_tornano:  'Le quote del progetto non tornano',
+  senza_partecipanti: 'Progetto con una quota ma nessun partecipante',
+};
+
+function anomalie({ clienti = [], committenti = [], progetti = [] } = {}) {
+  const out = [];
+
+  for (const c of clienti) {
+    const st = statoFatturabilita(daCliente(c));
+    if (st.stato !== 'pronto') {
+      out.push({ tipo: 'dati_cliente', ruolo: 'cliente', id: c.id,
+        nome: daCliente(c).denominazione, messaggio: st.messaggio });
+    }
+  }
+
+  for (const k of committenti) {
+    const st = statoFatturabilita(daCommittente(k));
+    if (st.stato !== 'pronto') {
+      out.push({ tipo: 'dati_committente', ruolo: 'committente', id: k.id,
+        nome: pulito(k.denominazione), messaggio: st.messaggio });
+    }
+  }
+
+  for (const p of progetti) {
+    const q = quoteProgetto(p);
+    if (!q.quadra) {
+      const verso = q.scarto > 0 ? 'mancano' : 'ci sono';
+      out.push({ tipo: 'quote_non_tornano', ruolo: 'progetto', id: p.id,
+        nome: pulito(p.titolo),
+        messaggio: `Totale € ${euro(p.quota_totale)}, ma committente + coachee fanno `
+          + `€ ${euro(Number(p.quota_committente||0) + Number(p.somma_coachee||0))} `
+          + `(${verso} € ${euro(Math.abs(q.scarto))})` });
+    }
+    if (Number(p.n_partecipanti || 0) === 0) {
+      out.push({ tipo: 'senza_partecipanti', ruolo: 'progetto', id: p.id,
+        nome: pulito(p.titolo),
+        messaggio: 'Nessun coachee collegato: non si sa a chi è riferita la prestazione' });
+    }
+  }
+
+  return out;
+}
+
 module.exports = {
   CATEGORIE, categoriaFiscale, datiMancanti, statoFatturabilita,
   daCliente, daCommittente,
+  TIPI_ANOMALIA, quoteProgetto, anomalie,
 };

@@ -113,5 +113,58 @@ prova('un cliente e un committente coi soliti dati danno la STESSA categoria',
   f.categoriaFiscale(f.daCommittente({ denominazione: 'A B', paese: 'IT',
     partita_iva: '1', regime: 'ordinario' })));
 
+console.log('\n— LE QUOTE DI UN PROGETTO TORNANO? —');
+prova('10.000 = 7.000 committente + 3.000 coachee → quadra (è il caso Flamingo)',
+  { quadra: true, scarto: 0 },
+  f.quoteProgetto({ quota_totale: 10000, quota_committente: 7000, somma_coachee: 3000 }));
+prova('se al totale manca qualcosa lo dice, e dice quanto',
+  { quadra: false, scarto: 500 },
+  f.quoteProgetto({ quota_totale: 10000, quota_committente: 7000, somma_coachee: 2500 }));
+prova('se le quote SUPERANO il totale, lo scarto è negativo',
+  { quadra: false, scarto: -250 },
+  f.quoteProgetto({ quota_totale: 1000, quota_committente: 800, somma_coachee: 450 }));
+prova('i centesimi non fanno scattare falsi allarmi (33,33 × 3 = 99,99)',
+  { quadra: true, scarto: 0 },
+  f.quoteProgetto({ quota_totale: 99.99, quota_committente: 33.33, somma_coachee: 66.66 }));
+prova('un progetto senza totale non è un’anomalia di quote',
+  { quadra: true, scarto: 0 },
+  f.quoteProgetto({ quota_totale: null, quota_committente: null, somma_coachee: 0 }));
+
+console.log('\n— L’ELENCO DELLE ANOMALIE —');
+prova('tutto a posto → elenco vuoto',
+  [], f.anomalie({
+    clienti: [{ id: 'c1', nome: 'Mario', cognome: 'Rossi', ...base, codice_fiscale: 'X' }],
+    committenti: [], progetti: [] }));
+prova('un cliente a cui manca il codice fiscale finisce nell’elenco, col suo nome',
+  [{ tipo: 'dati_cliente', ruolo: 'cliente', id: 'c1', nome: 'Mario Rossi',
+     messaggio: 'Manca: codice fiscale' }],
+  f.anomalie({ clienti: [{ id: 'c1', nome: 'Mario', cognome: 'Rossi', ...base }] }));
+prova('un committente incompleto finisce nell’elenco come committente, non come cliente',
+  ['dati_committente', 'committente'],
+  (r => [r[0].tipo, r[0].ruolo])(f.anomalie({
+    committenti: [{ id: 'k1', denominazione: 'Prova Srl', paese: 'IT' }] })));
+prova('progetto che quadra e con partecipanti → nessuna anomalia',
+  [], f.anomalie({ progetti: [{ id: 'p1', titolo: 'Flamingo', quota_totale: 10000,
+    quota_committente: 7000, somma_coachee: 3000, n_partecipanti: 2 }] }));
+prova('progetto che non quadra → lo dice con le cifre in chiaro, scritte all’italiana',
+  // Nota: in italiano il separatore delle migliaia parte da cinque cifre, quindi
+  // «10.000,00» ma «9500,00». È la regola della lingua, non una dimenticanza, ed è
+  // la stessa che usa già il resto dell'Hub.
+  'Totale € 10.000,00, ma committente + coachee fanno € 9500,00 (mancano € 500,00)',
+  f.anomalie({ progetti: [{ id: 'p1', titolo: 'Flamingo', quota_totale: 10000,
+    quota_committente: 7000, somma_coachee: 2500, n_partecipanti: 2 }] })[0].messaggio);
+prova('progetto con una quota ma senza partecipanti → segnalato',
+  'senza_partecipanti',
+  f.anomalie({ progetti: [{ id: 'p1', titolo: 'X', quota_totale: 1000,
+    quota_committente: 1000, somma_coachee: 0, n_partecipanti: 0 }] })[0].tipo);
+prova('un progetto può avere DUE anomalie insieme e le riporta entrambe',
+  ['quote_non_tornano', 'senza_partecipanti'],
+  f.anomalie({ progetti: [{ id: 'p1', titolo: 'X', quota_totale: 1000,
+    quota_committente: 500, somma_coachee: 0, n_partecipanti: 0 }] }).map(a => a.tipo));
+prova('il cliente estero completo compare comunque: non è pronto finché non parla il commercialista',
+  'dati_cliente',
+  f.anomalie({ clienti: [{ id: 'c1', nome: 'Hans', cognome: 'Meier', paese: 'CH',
+    via: 'Bahnhofstrasse 1', citta: 'Lugano' }] })[0].tipo);
+
 console.log(`\n${falliti ? '✗' : '✓'} ${falliti} prove fallite.`);
 process.exit(falliti ? 1 : 0);

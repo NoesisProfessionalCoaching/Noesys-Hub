@@ -214,8 +214,13 @@ async function mostraHome(req, res) {
       // Due situazioni diverse, e si distinguono da quello che l'automazione ha
       // già visto su Drive:
       //   · nessun modulo trovato          → il cliente non l'ha ancora mandata
-      //   · trovati solo moduli "in bianco" → li ha compilati su carta e
-      //     aspettano di essere scansionati (caso Davide Bozzoni)
+      //   · trovati solo moduli "in bianco" → nella cartella c'è il modello
+      //     vuoto e nient'altro
+      // ⚠️ 11/08 — la frase diceva «da scansionare», dando per scontato che il
+      // cliente l'avesse compilato a penna (era il caso di Davide Bozzoni). Ma
+      // l'Hub non può saperlo: vede un PDF bianco, e basta. Su tre cartelle di
+      // prova, dove il modello vuoto ci resterà per sempre, la frase era
+      // semplicemente falsa. Ora dice solo quello che l'automazione ha visto.
       // Si guarda anche il consenso privacy, che è la cosa che conta di più.
       db.query(`
         SELECT c.id, c.name,
@@ -244,7 +249,9 @@ async function mostraHome(req, res) {
         id: x.id, name: x.name,
         stato: Number(x.compilati) > 0
           ? 'manca il consenso privacy'
-          : (Number(x.bianchi) > 0 ? 'moduli ancora in bianco — da scansionare' : 'documentazione non ancora arrivata'),
+          : (Number(x.bianchi) > 1 ? 'trovati solo i moduli in bianco'
+            : Number(x.bianchi) > 0 ? 'trovato solo il modulo in bianco'
+            : 'documentazione non ancora arrivata'),
       })),
     }, req));
   } catch (err) {
@@ -1483,6 +1490,50 @@ router.delete('/dashboard/committenti/:id', requireCoach, async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════
+// AMMINISTRAZIONE (quarto mondo, 11/08) — prima pagina: le ANOMALIE.
+//
+// Chi non si può fatturare, e perché. È la sezione B della spec (§7.1), che
+// nel report finale starà in cima: si sistemano prima le anomalie, poi si
+// fattura. Qui vive da sola perché serve già adesso, mesi prima del report.
+//
+// ⚠️ Le tre query filtrano per SOLDI VERI (decisione B2 dell'11/08): solo
+// clienti con un percorso a pagamento, solo committenti e progetti con una
+// quota. Chi non ha niente da fatturare non ha niente da sistemare, e riempire
+// la pagina di gusci di prova la renderebbe inutile.
+// ═══════════════════════════════════════════════════════
+router.get('/dashboard/amministrazione', requireCoach, async (req, res) => {
+  try {
+    const [cl, km, pj] = await Promise.all([
+      db.query(`
+        SELECT c.* FROM clients c
+         WHERE EXISTS (SELECT 1 FROM percorsi p WHERE p.client_id = c.id AND p.prezzo > 0)
+         ORDER BY c.cognome, c.nome`),
+      db.query(`
+        SELECT k.* FROM committenti k
+         WHERE EXISTS (SELECT 1 FROM progetti p
+                        WHERE p.committente_id = k.id AND p.quota_committente > 0)
+         ORDER BY k.denominazione`),
+      db.query(`
+        SELECT p.id, p.titolo, p.quota_totale, p.quota_committente,
+               (SELECT COALESCE(SUM(pa.quota_coachee), 0) FROM partecipazioni pa
+                 WHERE pa.progetto_id = p.id) AS somma_coachee,
+               (SELECT COUNT(*) FROM partecipazioni pa
+                 WHERE pa.progetto_id = p.id) AS n_partecipanti
+          FROM progetti p
+         WHERE p.quota_totale > 0
+         ORDER BY p.titolo`),
+    ]);
+    res.send(anomaliePage(
+      fiscale.anomalie({ clienti: cl.rows, committenti: km.rows, progetti: pj.rows }),
+      { nClienti: cl.rows.length, nCommittenti: km.rows.length, nProgetti: pj.rows.length },
+      req));
+  } catch (err) {
+    console.error('[anomalie]', err);
+    res.status(500).send('Errore nel caricamento delle anomalie');
+  }
+});
+
+// ═══════════════════════════════════════════════════════
 // PROGETTI (Fase 2) — il percorso commissionato da un committente.
 // In Business / Young-con-sponsor il progetto È il lead (nasce in pre-intake).
 // I coachee si agganciano in Fase 3 (con le quote).
@@ -2169,9 +2220,13 @@ function baseStyle() {
       .nh-mondo { padding: 9px 14px; font-size: 13px; font-weight: 600; color: var(--muted); text-decoration: none; border-bottom: 2.5px solid transparent; white-space: nowrap; }
       .nh-mondo:hover { color: var(--ink); }
       .nh-mondo.on { color: var(--blue); border-bottom-color: var(--blue); }
-      .nh-sub { display: flex; align-items: center; gap: 3px; margin-left: auto; }
+      ${/* `flex-wrap` aggiunto l'11/08 con la quarta voce: Amministrazione ha
+            quattro sotto-voci (352px in fila) e su uno schermo stretto uscivano
+            dal bordo. La riga dei mondi andava già a capo da sola; questa no. */ ''}
+      .nh-sub { display: flex; align-items: center; gap: 3px; margin-left: auto; flex-wrap: wrap; }
       .nh-sub a { font-size: 12px; color: var(--muted); text-decoration: none; padding: 5px 11px; border-radius: 16px; white-space: nowrap; }
       .nh-sub a.on { background: #eef4f9; color: var(--blue); font-weight: 600; }
+      .nh-sub-off { font-size: 12px; color: #C4C9D0; padding: 5px 11px; white-space: nowrap; cursor: not-allowed; }
       .nh-bric { display: flex; align-items: center; gap: 7px; padding: 7px 0; font-size: 12px; color: var(--hint); flex-wrap: wrap; }
       .nh-bric a { color: var(--muted); text-decoration: none; }
       .nh-bric a:hover { color: var(--blue); text-decoration: underline; }
@@ -2227,17 +2282,32 @@ function headerNoesys({ mondo = '', sub = '', briciole = [], q = '' } = {}) {
     { key: 'individuali', label: 'Percorsi Individuali', href: '/dashboard/individuali' },
     { key: 'progetti',    label: 'Progetti Strutturati', href: '/dashboard/progetti' },
     { key: 'lead',        label: 'Lead',                 href: '/dashboard/leads' },
+    // 11/08 — QUARTO MONDO. Scelta di Germano: tenere separata la gestione del
+    // lavoro (le persone) da quella amministrativa (i soldi). Non ha una porta
+    // nella home come gli altri tre — è un'area di servizio, non un mondo di
+    // persone — e ci si arriva solo da qui.
+    { key: 'amministrazione', label: 'Amministrazione', href: '/dashboard/amministrazione' },
   ];
   const SOTTOVOCI = {
     progetti: [
       { key: 'progetti',    label: 'Progetti',    href: '/dashboard/progetti' },
       { key: 'committenti', label: 'Committenti', href: '/dashboard/committenti' },
     ],
+    // `off: true` = voce spenta, si vede ma non si clicca. Serve a far vedere la
+    // strada che manca: le tre voci grigie sono le fasi 3, 4 e 5 del cantiere
+    // fatturazione, e si accendono una per volta man mano che si costruiscono.
+    amministrazione: [
+      { key: 'anomalie', label: 'Anomalie', href: '/dashboard/amministrazione' },
+      { key: 'proforma', label: 'Proforma', off: true },
+      { key: 'incassi',  label: 'Incassi',  off: true },
+      { key: 'report',   label: 'Fatture da preparare', off: true },
+    ],
   };
   const mondiHtml = MONDI.map(m =>
     `<a class="nh-mondo${m.key === mondo ? ' on' : ''}" href="${m.href}">${m.label}</a>`).join('');
-  const sottoHtml = (SOTTOVOCI[mondo] || []).map(s =>
-    `<a href="${s.href}"${s.key === sub ? ' class="on"' : ''}>${s.label}</a>`).join('');
+  const sottoHtml = (SOTTOVOCI[mondo] || []).map(s => s.off
+    ? `<span class="nh-sub-off" title="In arrivo">${s.label}</span>`
+    : `<a href="${s.href}"${s.key === sub ? ' class="on"' : ''}>${s.label}</a>`).join('');
   const bricHtml = briciole.map((b, i) => {
     const ultima = i === briciole.length - 1;
     const voce = (b.href && !ultima) ? `<a href="${b.href}">${esc(b.label)}</a>` : `<b>${esc(b.label)}</b>`;
@@ -2256,7 +2326,9 @@ function headerNoesys({ mondo = '', sub = '', briciole = [], q = '' } = {}) {
         <div class="nh-menu-box">
           <a href="/dashboard/icf">Estratto ICF</a>
           <div class="nh-off">Prenotazioni <span class="nh-tag">in arrivo</span></div>
-          <div class="nh-off">Fatturazione <span class="nh-tag">in arrivo</span></div>
+          ${/* «Fatturazione — in arrivo» stava qui: tolta l'11/08. Adesso quella
+                roba ha una porta vera, il mondo Amministrazione nella barra, e
+                due porte per la stessa cosa confondono e basta. */ ''}
           <div class="nh-sep"></div>
           <a href="/dashboard/diag/drive">Verifica Google Drive</a>
           <div class="nh-sep"></div>
@@ -4106,6 +4178,79 @@ function leadsPage(leads, req) {
 // ═══════════════════════════════════════════════════════
 // PAGINA COMMITTENTI / SPONSOR (Fase 1)
 // ═══════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════
+// PAGINA ANOMALIE — «cosa sistemare prima di fatturare»
+//
+// Layout secondo la spec §8: pochi colori, testo grande sui dati, ogni voce è
+// un blocco chiuso, il ruolo (Cliente / Committente / Progetto) è etichettato
+// ed è anche colorato. Si legge mentre si lavora, quindi niente decorazioni.
+// ═══════════════════════════════════════════════════════
+function anomaliePage(anomalie, conteggi, req) {
+  const RUOLO = {
+    cliente:     { label: 'Cliente',     bg: '#e8f4fd', color: '#1A5280', href: a => `/dashboard/clients/${a.id}` },
+    committente: { label: 'Committente', bg: '#e7f1ec', color: '#2e6b52', href: () => '/dashboard/committenti' },
+    progetto:    { label: 'Progetto',    bg: '#fdf6e3', color: '#8a6d1a', href: a => `/dashboard/progetti/${a.id}` },
+  };
+
+  // Raggruppate per tipo di problema, non per persona: si sistemano in serie,
+  // ed è lo stesso criterio con cui la spec raggruppa le fatture per categoria.
+  // ⚠️ Il raggruppamento va fatto sul TITOLO, non sulla chiave: «dati incompleti»
+  // di un cliente e di un committente sono due chiavi diverse ma lo stesso
+  // problema, e due riquadri con lo stesso titolo sembrano un errore. A
+  // distinguere chi è chi ci pensa già l'etichetta del ruolo.
+  const gruppi = [];
+  for (const a of anomalie) {
+    const titolo = fiscale.TIPI_ANOMALIA[a.tipo] || a.tipo;
+    let g = gruppi.find(x => x.titolo === titolo);
+    if (!g) { g = { titolo, voci: [] }; gruppi.push(g); }
+    g.voci.push(a);
+  }
+
+  const gruppiHtml = gruppi.map(g => `
+    <div class="card" style="padding:0;overflow:hidden;margin-bottom:14px">
+      <div style="padding:14px 18px;border-bottom:1px solid var(--line);background:#fdfcf7">
+        <strong style="font-size:14px;color:var(--ink)">${esc(g.titolo)}</strong>
+        <span style="font-size:12px;color:var(--hint);margin-left:8px">${g.voci.length} ${g.voci.length === 1 ? 'voce' : 'voci'}</span>
+      </div>
+      ${g.voci.map(a => {
+        const r = RUOLO[a.ruolo];
+        return `<div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;padding:14px 18px;border-bottom:1px solid #f1f3f6">
+          <span class="badge" style="background:${r.bg};color:${r.color}">${r.label}</span>
+          <a href="${r.href(a)}" style="font-size:15px;font-weight:700;color:var(--blue);text-decoration:none;min-width:180px">${esc(a.nome || '(senza nome)')}</a>
+          <span style="font-size:14px;color:#4A4A4A;flex:1;min-width:240px">${esc(a.messaggio)}</span>
+        </div>`;
+      }).join('')}
+    </div>`).join('');
+
+  const vuoto = `
+    <div class="card" style="border-left:3px solid #4F8B73;background:#f4faf7">
+      <strong style="color:#2e6b52;font-size:15px">✅ Niente da sistemare.</strong>
+      <div style="font-size:13px;color:var(--muted);margin-top:6px">
+        Tutti i clienti e i committenti con qualcosa da fatturare hanno i dati completi,
+        e le quote dei progetti tornano.
+      </div>
+    </div>`;
+
+  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Anomalie</title>${baseStyle()}</head><body>
+  ${headerNoesys({ mondo: 'amministrazione', sub: 'anomalie' })}
+  <div class="container">
+    <h1>Anomalie</h1>
+    <p style="color:var(--muted);font-size:13px;margin-bottom:6px">
+      Quello che va sistemato <strong>prima</strong> di emettere una fattura.
+    </p>
+    <p style="color:var(--hint);font-size:12px;margin-bottom:20px">
+      ${/* Detto in chiaro: qui non c'è tutto l'Hub. Chi non ha soldi in ballo non
+            viene controllato, ed è una scelta, non una dimenticanza. */ ''}
+      Sotto controllo: ${conteggi.nClienti} ${conteggi.nClienti === 1 ? 'cliente' : 'clienti'} con un percorso a pagamento ·
+      ${conteggi.nCommittenti} ${conteggi.nCommittenti === 1 ? 'committente' : 'committenti'} con una quota ·
+      ${conteggi.nProgetti} ${conteggi.nProgetti === 1 ? 'progetto' : 'progetti'} con un totale.
+      Chi non ha niente da fatturare non compare.
+    </p>
+    ${anomalie.length ? gruppiHtml : vuoto}
+  </div>
+  </body></html>`;
+}
+
 function committentiPage(committenti, req) {
   const TIPO_CFG = {
     azienda: { label: 'Azienda',  bg: '#e7f1ec', color: '#2e6b52' },
