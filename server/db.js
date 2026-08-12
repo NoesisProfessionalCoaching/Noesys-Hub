@@ -726,6 +726,17 @@ async function init() {
     )
   `);
   await query(`CREATE INDEX IF NOT EXISTS tranche_progetto_prog ON tranche_progetto (progetto_id)`);
+  // ⭐ 12/08, secondo giro: il piano NON è del committente, è di CHI PAGA.
+  // Un partecipante che paga la sua quota ha anche lui un piano — solo che il
+  // suo è una tranche sola, anticipata a rimessa diretta. `partecipazione_id`
+  // vuoto = è il piano del committente.
+  // Con questo, la tranche diventa **la riga di ogni pagamento del progetto**, e
+  // l'interruttore «Incassato / Da incassare» sull'intera quota smette di
+  // servire: era l'altro modo, incompatibile, di dire la stessa cosa.
+  await query(`ALTER TABLE tranche_progetto ADD COLUMN IF NOT EXISTS partecipazione_id TEXT
+                 REFERENCES partecipazioni(id) ON DELETE CASCADE`);
+  await query(`ALTER TABLE tranche_progetto ADD COLUMN IF NOT EXISTS stato TEXT NOT NULL DEFAULT 'da_chiedere'`);
+  await query(`ALTER TABLE tranche_progetto ADD COLUMN IF NOT EXISTS data_incasso DATE`);
   // «Metà percorso» l'Hub non lo può dedurre — non sa quando un progetto sarà a
   // metà. Lo scrive il coach; finché è vuoto quella tranche non si può chiedere,
   // e la pagina lo dice invece di restare ferma in silenzio.

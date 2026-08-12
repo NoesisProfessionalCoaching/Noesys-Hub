@@ -30,21 +30,46 @@ const INNESCHI = {
   fine:  { label: 'Alla fine',         campo: 'data_fine'   },
 };
 
-const PROPOSTA = [
-  { etichetta: 'Acconto',        quota: 0.30, innesco: 'firma' },
-  { etichetta: 'Metà percorso',  quota: 0.40, innesco: 'meta'  },
-  { etichetta: 'Saldo',          quota: 0.30, innesco: 'fine'  },
-];
+// ⭐ Il piano è di CHI PAGA, non del committente. Un partecipante che paga la
+// sua quota ne ha uno anche lui — solo che il suo è **una tranche sola,
+// anticipata, a rimessa diretta** (Germano, 10/08: «Partecipante che paga la sua
+// quota → a tranche, 1 alla firma, rimessa diretta»). Zero giorni: si paga
+// subito, non a 30 giorni.
+// Resta uno strumento solo: se un domani un partecipante dovesse pagare in due
+// volte, si spezza la sua tranche come si fa con quelle del committente.
+const PROPOSTE = {
+  committente: [
+    { etichetta: 'Acconto',       quota: 0.30, innesco: 'firma', giorni: 30 },
+    { etichetta: 'Metà percorso', quota: 0.40, innesco: 'meta',  giorni: 30 },
+    { etichetta: 'Saldo',         quota: 0.30, innesco: 'fine',  giorni: 30 },
+  ],
+  partecipante: [
+    { etichetta: 'Quota',         quota: 1,    innesco: 'firma', giorni: 0 },
+  ],
+};
+
+// Gli stati di una tranche. Sostituiscono l'interruttore «Incassato / Da
+// incassare» che stava sull'intera quota: lo stato non è del pagatore, è di
+// ogni singola rata.
+// ⚠️ `chiesta` la metterà la proforma (fetta A2): qui la si sa già leggere, così
+// quando arriverà non ci sarà niente da cambiare in questa parte.
+const STATI = {
+  da_chiedere: { label: 'Da chiedere', bg: '#f4f7fa', c: '#6B7280' },
+  chiesta:     { label: 'Chiesta',     bg: '#fff8dc', c: '#7a5c00' },
+  incassata:   { label: 'Incassata',   bg: '#d1fae5', c: '#065f46' },
+};
 
 /**
  * Il piano che l'Hub PROPONE quando non ce n'è ancora uno.
- * @param {number} totale la quota del committente.
+ * @param {number} totale la quota di quel pagatore.
+ * @param {'committente'|'partecipante'} [chi]
  * @returns {Array} [{ordine, etichetta, importo, innesco, giorni}]
  */
-function pianoProposto(totale) {
+function pianoProposto(totale, chi) {
   const t = Math.round(Number(totale) || 0);
-  const righe = PROPOSTA.map((r, i) => ({
-    ordine: i, etichetta: r.etichetta, innesco: r.innesco, giorni: 30,
+  const modello = PROPOSTE[chi] || PROPOSTE.committente;
+  const righe = modello.map((r, i) => ({
+    ordine: i, etichetta: r.etichetta, innesco: r.innesco, giorni: r.giorni,
     importo: Math.round(t * r.quota),
   }));
   // Il resto sull'ultima: 30+40+30 di 3.333 fa 1.000+1.333+1.000, e la somma
@@ -104,4 +129,26 @@ function scadenza(tr, progetto) {
   return d.toISOString().slice(0, 10);
 }
 
-module.exports = { INNESCHI, pianoProposto, percentuale, problemi, scadenza };
+/**
+ * I QUATTRO NUMERI in cima all'Amministrazione del progetto (scelta di Germano,
+ * 12/08). Non più «Incassato / Da incassare», che con le rate non voleva più
+ * dire niente: **«chiesto ma non ancora pagato» è lo stato in cui si vive per
+ * settimane**, e senza una casella sua sparirebbe dentro «da incassare».
+ *
+ * ⚠️ `concordato` NON si somma dalle tranche: è la quota totale del progetto.
+ * Se le tranche non arrivano a coprirla, è un'informazione — vuol dire che un
+ * pagatore non ha ancora un piano — e va vista, non nascosta.
+ */
+function totali(tranche, quotaTotale) {
+  const somma = st => (tranche || [])
+    .filter(t => (t.stato || 'da_chiedere') === st)
+    .reduce((s, t) => s + (Number(t.importo) || 0), 0);
+  return {
+    concordato: Math.round(Number(quotaTotale) || 0),
+    daChiedere: somma('da_chiedere'),
+    chiesto:    somma('chiesta'),
+    incassato:  somma('incassata'),
+  };
+}
+
+module.exports = { INNESCHI, STATI, pianoProposto, percentuale, problemi, scadenza, totali };
