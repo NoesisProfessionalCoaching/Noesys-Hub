@@ -117,6 +117,32 @@ console.log('\n— QUANDO NON SI PUÒ EMETTERE, E PERCHÉ (mai un blocco muto) �
 // 12 cade a ridosso della fine del mese prima). Il calcolo va provato: sbagliato
 // di un giorno, il promemoria arriva quando non deve — o non arriva affatto, e
 // di un promemoria che non arriva non se ne accorge nessuno.
+// ── IL TESTO DELLA MAIL ────────────────────────────────────────────────────
+// È il testo che arriva a un cliente vero: il numero, la cifra e il periodo
+// devono essere quelli del documento, non un'approssimazione.
+console.log('\n— IL TESTO DELLA MAIL —');
+{
+  const base = {
+    numero: '2026/001', da_pagare: 488, anno: 2026,
+    destinatario_dati: { denominazione: 'Marco Bianchi', email: 'marco@esempio.it' },
+    periodo_da: '2026-07-16', periodo_a: '2026-07-30',
+  };
+  const m = pf.testoMail(base);
+  prova('l’oggetto porta il numero', 'Proforma n. 2026/001 — Noesys Professional Coaching', m.subject);
+  prova('saluta per nome, come Mail 1 e Mail 2', true, m.body.startsWith('Ciao Marco,'));
+  prova('sessioni tutte a luglio → «di luglio 2026», non un intervallo',
+    true, m.body.includes('sessioni di coaching di luglio 2026.'));
+  prova('la cifra è quella da bonificare, con i centesimi', true, m.body.includes('€ 488,00'));
+  prova('c’è la spiegazione voluta da Germano, con la norma',
+    true, m.body.includes('art. 6, comma 3, del DPR 633/1972'));
+  prova('il saluto è quello scelto il 12/08',
+    true, m.body.includes('Ti ringrazio e ti saluto cordialmente,'));
+
+  const due = pf.testoMail({ ...base, periodo_da: '2026-06-28', periodo_a: '2026-07-30' });
+  prova('sessioni a cavallo di due mesi → il periodo per esteso, non un mese solo',
+    true, due.body.includes('coaching dal 28/06/2026 al 30/07/2026.'));
+}
+
 console.log('\n— IL PRIMO LUNEDÌ —');
 {
   const mat = require('../server/maturato');

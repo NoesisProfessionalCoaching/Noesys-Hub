@@ -1681,7 +1681,7 @@ router.get('/dashboard/amministrazione/proforma', requireCoach, async (req, res)
     const [daChiedere, emr, pfr] = await Promise.all([
       maturato.daChiedere(),
       db.query('SELECT * FROM emittente WHERE id = 1'),
-      db.query(`SELECT pf.*, c.name AS cliente_nome
+      db.query(`SELECT pf.*, c.name AS cliente_nome, c.email AS cliente_email
                   FROM proforme pf LEFT JOIN clients c ON c.id = pf.client_id
                  ORDER BY pf.anno DESC, pf.progressivo DESC`),
     ]);
@@ -1705,6 +1705,83 @@ router.get('/dashboard/amministrazione/proforma', requireCoach, async (req, res)
   } catch (err) {
     console.error('[proforma/pagina]', err);
     res.status(500).send('Errore nel caricamento delle proforma');
+  }
+});
+
+// ── Mandare la proforma al cliente ─────────────────────
+// Azionata dalla finestrella «Rivedi e manda», sullo schema di Mail 1 e Mail 2:
+// il coach vede destinatario, testo e allegato, e conferma. Qui non si decide
+// niente — si manda quello che ha davanti.
+//
+// L'ORDINE CONTA, e non è casuale:
+//   1. il PDF (se non esce, non è successo niente)
+//   2. la mail (da qui in poi non si torna indietro)
+//   3. lo stato nel database
+//   4. la copia su Drive — che è un archivio, non l'originale
+// ⚠️ Se il passo 4 fallisce la mail è già partita: dirlo e basta. Far fallire
+// tutto direbbe al coach che non è partita, mentre il cliente ce l'ha già.
+router.post('/dashboard/proforma/:id/invia', requireCoach, express.json(), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const to = String(b.to || '').trim();
+    if (!to) return res.status(400).json({ error: 'Serve un indirizzo destinatario.' });
+
+    const r = await db.query('SELECT * FROM proforme WHERE id = $1', [req.params.id]);
+    const pf = r.rows[0];
+    if (!pf) return res.status(404).json({ error: 'Proforma non trovata' });
+    if (pf.stato === 'annullata') {
+      return res.status(400).json({ error: 'Questa proforma è annullata: non si manda.' });
+    }
+
+    const righe = await db.query(
+      'SELECT * FROM proforma_righe WHERE proforma_id = $1 ORDER BY ordine', [pf.id]);
+    const bytes = await proforma.generaPdf({ ...pf, righe: righe.rows });
+    const nome = proforma.nomeFile(pf);
+
+    await mailer.sendMail({
+      to,
+      subject: b.subject || proforma.testoMail(pf).subject,
+      text: b.body || proforma.testoMail(pf).body,
+      attachments: [{ filename: nome, content: bytes, contentType: 'application/pdf' }],
+    });
+
+    await db.query(
+      `UPDATE proforme SET stato = 'inviata', inviata_data = NOW(), inviata_a = $2
+        WHERE id = $1`, [pf.id, to]);
+
+    let driveErrore = null;
+    try {
+      const su = await proforma.archiviaSuDrive(pf, bytes);
+      await db.query('UPDATE proforme SET drive_file_id = $2, drive_url = $3 WHERE id = $1',
+        [pf.id, su.id, su.url]);
+    } catch (e) {
+      console.error('[proforma/invia/drive]', e);
+      driveErrore = e.message;
+    }
+    res.json({ ok: true, to, allegato: nome, driveErrore });
+  } catch (err) {
+    console.error('[proforma/invia]', err);
+    res.status(500).json({ error: "Non si riesce a mandare la proforma: " + err.message });
+  }
+});
+
+// Riprovare la sola copia su Drive, quando la mail è partita e l'archivio no.
+// Senza questo, l'unico modo di rimediare sarebbe rimandare la mail al cliente.
+router.post('/dashboard/proforma/:id/drive', requireCoach, async (req, res) => {
+  try {
+    const r = await db.query('SELECT * FROM proforme WHERE id = $1', [req.params.id]);
+    const pf = r.rows[0];
+    if (!pf) return res.status(404).json({ error: 'Proforma non trovata' });
+    const righe = await db.query(
+      'SELECT * FROM proforma_righe WHERE proforma_id = $1 ORDER BY ordine', [pf.id]);
+    const bytes = await proforma.generaPdf({ ...pf, righe: righe.rows });
+    const su = await proforma.archiviaSuDrive(pf, bytes);
+    await db.query('UPDATE proforme SET drive_file_id = $2, drive_url = $3 WHERE id = $1',
+      [pf.id, su.id, su.url]);
+    res.json({ ok: true, url: su.url });
+  } catch (err) {
+    console.error('[proforma/drive]', err);
+    res.status(500).json({ error: 'Copia su Drive non riuscita: ' + err.message });
   }
 });
 
@@ -4697,6 +4774,23 @@ function proformaPage(daChiedere, proforme, req) {
 
   // ── 2. Da mandare ─────────────────────────────────────────────────────────
   const daMandare = proforme.filter(p => p.stato === 'emessa');
+
+  // Quello che la finestrella d'invio deve avere in mano. Il testo lo prepara
+  // `proforma.testoMail()`: la pagina non lo scrive, così è lo stesso testo
+  // ovunque e si può provare senza aprire un browser.
+  // L'indirizzo viene da quello congelato nel documento, e se lì manca da
+  // quello del cliente in anagrafica: uno dei due c'è quasi sempre, e comunque
+  // resta modificabile prima di mandare.
+  const datiInvio = {};
+  for (const p of daMandare) {
+    const t = proforma.testoMail(p);
+    datiInvio[p.id] = {
+      numero: p.numero,
+      to: (p.destinatario_dati || {}).email || p.cliente_email || '',
+      subject: t.subject, body: t.body,
+      allegato: proforma.nomeFile(p),
+    };
+  }
   const mandareHtml = daMandare.map(p => `
     <div class="card" style="margin-bottom:12px">
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
@@ -4708,7 +4802,8 @@ function proformaPage(daChiedere, proforme, req) {
         </div>
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-left:auto">
           <strong style="font-size:15px">${eur(p.da_pagare)}</strong>
-          <a href="/dashboard/proforma/${p.id}/pdf" target="_blank" class="btn btn-primary btn-sm">Apri il PDF</a>
+          <a href="/dashboard/proforma/${p.id}/pdf" target="_blank" class="btn btn-neutral btn-sm">Apri il PDF</a>
+          <button onclick="apriInvio('${p.id}')" class="btn btn-gold btn-sm">✉️ Rivedi e manda</button>
           <button onclick="annulla('${p.id}','${esc(p.numero)}',false)" class="btn btn-neutral btn-sm">Annulla</button>
         </div>
       </div>
@@ -4716,6 +4811,9 @@ function proformaPage(daChiedere, proforme, req) {
 
   // ── 3. Già fatte ──────────────────────────────────────────────────────────
   // Non è un passaggio da fare: è la ricevuta, e serve a non chiedere due volte.
+  // ⚠️ `inviata_data` è un MOMENTO, non una data: con itDate() usciva «Wed Aug
+  // 12», perché quella funzione taglia una stringa ISO e qui arriva un timestamp.
+  // itDateTime() lo scrive in ora italiana — e su una cosa spedita l'ora serve.
   const fatte = proforme.filter(p => p.stato !== 'emessa');
   const fatteHtml = !fatte.length ? '' : `
     <section style="margin-top:34px">
@@ -4733,7 +4831,10 @@ function proformaPage(daChiedere, proforme, req) {
               <span style="font-size:13px;color:${ann ? 'var(--hint)' : 'var(--ink)'}">${eur(p.da_pagare)}</span>
               ${ann
                 ? `<span class="badge" style="background:#f1f3f6;color:#8a8a8a">Annullata</span>`
-                : `<span class="badge" style="background:#e8f4fd;color:#1A5280">Mandata${p.inviata_data ? ' il ' + itDate(p.inviata_data) : ''}</span>
+                : `<span class="badge" style="background:#e8f4fd;color:#1A5280">Mandata${p.inviata_data ? ' il ' + itDateTime(p.inviata_data) : ''}${p.inviata_a ? ' a ' + esc(p.inviata_a) : ''}</span>
+                   ${p.drive_url
+                     ? `<a href="${esc(p.drive_url)}" target="_blank" style="font-size:12px;color:var(--muted);text-decoration:none">copia su Drive</a>`
+                     : `<button onclick="riprovaDrive('${p.id}')" class="btn btn-neutral btn-sm" title="La mail è partita, ma la copia in archivio no">Copia su Drive non riuscita — riprova</button>`}
                    <button onclick="annulla('${p.id}','${esc(p.numero)}',true)" class="btn btn-neutral btn-sm">Annulla</button>`}
             </div>
           </div>`; }).join('')}
@@ -4766,14 +4867,88 @@ function proformaPage(daChiedere, proforme, req) {
       ${passo(2, 'Da rileggere e mandare', 'Proforma create e non ancora spedite. Apri il PDF e controllalo prima di mandarlo.',
         daMandare.length ? mandareHtml + `
           <p style="font-size:12px;color:var(--hint);margin:6px 0 0">
-            L'invio per mail non c'è ancora: arriva col prossimo passo di questa fase.
-            Per ora il PDF si apre, si salva e si manda a mano.
+            Il PDF si apre in una scheda nuova: rileggilo prima di mandarlo.
+            Alla riuscita la proforma passa fra le «Già fatte» e una copia finisce su Drive.
           </p>`
         : `<div class="card" style="color:var(--muted);font-size:13px">Niente da mandare.</div>`)}
 
       ${fatteHtml}`}
   </div>
+
+  ${/* La finestrella è UNA sola per tutte le proforma: quello che cambia lo
+        porta dentro `INVIO`, preparato qui dal server. Lo stesso schema di
+        Mail 1 e Mail 2, che Germano conosce già. */ ''}
+  <div id="modal-invio" class="modal-overlay">
+    <div class="modal" style="max-width:640px">
+      <h2 style="margin-bottom:4px">Rivedi e manda — <span id="mi-numero"></span></h2>
+      <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
+        Il testo si può cambiare: parte quello che vedi qui sotto.
+      </p>
+      <div class="form-group"><label>A chi</label><input id="mi-to" type="email"></div>
+      <div class="form-group"><label>Oggetto</label><input id="mi-subject" type="text"></div>
+      <div class="form-group"><label>Testo della mail</label>
+        <textarea id="mi-body" style="min-height:240px;font-family:inherit"></textarea></div>
+      <div style="background:#fbfcfd;border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:14px">
+        <div style="font-size:12px;color:var(--muted);font-weight:600;margin-bottom:4px">Allegato</div>
+        <a id="mi-pdf" href="#" target="_blank" style="font-size:13px;font-weight:700;color:var(--blue);text-decoration:none"></a>
+        <div style="font-size:12px;color:var(--hint);margin-top:4px">Aprilo e rileggilo <strong>prima</strong> di mandarlo: dopo non si torna indietro.</div>
+      </div>
+      <div id="mi-error" style="display:none" class="flash-error"></div>
+      <div style="display:flex;gap:10px;margin-top:6px">
+        <button onclick="document.getElementById('modal-invio').style.display='none'" class="btn btn-neutral" style="flex:1">Annulla</button>
+        <button id="mi-send" onclick="mandaProforma()" class="btn btn-primary" style="flex:1">✉️ Manda adesso</button>
+      </div>
+    </div>
+  </div>
+
   <script>
+    var INVIO = ${JSON.stringify(datiInvio).replace(/</g, '\\u003c')};
+    var invioCorrente = null;
+    function apriInvio(id) {
+      var d = INVIO[id]; if (!d) return;
+      invioCorrente = id;
+      document.getElementById('mi-numero').textContent = 'Proforma n. ' + d.numero;
+      document.getElementById('mi-to').value = d.to || '';
+      document.getElementById('mi-subject').value = d.subject;
+      document.getElementById('mi-body').value = d.body;
+      var a = document.getElementById('mi-pdf');
+      a.href = '/dashboard/proforma/' + id + '/pdf';
+      a.textContent = d.allegato;
+      document.getElementById('mi-error').style.display = 'none';
+      document.getElementById('modal-invio').style.display = 'flex';
+    }
+    async function mandaProforma() {
+      var err = document.getElementById('mi-error');
+      var to = document.getElementById('mi-to').value.trim();
+      if (!to) { err.textContent = 'Serve un indirizzo destinatario.'; err.style.display = 'block'; return; }
+      var d = INVIO[invioCorrente];
+      if (!confirm('Mando la proforma n. ' + d.numero + ' a ' + to + '?\\n\\nAllegato: ' + d.allegato)) return;
+      var btn = document.getElementById('mi-send');
+      btn.disabled = true; btn.textContent = 'Invio in corso…'; err.style.display = 'none';
+      try {
+        var r = await fetch('/dashboard/proforma/' + invioCorrente + '/invia', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ to: to,
+            subject: document.getElementById('mi-subject').value,
+            body: document.getElementById('mi-body').value }) });
+        var j = await r.json().catch(function(){ return {}; });
+        if (!r.ok) { err.textContent = j.error || ('Errore ' + r.status); err.style.display = 'block';
+          btn.disabled = false; btn.textContent = '✉️ Manda adesso'; return; }
+        alert('Mandata a ' + j.to + '.'
+          + (j.driveErrore ? '\\n\\nLa mail e\\' partita, ma la copia su Drive no: ' + j.driveErrore
+                             + '\\nLa puoi riprovare dall\\'elenco «Gia\\' fatte».' : ''));
+        location.reload();
+      } catch (e) { err.textContent = 'Errore di rete: ' + e.message; err.style.display = 'block';
+        btn.disabled = false; btn.textContent = '✉️ Manda adesso'; }
+    }
+    async function riprovaDrive(id) {
+      try {
+        var r = await fetch('/dashboard/proforma/' + id + '/drive', { method: 'POST' });
+        var j = await r.json().catch(function(){ return {}; });
+        if (!r.ok) { alert(j.error || ('Errore ' + r.status)); return; }
+        location.reload();
+      } catch (e) { alert('Errore di rete: ' + e.message); }
+    }
     async function chiedi(id) {
       if (!confirm('Creo la proforma con tutte le sessioni non ancora chieste?\\n\\nIl numero che le viene assegnato non potra\\' essere riusato.')) return;
       const btn = document.getElementById('ch-' + id);

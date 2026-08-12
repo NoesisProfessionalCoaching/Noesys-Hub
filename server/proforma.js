@@ -370,6 +370,84 @@ async function generaPdf(p, cartaBytes) {
   return Buffer.from(await pdf.save());
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// 3. MANDARE — il testo della mail e l'archivio su Drive
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * Oggetto e testo della mail di accompagnamento, già compilati.
+ *
+ * Sta qui e non nella pagina perché è la stessa cosa in due posti: la
+ * finestrella lo mostra da modificare, e chi lo legge deve poterlo ritrovare
+ * uguale. Il coach può cambiarlo prima di mandare: quello che parte è sempre il
+ * testo che ha davanti, non questo.
+ *
+ * Il registro è quello di Mail 1 e Mail 2 (si dà del tu), con il saluto scelto
+ * da Germano il 12/08. ⚠️ La riga sulla legge è stata voluta da lui («inserirei
+ * la spiegazione della procedura»): l'art. 6 comma 3 del DPR 633/1972 dice che
+ * per le prestazioni di servizi l'operazione si considera effettuata al
+ * pagamento del corrispettivo — ed è il motivo per cui la fattura viene DOPO.
+ * Da far confermare al commercialista prima del primo cliente vero.
+ */
+function testoMail(p) {
+  const de = p.destinatario_dati || {};
+  const nome = String(de.denominazione || '').trim().split(/\s+/)[0] || '';
+  const numero = p.numero || '';
+  const importo = '€ ' + fiscale.euro(p.da_pagare);
+
+  // «di luglio 2026» quando le sessioni stanno tutte nello stesso mese, il
+  // periodo per esteso quando sono a cavallo: dirlo sbagliato è peggio che non
+  // dirlo, perché è la riga che il cliente controlla.
+  let periodo = '';
+  if (p.periodo_da) {
+    const [a1, m1] = String(p.periodo_da).slice(0, 7).split('-');
+    const [a2, m2] = String(p.periodo_a || p.periodo_da).slice(0, 7).split('-');
+    periodo = (a1 === a2 && m1 === m2)
+      ? ' di ' + MESI[Number(m1) - 1] + ' ' + a1
+      : ' dal ' + dataBreve(p.periodo_da) + ' al ' + dataBreve(p.periodo_a);
+  }
+
+  return {
+    subject: 'Proforma n. ' + numero + ' — Noesys Professional Coaching',
+    body:
+`Ciao ${nome},
+
+in allegato la proforma n. ${numero} per le sessioni di coaching${periodo}.
+L'importo da bonificare è di ${importo}; l'IBAN è indicato nel documento.
+
+A pagamento ricevuto ti invierò la fattura: per le prestazioni di servizi la fattura si emette al momento in cui viene pagato il corrispettivo (art. 6, comma 3, del DPR 633/1972). La proforma serve a questo, e non ha valore fiscale.
+
+Ti ringrazio e ti saluto cordialmente,
+Germano Guerriero — Noesys Professional Coaching`,
+  };
+}
+
+/**
+ * La copia su Drive, in `Noesys/Amministrazione/Proforma/{anno}/`.
+ *
+ * ⭐ Archivio UNICO, non una cartella per cliente (decisione di Germano, 12/08):
+ * si cerca in un posto solo, a fine anno è la cartella da dare al commercialista,
+ * e per i committenti — che una cartella propria non ce l'hanno — non ci sarà
+ * niente da inventare.
+ *
+ * ⚠️ La copia NON è l'originale: l'originale sono i dati congelati nell'Hub, da
+ * cui il PDF si rifà identico. Se questa fallisce, il documento è comunque a
+ * posto — ed è il motivo per cui chi manda la mail non deve fermarsi qui.
+ *
+ * ⚠️ `uploadFileToFolder` è idempotente sul NOME e non sovrascrive. Qui è un
+ * bene: il nome contiene il numero della proforma, che non si riusa mai, quindi
+ * rimandare lo stesso documento non produce doppioni.
+ */
+async function archiviaSuDrive(p, bytes) {
+  const root = await drive.findNoesysRoot();
+  if (!root) throw new Error('Cartella "Noesys" non trovata su Drive');
+  const amm  = await drive.findOrCreateFolder(root.id, 'Amministrazione');
+  const prof = await drive.findOrCreateFolder(amm.id, 'Proforma');
+  const anno = await drive.findOrCreateFolder(prof.id, String(p.anno || new Date(p.data_emissione).getFullYear()));
+  const su = await drive.uploadFileToFolder(nomeFile(p), 'application/pdf', bytes, anno.id);
+  return { id: su.id, url: 'https://drive.google.com/file/d/' + su.id + '/view', giaCera: !!su.skipped };
+}
+
 function nomeFile(p) {
   const numero = String(p.numero || '').replace('/', '-');   // «/» è vietato nei nomi
   const chi = String((p.destinatario_dati || {}).denominazione || '').trim();
@@ -379,5 +457,5 @@ function nomeFile(p) {
 module.exports = {
   numeroProforma, righeDaSedute, componiProforma, motiviCheImpediscono,
   fotoEmittente, fotoDestinatario,
-  generaPdf, nomeFile,
+  generaPdf, nomeFile, testoMail, archiviaSuDrive,
 };
