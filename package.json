@@ -8,7 +8,8 @@
     "prova-js": "node scripts/prova-js-pagine.js",
     "prova-fiscale": "node scripts/prova-fiscale.js",
     "prova-proforma": "node scripts/prova-proforma.js",
-    "prova": "npm run prova-js && npm run prova-fiscale && npm run prova-proforma && npm run prova-migrazione"
+    "prova": "npm run prova-js && npm run prova-fiscale && npm run prova-proforma && npm run prova-tranche && npm run prova-migrazione",
+    "prova-tranche": "node scripts/prova-tranche.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",

@@ -13,6 +13,7 @@ const fiscale = require('./fiscale');
 const proforma = require('./proforma');
 const maturato = require('./maturato');
 const appuntamenti = require('./appuntamenti');
+const tranche = require('./tranche');
 
 const router = express.Router();
 
@@ -1661,6 +1662,53 @@ router.get('/dashboard/proforma/:id/pdf', requireCoach, async (req, res) => {
   }
 });
 
+// ── Il piano di pagamento del committente (12/08) ──────
+// Si salva TUTTO IL PIANO in un colpo, non riga per riga: le tranche hanno senso
+// solo insieme (devono sommare la quota concordata), e salvarne una alla volta
+// vorrebbe dire lasciare il piano in stati che non tornano.
+router.post('/dashboard/progetti/:id/piano', requireCoach, express.json(), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const pr = await db.query('SELECT id, quota_committente FROM progetti WHERE id = $1', [req.params.id]);
+    if (!pr.rows.length) return res.status(404).json({ error: 'Progetto non trovato' });
+    const totale = Number(pr.rows[0].quota_committente) || 0;
+
+    const righe = (Array.isArray(b.righe) ? b.righe : []).map((r, i) => ({
+      ordine: i,
+      etichetta: String(r.etichetta || '').trim() || ('Tranche ' + (i + 1)),
+      importo: Math.round(Number(r.importo) || 0),
+      innesco: String(r.innesco || 'firma'),
+      giorni: Math.round(Number(r.giorni) || 0),
+    }));
+    const guai = tranche.problemi(righe, totale);
+    if (guai.length) return res.status(400).json({ error: guai.join(' ') });
+
+    const meta = String(b.data_meta || '').trim();
+    const fine = String(b.data_fine || '').trim();
+    const dataOk = d => !d || /^\d{4}-\d{2}-\d{2}$/.test(d);
+    if (!dataOk(meta)) return res.status(400).json({ error: 'La data di metà percorso non è valida.' });
+    if (!dataOk(fine)) return res.status(400).json({ error: 'La data di fine non è valida.' });
+
+    // Il piano si riscrive intero dentro una transazione: o c'è quello nuovo o
+    // resta quello di prima, mai mezzo vecchio e mezzo nuovo.
+    await db.transazione(async (q) => {
+      await q('UPDATE progetti SET data_meta = $2, data_fine = $3, updated_at = NOW() WHERE id = $1',
+        [req.params.id, meta || null, fine || null]);
+      await q('DELETE FROM tranche_progetto WHERE progetto_id = $1', [req.params.id]);
+      for (const r of righe) {
+        await q(`INSERT INTO tranche_progetto
+                   (id, progetto_id, ordine, etichetta, importo, innesco, giorni)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          [uuidv4(), req.params.id, r.ordine, r.etichetta, r.importo, r.innesco, r.giorni]);
+      }
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[piano]', err);
+    res.status(500).json({ error: 'Errore nel salvataggio del piano' });
+  }
+});
+
 // ── L'appuntamento, scritto a mano (12/08) ─────────────
 // Una riga per percorso: salvare è sempre un solo comando, senza il ramo
 // «esiste o non esiste ancora?». Serve a due cose che prima non si potevano
@@ -2077,7 +2125,11 @@ router.get('/dashboard/progetti/:id', requireCoach, async (req, res) => {
       `SELECT s.* FROM sedute s JOIN percorsi p ON p.id = s.percorso_id
         WHERE p.progetto_id=$1 AND p.client_id IS NULL
         ORDER BY s.data ASC NULLS LAST, s.created_at ASC`, [req.params.id]);
-    res.send(progettoDettaglioPage(pr.rows[0], coachee.rows, req, disponibili.rows, percorsi.rows, fasi.rows, seduteColl.rows));
+    // Il piano di pagamento del committente (12/08). Se non c'è, la pagina ne
+    // propone uno: non si salva niente da soli, la proposta la conferma il coach.
+    const piano = await db.query(
+      'SELECT * FROM tranche_progetto WHERE progetto_id=$1 ORDER BY ordine', [req.params.id]);
+    res.send(progettoDettaglioPage(pr.rows[0], coachee.rows, req, disponibili.rows, percorsi.rows, fasi.rows, seduteColl.rows, piano.rows));
   } catch (err) {
     console.error(err);
     res.status(500).send('Errore');
@@ -5602,7 +5654,7 @@ function progettiPage(progetti, committenti, req) {
 // ═══════════════════════════════════════════════════════
 // PAGINA DETTAGLIO PROGETTO (Fase 3a) — dati + coachee collegati
 // ═══════════════════════════════════════════════════════
-function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, seduteColl) {
+function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, seduteColl, piano) {
   // Fetta B (Mattone 2) — il percorso CONDIVISO (team/group) e le sue sessioni collettive.
   seduteColl = seduteColl || [];
   const percCond = (percorsi || []).find(x => !x.client_id) || null;
@@ -5831,6 +5883,69 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
   const ammAtteso0 = qTot != null ? qTot : 0;
   const ammManca0  = Math.max(ammAtteso0 - ammIncassato0, 0);
 
+  // ── IL PIANO DI PAGAMENTO DEL COMMITTENTE (12/08) ───────────────────────
+  // Un committente non paga il totale in una volta. Finché non c'è un piano,
+  // «chiedi la quota» chiederebbe tutti i 7.000 in un colpo — che non è mai
+  // quello che succede. Qui il piano si propone (30/40/30 a 30 giorni) e si
+  // corregge; quello che si salva sono gli EURO, la percentuale è solo un modo
+  // di scriverli.
+  const pianoRighe = (piano && piano.length)
+    ? piano.map(t => ({ etichetta: t.etichetta, importo: Number(t.importo),
+        innesco: t.innesco, giorni: Number(t.giorni) }))
+    : (qComm ? tranche.pianoProposto(qComm) : []);
+  const pianoNuovo = !(piano && piano.length);
+  const inneschiOpt = Object.entries(tranche.INNESCHI)
+    .map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('');
+
+  const pianoHtml = !qComm ? `
+    <div class="card" style="margin-bottom:18px">
+      <h2 style="margin-bottom:4px">Piano di pagamento del committente</h2>
+      <div style="font-size:13px;color:var(--muted)">
+        Prima scrivi qui sopra quanto paga il committente: il piano si divide su quella cifra.
+      </div>
+    </div>` : `
+    <div class="card" style="margin-bottom:18px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:2px">
+        <h2 style="margin:0">Piano di pagamento del committente</h2>
+        <span style="font-size:13px;color:var(--muted)">su € ${eur(qComm)}</span>
+      </div>
+      <p style="color:var(--muted);font-size:13px;margin-bottom:14px">
+        ${pianoNuovo
+          ? 'Questa è una <strong>proposta</strong> — 30% alla firma, 40% a metà, 30% a saldo, a 30 giorni. Correggila e salvala: finché non la salvi non esiste.'
+          : 'Percentuali, importi e giorni si cambiano quando serve.'}
+      </p>
+      <div style="overflow-x:auto;margin:0 -4px">
+        <table style="min-width:640px">
+          <thead><tr>
+            <th style="text-align:left;font-size:12px;color:var(--muted)">Tranche</th>
+            <th style="text-align:left;font-size:12px;color:var(--muted)">%</th>
+            <th style="text-align:left;font-size:12px;color:var(--muted)">Importo (€)</th>
+            <th style="text-align:left;font-size:12px;color:var(--muted)">Quando</th>
+            <th style="text-align:left;font-size:12px;color:var(--muted)">Giorni</th>
+            <th style="text-align:left;font-size:12px;color:var(--muted)">Scade il</th>
+            <th></th>
+          </tr></thead>
+          <tbody id="piano-body"></tbody>
+        </table>
+      </div>
+      <div id="piano-somma" style="margin-top:12px;padding:10px 12px;background:#f4f7fa;border-radius:8px;font-size:13px;color:#4a5568"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px;max-width:420px">
+        <div class="form-group" style="margin:0"><label>Metà percorso</label>
+          <input id="pi-meta" type="date" value="${p.data_meta ? String(p.data_meta).slice(0,10) : ''}"></div>
+        <div class="form-group" style="margin:0"><label>Fine prevista</label>
+          <input id="pi-fine" type="date" value="${p.data_fine ? String(p.data_fine).slice(0,10) : ''}"></div>
+      </div>
+      <p style="font-size:12px;color:var(--hint);margin-top:8px">
+        Queste due date l'Hub non le può indovinare. Finché mancano, le tranche che
+        ci si appoggiano non hanno una scadenza.
+      </p>
+      <div id="piano-error" style="display:none;margin-top:10px" class="flash-error"></div>
+      <div style="display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:14px;flex-wrap:wrap">
+        <button onclick="aggiungiTranche()" class="btn btn-neutral btn-sm">+ Aggiungi tranche</button>
+        <button onclick="salvaPiano()" class="btn btn-primary btn-sm">Salva il piano</button>
+      </div>
+    </div>`;
+
   // Riga committente della tabella attori (una fattura sola; niente scheda coachee).
   const commRow = `
     <tr>
@@ -5936,6 +6051,8 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
         <button onclick="salvaTutto()" class="btn btn-primary btn-sm">Salva le quote</button>
       </div>
     </div>
+
+    ${pianoHtml}
 
     <div class="card" style="margin-bottom:18px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
@@ -6046,6 +6163,83 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
 
   <script>
     const PID = ${JSON.stringify(p.id)};
+
+    // ── Il piano di pagamento del committente (12/08) ──
+    // Le righe vivono in questo array e la tabella si ridisegna da lì: aggiungere
+    // o togliere una tranche non lascia mai la pagina e i dati in disaccordo.
+    // Si salvano gli EURO; la percentuale è solo un modo di scriverli, e si
+    // ricalcola sempre da importo/quota.
+    var PIANO = ${JSON.stringify(pianoRighe).replace(/</g, '\\u003c')};
+    var QCOMM = ${Number(qComm) || 0};
+    var DATA_FIRMA = ${JSON.stringify(p.data_inizio ? String(p.data_inizio).slice(0, 10) : '')};
+    var INNESCHI_OPT = ${JSON.stringify(inneschiOpt).replace(/</g, '\\u003c')};
+
+    function scadenzaTranche(t) {
+      var base = t.innesco === 'firma' ? DATA_FIRMA
+               : t.innesco === 'meta'  ? (document.getElementById('pi-meta') || {}).value
+               : (document.getElementById('pi-fine') || {}).value;
+      if (!base) return null;
+      var d = new Date(base + 'T12:00:00Z');
+      d.setUTCDate(d.getUTCDate() + (Number(t.giorni) || 0));
+      return d.toISOString().slice(0, 10);
+    }
+    function itData(iso) {
+      if (!iso) return '';
+      var q = iso.split('-');
+      return q[2] + '/' + q[1] + '/' + q[0];
+    }
+    function disegnaPiano() {
+      var body = document.getElementById('piano-body');
+      if (!body) return;
+      body.innerHTML = PIANO.map(function (t, i) {
+        var perc = QCOMM ? (t.importo / QCOMM * 100) : 0;
+        var scad = scadenzaTranche(t);
+        return '<tr>'
+          + '<td><input value="' + String(t.etichetta || '').replace(/"/g, '&quot;') + '" oninput="setTr(' + i + ',\\'etichetta\\',this.value)" style="width:150px"></td>'
+          + '<td><input type="number" step="1" min="0" value="' + (Math.round(perc * 10) / 10) + '" oninput="setPerc(' + i + ',this.value)" style="width:74px"></td>'
+          + '<td><input type="number" step="1" min="0" value="' + t.importo + '" oninput="setImp(' + i + ',this.value)" style="width:110px"></td>'
+          + '<td><select onchange="setTr(' + i + ',\\'innesco\\',this.value)" style="width:150px">' + INNESCHI_OPT + '</select></td>'
+          + '<td><input type="number" step="1" min="0" value="' + t.giorni + '" oninput="setTr(' + i + ',\\'giorni\\',Number(this.value))" style="width:74px"></td>'
+          + '<td style="font-size:12px;white-space:nowrap;color:' + (scad ? 'var(--ink)' : 'var(--hint)') + '">'
+          + (scad ? itData(scad) : 'manca la data') + '</td>'
+          + '<td style="text-align:right"><button onclick="togliTranche(' + i + ')" class="btn btn-danger btn-sm" title="Togli">🗑</button></td>'
+          + '</tr>';
+      }).join('');
+      // Le tendine si riempiono DOPO: il markup delle opzioni è uguale per tutte,
+      // e il valore scelto si perderebbe nel ridisegno.
+      var sel = body.querySelectorAll('select');
+      for (var i = 0; i < sel.length; i++) sel[i].value = PIANO[i].innesco;
+      var somma = PIANO.reduce(function (s, t) { return s + (Number(t.importo) || 0); }, 0);
+      var diff = QCOMM - somma;
+      document.getElementById('piano-somma').innerHTML = diff === 0
+        ? 'Le tranche sommano <strong>€ ' + somma.toLocaleString('it-IT') + '</strong>: torna con la quota del committente.'
+        : '<span style="color:#b45309">Le tranche sommano <strong>€ ' + somma.toLocaleString('it-IT')
+          + '</strong>: ' + (diff > 0 ? 'ne mancano <strong>€ ' + diff.toLocaleString('it-IT') + '</strong>'
+                                      : 'sono <strong>€ ' + (-diff).toLocaleString('it-IT') + '</strong> di troppo') + '.</span>';
+    }
+    function setTr(i, campo, val) { PIANO[i][campo] = val; disegnaPiano(); }
+    function setImp(i, val) { PIANO[i].importo = Math.round(Number(val) || 0); disegnaPiano(); }
+    function setPerc(i, val) { PIANO[i].importo = Math.round(QCOMM * (Number(val) || 0) / 100); disegnaPiano(); }
+    function aggiungiTranche() {
+      PIANO.push({ etichetta: 'Tranche ' + (PIANO.length + 1), importo: 0, innesco: 'fine', giorni: 30 });
+      disegnaPiano();
+    }
+    function togliTranche(i) { PIANO.splice(i, 1); disegnaPiano(); }
+    async function salvaPiano() {
+      var err = document.getElementById('piano-error');
+      err.style.display = 'none';
+      try {
+        var r = await fetch('/dashboard/progetti/' + PID + '/piano', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ righe: PIANO,
+            data_meta: document.getElementById('pi-meta').value,
+            data_fine: document.getElementById('pi-fine').value }) });
+        var j = await r.json().catch(function () { return {}; });
+        if (!r.ok) { err.textContent = j.error || ('Errore ' + r.status); err.style.display = 'block'; return; }
+        location.reload();
+      } catch (e) { err.textContent = 'Errore di rete: ' + e.message; err.style.display = 'block'; }
+    }
+
     // Fetta B (Mattone 2) — sessioni collettive del percorso condiviso.
     const COLL_PID = ${JSON.stringify(percCond ? percCond.id : '')};
     const COLL_FINE_ISO = ${JSON.stringify(collFineIso)};   // data dell'ultima sessione confermata
@@ -6456,6 +6650,13 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
     document.getElementById('modal-coachee').addEventListener('click', e => { if (e.target === document.getElementById('modal-coachee')) closeAdd(); });
     recalcQuota();
     renderPag();
+    // Il piano si disegna all'apertura, e si ridisegna quando cambiano le due
+    // date: la colonna «Scade il» si conta a partire da quelle.
+    disegnaPiano();
+    ['pi-meta', 'pi-fine'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.addEventListener('change', disegnaPiano);
+    });
   </script>
   </body></html>`;
 }

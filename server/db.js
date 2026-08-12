@@ -701,6 +701,41 @@ async function init() {
   `);
   // ─────────────────────────────────────────────────────────────────────────
 
+  // ── IL PIANO DI PAGAMENTO DEL COMMITTENTE (12/08/2026) ───────────────────
+  // Un committente non paga il totale in una volta: paga a tranche legate a
+  // momenti del progetto (30% firma · 40% metà · 30% saldo, a 30 giorni, tutto
+  // correggibile). Senza queste righe non si può chiedergli niente: si
+  // chiederebbe l'intera quota in un colpo, che non è mai quello che succede.
+  //
+  // ⭐ SI SALVANO GLI EURO, non le percentuali (regola del 27/07): la
+  // percentuale si ricava da importo/quota, e salvarla vorrebbe dire tenere due
+  // numeri liberi di litigare.
+  // `giorni` è il termine di pagamento, che Germano vuole correggibile come le
+  // percentuali. `innesco` dice da quale data del progetto si contano.
+  await query(`
+    CREATE TABLE IF NOT EXISTS tranche_progetto (
+      id           TEXT PRIMARY KEY,
+      progetto_id  TEXT NOT NULL REFERENCES progetti(id) ON DELETE CASCADE,
+      ordine       INTEGER NOT NULL DEFAULT 0,
+      etichetta    TEXT NOT NULL,
+      importo      NUMERIC(10,2) NOT NULL DEFAULT 0,
+      innesco      TEXT NOT NULL DEFAULT 'firma',
+      giorni       INTEGER NOT NULL DEFAULT 30,
+      created_at   TIMESTAMPTZ DEFAULT NOW(),
+      updated_at   TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  await query(`CREATE INDEX IF NOT EXISTS tranche_progetto_prog ON tranche_progetto (progetto_id)`);
+  // «Metà percorso» l'Hub non lo può dedurre — non sa quando un progetto sarà a
+  // metà. Lo scrive il coach; finché è vuoto quella tranche non si può chiedere,
+  // e la pagina lo dice invece di restare ferma in silenzio.
+  await query(`ALTER TABLE progetti ADD COLUMN IF NOT EXISTS data_meta DATE`);
+  // Stessa storia per la fine: `progetti` aveva `data_inizio` e basta. Senza una
+  // data di fine, la tranche del saldo non può avere una scadenza — e il saldo è
+  // proprio quello su cui il conto deve tornare.
+  await query(`ALTER TABLE progetti ADD COLUMN IF NOT EXISTS data_fine DATE`);
+  // ─────────────────────────────────────────────────────────────────────────
+
   // Traccia di cosa è già stato letto: un modulo si elabora UNA volta sola.
   // Senza questo, a ogni giro l'automazione rileggerebbe gli stessi documenti e
   // riscriverebbe l'anagrafica ogni tre ore.
