@@ -23,6 +23,31 @@ async function query(text, params) {
   return res;
 }
 
+/**
+ * Una sequenza di comandi che devono riuscire TUTTI o NESSUNO.
+ *
+ * Serve dalla Fase 3 della fatturazione: una proforma e le sue righe nascono
+ * insieme o non nascono. Se il documento passasse e le righe no, resterebbe un
+ * numero BRUCIATO (i numeri non si riusano mai) sopra un documento vuoto.
+ *
+ * Alla funzione arriva un `q` che si usa come `db.query`, ma che viaggia sulla
+ * stessa connessione: usare `db.query` qui dentro finirebbe fuori transazione.
+ */
+async function transazione(fn) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const out = await fn((text, params) => client.query(text, params));
+    await client.query('COMMIT');
+    return out;
+  } catch (e) {
+    try { await client.query('ROLLBACK'); } catch (_) { /* la connessione è già persa */ }
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
 // Schema condiviso con Coaching-Tools (stesso database Postgres).
 // L'Hub non tocca `sessions` (dati degli strumenti): quella resta di competenza
 // della piattaforma strumenti. Qui l'Hub possiede lead/percorsi/pagamenti.
@@ -565,6 +590,77 @@ async function init() {
   // mostrare e il salvataggio è sempre e solo un UPDATE, senza il ramo «esiste
   // o non esiste ancora?» che è il punto in cui questi casi si rompono.
   await query(`INSERT INTO emittente (id) VALUES (1) ON CONFLICT (id) DO NOTHING`);
+
+  // ── LE PROFORMA (Fase 3, tappa 2) ─────────────────────────────────────────
+  // La proforma è il PRIMO oggetto «documento» dell'Hub: fin qui c'erano solo i
+  // dati per fatturare, non un atto emesso in una certa data con un suo numero.
+  //
+  // ⭐ I dati di chi manda e di chi riceve si CONGELANO dentro, in due fotografie
+  // (`emittente_dati`, `destinatario_dati`). Se domani il cliente cambia indirizzo
+  // o l'IBAN cambia banca, un documento già spedito NON deve cambiare da solo:
+  // direbbe una cosa diversa da quella che il cliente ha in mano. È lo stesso
+  // motivo per cui anche gli importi sono colonne e non un calcolo.
+  //
+  // ⚠️ `client_id` è ON DELETE SET NULL, non CASCADE: cancellare un cliente non
+  // può far sparire un documento emesso. Dentro la fotografia c'è comunque tutto.
+  await query(`
+    CREATE TABLE IF NOT EXISTS proforme (
+      id                 TEXT PRIMARY KEY,
+      numero             TEXT NOT NULL UNIQUE,
+      anno               INTEGER NOT NULL,
+      progressivo        INTEGER NOT NULL,
+      client_id          TEXT REFERENCES clients(id) ON DELETE SET NULL,
+      data_emissione     DATE NOT NULL,
+      periodo_da         DATE,
+      periodo_a          DATE,
+      categoria_fiscale  TEXT,
+      emittente_dati     JSONB,
+      destinatario_dati  JSONB,
+      imponibile         NUMERIC(10,2) NOT NULL DEFAULT 0,
+      iva                NUMERIC(10,2) NOT NULL DEFAULT 0,
+      ritenuta           NUMERIC(10,2) NOT NULL DEFAULT 0,
+      bollo              NUMERIC(10,2) NOT NULL DEFAULT 0,
+      totale_documento   NUMERIC(10,2) NOT NULL DEFAULT 0,
+      da_pagare          NUMERIC(10,2) NOT NULL DEFAULT 0,
+      stato              TEXT NOT NULL DEFAULT 'emessa',
+      inviata_data       TIMESTAMPTZ,
+      inviata_a          TEXT,
+      drive_file_id      TEXT,
+      drive_url          TEXT,
+      note               TEXT,
+      created_at         TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE (anno, progressivo)
+    )
+  `);
+
+  // Una riga per SESSIONE (scelta di Germano: chi paga vuole vedere per cosa).
+  //
+  // ⭐ `seduta_id` è il perno di tutta la Fase 3: «non ancora chiesto» vuol dire
+  // «seduta confermata che non compare in nessuna riga di una proforma viva».
+  // Da lì escono da sole due regole che altrimenti andavano inventate: entra
+  // tutto il maturato mai chiesto, e una sessione arrivata in ritardo finisce
+  // nella proforma successiva. Una sessione si chiede UNA volta sola.
+  //
+  // ⚠️ Anche qui SET NULL e non CASCADE: se un giorno una seduta viene cancellata,
+  // la riga di un documento già emesso resta dov'è, con la sua descrizione e il
+  // suo importo. Un documento spedito non si riscrive.
+  await query(`
+    CREATE TABLE IF NOT EXISTS proforma_righe (
+      id              TEXT PRIMARY KEY,
+      proforma_id     TEXT NOT NULL REFERENCES proforme(id) ON DELETE CASCADE,
+      seduta_id       TEXT REFERENCES sedute(id) ON DELETE SET NULL,
+      percorso_id     TEXT REFERENCES percorsi(id) ON DELETE SET NULL,
+      data            DATE,
+      descrizione     TEXT NOT NULL,
+      quantita        NUMERIC(4,1) NOT NULL DEFAULT 1,
+      prezzo_unitario NUMERIC(10,2) NOT NULL DEFAULT 0,
+      importo         NUMERIC(10,2) NOT NULL DEFAULT 0,
+      ordine          INTEGER NOT NULL DEFAULT 0
+    )
+  `);
+  // La domanda «questa seduta è già stata chiesta?» si fa a ogni apertura della
+  // scheda cliente: senza indice diventerebbe una scansione di tutte le righe.
+  await query(`CREATE INDEX IF NOT EXISTS proforma_righe_seduta ON proforma_righe (seduta_id)`);
   // ─────────────────────────────────────────────────────────────────────────
 
   // Traccia di cosa è già stato letto: un modulo si elabora UNA volta sola.
@@ -670,4 +766,4 @@ async function init() {
   }
 }
 
-module.exports = { query, init };
+module.exports = { query, transazione, init };

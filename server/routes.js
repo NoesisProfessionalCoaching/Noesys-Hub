@@ -10,6 +10,7 @@ const documenti = require('./documenti');
 const mailer = require('./mailer');
 const moduli = require('./moduli');
 const fiscale = require('./fiscale');
+const proforma = require('./proforma');
 
 const router = express.Router();
 
@@ -399,7 +400,23 @@ router.get('/dashboard/clients/:id', requireCoach, async (req, res) => {
                   FROM permessi_validi WHERE client_id=$1
                  ORDER BY fine DESC`, [req.params.id]).catch(() => ({ rows: [] })),
     ]);
-    res.send(clientDetailPage(client, sr.rows, pr.rows, payr.rows, sedr.rows, prjr.rows, permr.rows, req));
+    // Fatturazione (Fase 3): le proforma di questo cliente, quali sedute sono già
+    // state chieste, e i dati di chi emette (servono a dire perché non si può
+    // emettere, invece di mostrare un pulsante che poi non funziona).
+    const [pfr, chieste, emr] = await Promise.all([
+      db.query(`SELECT * FROM proforme WHERE client_id=$1
+                 ORDER BY anno DESC, progressivo DESC`, [req.params.id]),
+      db.query(`SELECT r.seduta_id FROM proforma_righe r
+                  JOIN proforme p ON p.id = r.proforma_id
+                 WHERE p.client_id=$1 AND p.stato <> 'annullata'
+                   AND r.seduta_id IS NOT NULL`, [req.params.id]),
+      db.query('SELECT * FROM emittente WHERE id = 1'),
+    ]);
+    res.send(clientDetailPage(client, sr.rows, pr.rows, payr.rows, sedr.rows, prjr.rows, permr.rows, req, {
+      proforme: pfr.rows,
+      seduteChieste: new Set(chieste.rows.map(r => r.seduta_id)),
+      emittente: emr.rows[0] || {},
+    }));
   } catch (err) {
     console.error(err);
     res.redirect('/dashboard');
@@ -1530,6 +1547,99 @@ router.get('/dashboard/amministrazione', requireCoach, async (req, res) => {
   } catch (err) {
     console.error('[anomalie]', err);
     res.status(500).send('Errore nel caricamento delle anomalie');
+  }
+});
+
+// ── Le proforma (Fatturazione, Fase 3) ─────────────────
+// Una proforma raccoglie TUTTE le sessioni a pagamento non ancora chieste, non
+// solo quelle di un mese (scelta di Germano): un mese rimasto indietro non deve
+// sparire. Il perno è `proforma_righe.seduta_id` — una sessione che sta già in
+// una proforma viva non compare più fra quelle da chiedere.
+router.post('/dashboard/clients/:id/proforma', requireCoach, async (req, res) => {
+  try {
+    const [cl, em] = await Promise.all([
+      db.query('SELECT * FROM clients WHERE id = $1', [req.params.id]),
+      db.query('SELECT * FROM emittente WHERE id = 1'),
+    ]);
+    const cliente = cl.rows[0];
+    if (!cliente) return res.status(404).json({ error: 'Cliente non trovato' });
+    const emittente = em.rows[0] || {};
+
+    // Le sedute da chiedere: confermate, a pagamento, mai finite in una proforma
+    // viva. `p.client_id = $1` lascia fuori i percorsi condivisi, i cui soldi
+    // vivono sul progetto — è la stessa regola del maturato.
+    const sed = await db.query(`
+      SELECT s.id, s.data, s.tipo, s.percorso_id, p.prezzo
+        FROM sedute s JOIN percorsi p ON p.id = s.percorso_id
+       WHERE p.client_id = $1 AND s.stato = 'confermata' AND s.data IS NOT NULL
+         AND p.modalita = 'Standard' AND p.prezzo > 0
+         AND NOT EXISTS (
+           SELECT 1 FROM proforma_righe r JOIN proforme pf ON pf.id = r.proforma_id
+            WHERE r.seduta_id = s.id AND pf.stato <> 'annullata')
+       ORDER BY s.data`, [req.params.id]);
+
+    const righe = proforma.righeDaSedute(sed.rows);
+    const motivi = proforma.motiviCheImpediscono({ emittente, cliente, righe });
+    if (motivi.length) return res.status(400).json({ error: motivi.join(' ') });
+
+    const oggi = new Date().toISOString().slice(0, 10);
+    const d = proforma.componiProforma({ righe, cliente, emittente, dataEmissione: oggi });
+    if (!d.conti) return res.status(400).json({ error: 'Non si riesce a stabilire la categoria fiscale del cliente.' });
+    const anno = Number(oggi.slice(0, 4));
+
+    // Documento e righe nascono insieme o non nascono: senza le righe resterebbe
+    // un numero bruciato su un foglio vuoto. Il progressivo si legge e si scrive
+    // nella stessa istruzione, e il vincolo UNIQUE(anno, progressivo) è la rete.
+    const creata = await db.transazione(async (q) => {
+      const ins = await q(`
+        INSERT INTO proforme (id, numero, anno, progressivo, client_id, data_emissione,
+          periodo_da, periodo_a, categoria_fiscale, emittente_dati, destinatario_dati,
+          imponibile, iva, ritenuta, bollo, totale_documento, da_pagare)
+        SELECT $1, $2::text || '/' || lpad(x.n::text, 3, '0'), $2::int, x.n, $3, $4::date,
+               $5::date, $6::date, $7, $8::jsonb, $9::jsonb,
+               $10, $11, $12, $13, $14, $15
+          FROM (SELECT COALESCE(MAX(progressivo), 0) + 1 AS n
+                  FROM proforme WHERE anno = $2::int) x
+        RETURNING id, numero`,
+        [uuidv4(), anno, cliente.id, oggi, d.periodoDa, d.periodoA, d.categoria,
+         JSON.stringify(d.emittenteDati), JSON.stringify(d.destinatarioDati),
+         d.conti.imponibile, d.conti.iva, d.conti.ritenuta, d.conti.bollo,
+         d.conti.totaleDocumento, d.conti.daPagare]);
+      const pf = ins.rows[0];
+      for (const r of d.righe) {
+        await q(`INSERT INTO proforma_righe
+          (id, proforma_id, seduta_id, percorso_id, data, descrizione, quantita, prezzo_unitario, importo, ordine)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+          [uuidv4(), pf.id, r.seduta_id, r.percorso_id, r.data, r.descrizione,
+           r.quantita, r.prezzo_unitario, r.importo, r.ordine]);
+      }
+      return pf;
+    });
+    res.json({ ok: true, id: creata.id, numero: creata.numero });
+  } catch (err) {
+    console.error('[proforma/crea]', err);
+    res.status(500).json({ error: 'Errore nella creazione della proforma' });
+  }
+});
+
+// Il PDF si RIGENERA ogni volta dai dati congelati: non si conserva un file, e
+// due stampe dello stesso documento sono identiche anche fra due anni.
+router.get('/dashboard/proforma/:id/pdf', requireCoach, async (req, res) => {
+  try {
+    const r = await db.query('SELECT * FROM proforme WHERE id = $1', [req.params.id]);
+    const pf = r.rows[0];
+    if (!pf) return res.status(404).send('Proforma non trovata');
+    const righe = await db.query(
+      'SELECT * FROM proforma_righe WHERE proforma_id = $1 ORDER BY ordine', [pf.id]);
+    const bytes = await proforma.generaPdf({ ...pf, righe: righe.rows });
+    const nome = proforma.nomeFile(pf);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition',
+      "inline; filename*=UTF-8''" + encodeURIComponent(nome));
+    res.send(bytes);
+  } catch (err) {
+    console.error('[proforma/pdf]', err);
+    res.status(500).send('Non si riesce a produrre il PDF: ' + err.message);
   }
 });
 
@@ -2804,7 +2914,10 @@ function renderSedutaRow(s) {
   </tr>`;
 }
 
-function clientDetailPage(client, sessions, percorsi, payments, sedute, progetti, permessi, req) {
+function clientDetailPage(client, sessions, percorsi, payments, sedute, progetti, permessi, req, fatt) {
+  fatt = fatt || {};
+  const proforme = fatt.proforme || [];
+  const seduteChieste = fatt.seduteChieste || new Set();
   const link = PLATFORM_URL + '/c/' + client.token;
   sedute = sedute || [];
   permessi = permessi || [];
@@ -2967,7 +3080,12 @@ Germano`;
   // La seduta di Intake VALE DUE SESSIONI (Germano, 10/08/2026): dura il doppio e
   // si paga il doppio. Vale solo qui, nel pagamento a sessione: in un Pacchetto il
   // prezzo è già un totale e non si moltiplica niente.
+  // ⭐ Dalla Fase 3 il maturato è quello NON ANCORA CHIESTO: una sessione finita
+  // in una proforma viva ha smesso di essere «da chiedere» ed esce di qui. È la
+  // stessa regola che impedisce di chiedere due volte la stessa sessione, e non
+  // ha bisogno di nessuna casella da spuntare: la verità è la riga di proforma.
   const maturatoMesi = new Map();          // 'AAAA-MM' → { n, nIntake, importo }
+  let bozzeNonApprovate = 0;
   for (const p of percorsi) {
     // I percorsi CONDIVISI (quelli di un progetto) compaiono qui ma i loro soldi
     // vivono sul progetto: contarli anche come maturato personale del coachee
@@ -2976,7 +3094,11 @@ Germano`;
     if (p.modalita !== 'Standard' || !p.prezzo) continue;
     const prezzoSessione = Number(p.prezzo);
     for (const s of sedute) {
-      if (s.percorso_id !== p.id || s.stato !== 'confermata' || !s.data) continue;
+      if (s.percorso_id !== p.id || !s.data) continue;
+      // Una bozza non è ancora un fatto: non matura, ma va CONTATA e detta,
+      // altrimenti resta fuori dalla proforma senza che nessuno se ne accorga.
+      if (s.stato !== 'confermata') { bozzeNonApprovate += 1; continue; }
+      if (seduteChieste.has(s.id)) continue;
       const intake = s.tipo === 'Intake';
       const mese = String(s.data).slice(0, 7);
       const acc = maturatoMesi.get(mese) || { n: 0, nIntake: 0, importo: 0 };
@@ -2987,9 +3109,37 @@ Germano`;
     }
   }
   const maturatoTot = [...maturatoMesi.values()].reduce((s, m) => s + m.importo, 0);
+
+  // Perché NON si può chiedere il pagamento. Le ragioni sono le stesse che usa
+  // la rotta quando crea il documento (stesso modulo), così non può succedere
+  // che il pulsante prometta una cosa e il server ne faccia un'altra.
+  const nDaChiedere = [...maturatoMesi.values()].reduce((s, m) => s + m.n, 0);
+  const motiviBlocco = maturatoMesi.size === 0 ? [] : proforma.motiviCheImpediscono({
+    emittente: fatt.emittente || {}, cliente: client, righe: new Array(nDaChiedere),
+  });
+  const azioneMaturato = maturatoMesi.size === 0 ? '' : (motiviBlocco.length ? `
+        <div style="background:#fffdf6;border-left:3px solid var(--gold);border-radius:8px;padding:12px 14px;margin-top:12px">
+          <div style="font-size:13px;font-weight:700;margin-bottom:5px">Non si può ancora chiedere il pagamento</div>
+          <ul style="margin:0;padding-left:18px;font-size:13px;color:#4A4A4A">
+            ${motiviBlocco.map(m => `<li style="margin-bottom:3px">${esc(m)}</li>`).join('')}
+          </ul>
+        </div>` : `
+        <div style="margin-top:12px">
+          <button onclick="chiediPagamento()" id="pf-btn" class="btn btn-primary btn-sm">
+            Chiedi il pagamento — € ${maturatoTot.toLocaleString('it-IT', { minimumFractionDigits: 2 })}
+          </button>
+          <div id="pf-error" style="display:none;margin-top:10px" class="flash-error"></div>
+        </div>`);
+
+  const avvisoBozze = (maturatoMesi.size && bozzeNonApprovate) ? `
+        <div style="font-size:12px;color:#8a6d1e;background:#fdf6e3;border-radius:8px;padding:9px 12px;margin-top:10px">
+          ⚠️ ${bozzeNonApprovate === 1 ? 'C’è 1 sessione in bozza' : `Ci sono ${bozzeNonApprovate} sessioni in bozza`}:
+          finché non ${bozzeNonApprovate === 1 ? 'la approvi' : 'le approvi'} non ${bozzeNonApprovate === 1 ? 'entra' : 'entrano'} nella proforma.
+        </div>` : '';
+
   const maturatoBlock = maturatoMesi.size === 0 ? '' : `
       <div style="margin-bottom:18px">
-        <div class="field-label" style="margin-bottom:2px">Maturato</div>
+        <div class="field-label" style="margin-bottom:2px">Maturato, non ancora chiesto</div>
         ${[...maturatoMesi.entries()].sort((a, b) => b[0].localeCompare(a[0])).map(([mese, m]) => `
           <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid #eef1f5;flex-wrap:wrap">
             <div style="font-size:14px;text-transform:capitalize">${meseEsteso(mese)}</div>
@@ -2998,6 +3148,32 @@ Germano`;
               <strong style="font-size:14px">€ ${m.importo.toLocaleString('it-IT', { minimumFractionDigits: 2 })}</strong>
             </div>
           </div>`).join('')}
+        ${avvisoBozze}
+        ${azioneMaturato}
+      </div>`;
+
+  // Le proforma già emesse. Il numero è un collegamento al PDF: si riscrive
+  // uguale ogni volta dai dati congelati, quindi non serve conservare il file.
+  const STATO_PF = {
+    emessa:    { label: 'Da mandare', bg: '#fff8dc', c: '#7a5c00' },
+    inviata:   { label: 'Mandata',    bg: '#e8f4fd', c: '#1A5280' },
+    annullata: { label: 'Annullata',  bg: '#f1f3f6', c: '#8a8a8a' },
+  };
+  const proformeBlock = proforme.length === 0 ? '' : `
+      <div style="margin-bottom:18px">
+        <div class="field-label" style="margin-bottom:2px">Proforma</div>
+        ${proforme.map(pf => { const st = STATO_PF[pf.stato] || STATO_PF.emessa; return `
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid #eef1f5;flex-wrap:wrap">
+            <div>
+              <a href="/dashboard/proforma/${pf.id}/pdf" target="_blank" style="font-size:14px;font-weight:700;color:var(--blue);text-decoration:none">n. ${esc(pf.numero)}</a>
+              <span style="font-size:12px;color:#aaa;margin-left:8px">${pf.data_emissione ? itDate(pf.data_emissione) : ''}</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+              <strong style="font-size:14px">€ ${Number(pf.da_pagare).toLocaleString('it-IT', { minimumFractionDigits: 2 })}</strong>
+              <span class="badge" style="background:${st.bg};color:${st.c}">${st.label}</span>
+              <a href="/dashboard/proforma/${pf.id}/pdf" target="_blank" class="btn btn-neutral btn-sm">Apri il PDF</a>
+            </div>
+          </div>`; }).join('')}
       </div>`;
 
   const progettiRows = progetti.map(pr => {
@@ -3054,6 +3230,7 @@ Germano`;
         <button onclick="openPayment()" class="btn btn-primary btn-sm">+ Pagamento</button>
       </div>
       ${maturatoBlock}
+      ${proformeBlock}
       ${progettiBlock}
       ${paymentsTable}
     </div>`;
@@ -4073,6 +4250,24 @@ Germano`;
     async function deletePayment(pid) {
       if(!confirm('Eliminare questo pagamento?')) return;
       await fetch('/dashboard/clients/'+CID+'/payments/'+pid,{method:'DELETE'}); location.reload();
+    }
+    // Crea la proforma con TUTTO il maturato non ancora chiesto. Il numero non
+    // si riusa mai, quindi prima si chiede conferma: un documento nato per
+    // sbaglio brucia un numero e resta nell'elenco.
+    async function chiediPagamento() {
+      if(!confirm('Creo la proforma con tutte le sessioni non ancora chieste?\\n\\nIl numero che le viene assegnato non potrà essere riusato.')) return;
+      var btn = document.getElementById('pf-btn'), err = document.getElementById('pf-error');
+      btn.disabled = true; btn.textContent = 'Preparo il documento…'; err.style.display = 'none';
+      try {
+        var r = await fetch('/dashboard/clients/'+CID+'/proforma', { method:'POST' });
+        var d = await r.json();
+        if(!r.ok) throw new Error(d.error || 'Errore nella creazione della proforma');
+        window.open('/dashboard/proforma/'+d.id+'/pdf','_blank');
+        location.reload();
+      } catch(ex) {
+        err.textContent = ex.message; err.style.display = 'block';
+        btn.disabled = false; btn.textContent = 'Chiedi il pagamento';
+      }
     }
     [document.getElementById('modal-edit'),document.getElementById('modal-percorso'),document.getElementById('modal-payment'),document.getElementById('modal-seduta')].forEach(m=>{
       m.addEventListener('click',e=>{ if(e.target===m) m.style.display='none'; });
