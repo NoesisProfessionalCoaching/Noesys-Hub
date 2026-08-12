@@ -1533,6 +1533,41 @@ router.get('/dashboard/amministrazione', requireCoach, async (req, res) => {
   }
 });
 
+// ── Chi emette (Fatturazione, Fase 3) ──────────────────
+// La riga è UNA sola e nasce vuota con la migrazione: qui non si crea e non si
+// cancella niente, si legge e si riscrive sempre quella.
+const CAMPI_EMITTENTE = [
+  'denominazione', 'nome', 'cognome', 'partita_iva', 'codice_fiscale', 'regime',
+  'ateco', 'via', 'cap', 'citta', 'provincia', 'paese', 'iban', 'intestatario',
+  'banca', 'email', 'telefono',
+];
+
+router.get('/dashboard/amministrazione/emittente', requireCoach, async (req, res) => {
+  try {
+    const r = await db.query('SELECT * FROM emittente WHERE id = 1');
+    const e = r.rows[0] || {};
+    res.send(emittentePage(e, fiscale.datiMancantiEmittente(e), !!req.query.salvato, req));
+  } catch (err) {
+    console.error('[emittente]', err);
+    res.status(500).send('Errore nel caricamento dei dati di chi emette');
+  }
+});
+
+router.post('/dashboard/amministrazione/emittente', requireCoach, express.json(), async (req, res) => {
+  try {
+    const b = req.body || {};
+    // L'elenco dei campi è scritto una volta sola e vale sia per il SET sia per i
+    // valori: così aggiungerne uno domani non lascia indietro metà istruzione.
+    const set = CAMPI_EMITTENTE.map((c, i) => `${c} = $${i + 1}`).join(', ');
+    const valori = CAMPI_EMITTENTE.map(c => String(b[c] == null ? '' : b[c]).trim() || null);
+    await db.query(`UPDATE emittente SET ${set}, updated_at = NOW() WHERE id = 1`, valori);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[emittente/salva]', err);
+    res.status(500).json({ error: 'Errore nel salvataggio' });
+  }
+});
+
 // ═══════════════════════════════════════════════════════
 // PROGETTI (Fase 2) — il percorso commissionato da un committente.
 // In Business / Young-con-sponsor il progetto È il lead (nasce in pre-intake).
@@ -4224,6 +4259,25 @@ function leadsPage(leads, req) {
 // un blocco chiuso, il ruolo (Cliente / Committente / Progetto) è etichettato
 // ed è anche colorato. Si legge mentre si lavora, quindi niente decorazioni.
 // ═══════════════════════════════════════════════════════
+// Le sezioni dell'area Amministrazione. Stanno QUI, sotto il titolo della
+// pagina, non nella barra in alto: la barra porta ai quattro mondi, dove si va
+// dentro un mondo lo decide il mondo (regola di Germano, 11/08).
+// Una funzione sola per tutte le pagine dell'area: due copie della stessa barra
+// sono due occasioni di dimenticarsi di aggiornarne una.
+// Le voci spente sono le fasi 4 e 5 del cantiere fatturazione.
+function amNav(attiva) {
+  const voci = [
+    { key: 'anomalie',  label: 'Anomalie',             href: '/dashboard/amministrazione' },
+    { key: 'proforma',  label: 'Proforma',             off: true },
+    { key: 'incassi',   label: 'Incassi',              off: true },
+    { key: 'fatture',   label: 'Fatture da preparare', off: true },
+    { key: 'emittente', label: 'Chi emette',           href: '/dashboard/amministrazione/emittente' },
+  ];
+  return `<nav class="am-nav" style="margin-top:14px">${voci.map(v => v.off
+    ? `<span title="In arrivo">${v.label}</span>`
+    : `<a href="${v.href}"${v.key === attiva ? ' class="on"' : ''}>${v.label}</a>`).join('')}</nav>`;
+}
+
 function anomaliePage(anomalie, conteggi, req) {
   const RUOLO = {
     cliente:     { label: 'Cliente',     bg: '#e8f4fd', color: '#1A5280', href: a => `/dashboard/clients/${a.id}` },
@@ -4269,15 +4323,7 @@ function anomaliePage(anomalie, conteggi, req) {
   ${headerNoesys({ mondo: 'amministrazione' })}
   <div class="container">
     <h1>Amministrazione</h1>
-    ${/* Le sezioni dell'area stanno QUI, sotto il titolo, non nella barra in alto:
-          la barra porta ai quattro mondi, il resto è roba di questa pagina. Le tre
-          spente sono le fasi 3, 4 e 5 del cantiere fatturazione. */ ''}
-    <nav class="am-nav" style="margin-top:14px">
-      <a href="/dashboard/amministrazione" class="on">Anomalie</a>
-      <span title="In arrivo">Proforma</span>
-      <span title="In arrivo">Incassi</span>
-      <span title="In arrivo">Fatture da preparare</span>
-    </nav>
+    ${amNav('anomalie')}
     <h2 style="margin-bottom:4px">Anomalie</h2>
     <p style="color:var(--muted);font-size:13px;margin-bottom:6px">
       Quello che va sistemato <strong>prima</strong> di emettere una fattura.
@@ -4292,6 +4338,110 @@ function anomaliePage(anomalie, conteggi, req) {
     </p>
     ${anomalie.length ? gruppiHtml : vuoto}
   </div>
+  </body></html>`;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CHI EMETTE (Fatturazione, Fase 3) — i dati che vanno in cima alla proforma.
+//
+// Nell'Hub non c'erano da nessuna parte: sapeva tutto dei clienti e niente di
+// chi manda il documento. Una proforma senza l'IBAN non serve a niente — chi la
+// riceve non sa dove pagare — quindi la pagina non si limita a raccogliere i
+// dati: dice in cima, con parole intere, se si può emettere o cosa manca.
+// ═══════════════════════════════════════════════════════════════════════════
+function emittentePage(e, verdetto, salvato, req) {
+  const v = k => attr(e[k] || '');
+  const campo = (id, etichetta, extra = '') =>
+    `<div class="form-group"><label>${etichetta}</label><input id="em-${id}" type="text" value="${v(id)}" ${extra}></div>`;
+  const riga = (...campi) =>
+    `<div style="display:grid;grid-template-columns:${campi.map(() => '1fr').join(' ')};gap:12px">${campi.join('')}</div>`;
+
+  // Il verdetto sta in cima e non in fondo: è la prima cosa da sapere, e deve
+  // essere leggibile senza contare i campi vuoti a occhio.
+  const cartello = verdetto.pronto
+    ? `<div class="card" style="border-left:3px solid #4F8B73;background:#f4faf7;margin-bottom:18px">
+         <strong style="color:#2e6b52;font-size:15px">✅ Puoi emettere proforma.</strong>
+         ${verdetto.consigliati.length ? `<div style="font-size:13px;color:var(--muted);margin-top:6px">
+           Non è obbligatorio, ma sul documento starebbe meglio anche: ${esc(verdetto.consigliati.join(', '))}.
+         </div>` : ''}
+       </div>`
+    : `<div class="card" style="border-left:3px solid var(--gold);background:#fffdf6;margin-bottom:18px">
+         <strong style="font-size:15px">Prima di poter mandare una proforma manca ancora qualcosa.</strong>
+         <ul style="margin:8px 0 0;padding-left:20px;font-size:14px;color:#4A4A4A">
+           ${verdetto.mancanti.map(m => `<li style="margin-bottom:3px">${esc(m)}</li>`).join('')}
+         </ul>
+       </div>`;
+
+  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Chi emette</title>${baseStyle()}</head><body>
+  ${headerNoesys({ mondo: 'amministrazione' })}
+  <div class="container" style="max-width:1200px">
+    <h1>Amministrazione</h1>
+    ${amNav('emittente')}
+    <h2 style="margin-bottom:4px">Chi emette</h2>
+    <p style="color:var(--muted);font-size:13px;margin-bottom:20px">
+      I tuoi dati, quelli che finiscono in cima a ogni proforma. Si compilano una volta
+      sola e si correggono quando cambiano.
+    </p>
+    ${salvato ? `<div class="card" style="border-left:3px solid #4F8B73;background:#f4faf7;margin-bottom:18px;font-size:14px;color:#2e6b52"><strong>Salvato.</strong></div>` : ''}
+    ${cartello}
+
+    <div class="card">
+      <div class="field-label" style="margin-bottom:12px">Chi sei</div>
+      ${riga(campo('denominazione', 'Denominazione', 'placeholder="es. Noesys Professional Coaching"'))}
+      ${riga(campo('nome', 'Nome'), campo('cognome', 'Cognome'))}
+      ${riga(campo('partita_iva', 'Partita IVA'), campo('codice_fiscale', 'Codice fiscale'))}
+      ${riga(
+        `<div class="form-group"><label>Regime fiscale</label><select id="em-regime">
+           <option value="ordinario"${(e.regime || 'ordinario') === 'ordinario' ? ' selected' : ''}>IVA ordinaria</option>
+           <option value="forfettario"${e.regime === 'forfettario' ? ' selected' : ''}>Forfettario</option>
+         </select></div>`,
+        campo('ateco', 'Codice ATECO', 'placeholder="es. 70.20.09"'))}
+    </div>
+
+    <div class="card">
+      <div class="field-label" style="margin-bottom:12px">Dove sei</div>
+      ${riga(campo('via', 'Indirizzo', 'placeholder="via e numero civico"'))}
+      ${riga(campo('cap', 'CAP'), campo('citta', 'Città'), campo('provincia', 'Provincia', 'placeholder="es. MI"'))}
+      ${riga(campo('paese', 'Paese', 'placeholder="IT"'))}
+    </div>
+
+    <div class="card">
+      <div class="field-label" style="margin-bottom:12px">Dove ti pagano</div>
+      ${riga(campo('iban', 'IBAN', 'placeholder="IT.."'))}
+      ${riga(campo('intestatario', 'Intestatario del conto'), campo('banca', 'Banca'))}
+    </div>
+
+    <div class="card">
+      <div class="field-label" style="margin-bottom:12px">Come ti si contatta</div>
+      ${riga(campo('email', 'Email'), campo('telefono', 'Telefono'))}
+    </div>
+
+    <div id="em-error" style="display:none" class="flash-error"></div>
+    <button onclick="salvaEmittente()" id="em-btn" class="btn btn-primary">Salva</button>
+  </div>
+
+  <script>
+    async function salvaEmittente() {
+      var campi = ['denominazione','nome','cognome','partita_iva','codice_fiscale','regime',
+                   'ateco','via','cap','citta','provincia','paese','iban','intestatario',
+                   'banca','email','telefono'];
+      var dati = {};
+      campi.forEach(function (c) { dati[c] = (document.getElementById('em-' + c).value || '').trim(); });
+      var btn = document.getElementById('em-btn'), err = document.getElementById('em-error');
+      btn.disabled = true; btn.textContent = 'Salvo…'; err.style.display = 'none';
+      try {
+        var r = await fetch('/dashboard/amministrazione/emittente', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(dati) });
+        var d = await r.json();
+        if (!r.ok) throw new Error(d.error || 'Errore nel salvataggio');
+        location.href = '/dashboard/amministrazione/emittente?salvato=1';
+      } catch (ex) {
+        err.textContent = ex.message; err.style.display = 'block';
+        btn.disabled = false; btn.textContent = 'Salva';
+      }
+    }
+  </script>
   </body></html>`;
 }
 

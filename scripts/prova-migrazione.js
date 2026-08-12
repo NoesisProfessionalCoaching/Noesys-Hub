@@ -21,7 +21,7 @@ const { Pool } = require('pg');
 const TABELLE_ATTESE = [
   'coach', 'clients', 'sessions', 'percorsi', 'sedute', 'payments', 'leads',
   'committenti', 'progetti', 'partecipazioni', 'fasi_progetto',
-  'permessi_strumenti', 'moduli_letti',
+  'permessi_strumenti', 'moduli_letti', 'emittente',
 ];
 
 const url = process.env.DATABASE_URL;

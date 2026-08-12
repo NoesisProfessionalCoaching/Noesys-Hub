@@ -209,5 +209,96 @@ console.log('\n— LE ANOMALIE RACCOLTE PER PERSONA —');
   prova('nessuna anomalia → nessun riquadro', [], f.anomaliePerSoggetto([]));
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// I CONTI — i 6 casi del §11.1 della spec, coi numeri esatti.
+//
+// Questi sei non sono prove come le altre: sono i numeri che il commercialista
+// si aspetta di rivedere nel gestionale. Se uno solo si muove, il documento ha
+// smesso di essere un controllo ed è diventato una fonte di errori.
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n— I CONTI: I 6 CASI OBBLIGATORI DELLA SPEC (§11.1) —');
+{
+  // [titolo, categoria, imponibile, iva, ritenuta, bollo, totale, da pagare]
+  const CASI = [
+    ['1 · sostituto d’imposta',            'sostituto_it',    1000,  220, 200, 0,    1220, 1020],
+    ['2 · privato italiano',               'privato_it',      1000,  220,   0, 0,    1220, 1220],
+    ['3 · forfettario italiano',           'forfettario_it',  1000,  220,   0, 0,    1220, 1220],
+    ['4 · estero, sopra la soglia bollo',  'estero_extra_ue', 1000,    0,   0, 2,    1002, 1002],
+    ['5 · estero, sotto la soglia bollo',  'estero_extra_ue',   50,    0,   0, 0,      50,   50],
+    // Il caso 6 è il caso 1 guardato da un'altra parte: verifica che a decidere
+    // sia il REGIME e non la forma giuridica. Una persona fisica con partita IVA
+    // ordinaria è sostituto d'imposta e la ritenuta ci va.
+    ['6 · persona fisica con P.IVA ordinaria', 'sostituto_it', 1000, 220, 200, 0,    1220, 1020],
+  ];
+  for (const [titolo, categoria, imp, iva, rit, bollo, tot, pag] of CASI) {
+    prova(titolo,
+      { iva, ritenuta: rit, bollo, totaleDocumento: tot, daPagare: pag },
+      (d => ({ iva: d.iva, ritenuta: d.ritenuta, bollo: d.bollo,
+               totaleDocumento: d.totaleDocumento, daPagare: d.daPagare }))(
+        f.calcolaDocumento({ categoria, imponibile: imp })));
+  }
+  // La categoria del caso 6 arriva davvero dai dati, non è scritta a mano qui.
+  prova('e il caso 6 nasce davvero da una persona fisica con partita IVA',
+    'sostituto_it', f.categoriaFiscale({ ...base, natura_giuridica: 'persona_fisica',
+      partita_iva: '12345678901', regime: 'ordinario' }));
+}
+
+console.log('\n— I CASI LIMITE (§11.3) —');
+prova('bollo a 77,47 esatti: NON si mette, la soglia è «superiore a»',
+  0, f.calcolaDocumento({ categoria: 'estero_extra_ue', imponibile: 77.47 }).bollo);
+prova('bollo a 77,48: si mette',
+  2, f.calcolaDocumento({ categoria: 'estero_extra_ue', imponibile: 77.48 }).bollo);
+prova('categoria non decidibile → nessun conto, non un conto sbagliato',
+  null, f.calcolaDocumento({ categoria: null, imponibile: 1000 }));
+prova('il mezzo centesimo si arrotonda per eccesso, non per difetto',
+  1.01, f.arrotonda(1.005));
+prova('il caso vero di Prova Soldi: luglio 2026, 400 € imponibile',
+  { iva: 88, daPagare: 488 },
+  (d => ({ iva: d.iva, daPagare: d.daPagare }))(
+    f.calcolaDocumento({ categoria: 'privato_it', imponibile: 400 })));
+
+console.log('\n— TUTTI I PASSAGGI DEVONO ESSERE VISIBILI (richiesta di Germano) —');
+{
+  const sost = f.passaggiDocumento(f.calcolaDocumento({ categoria: 'sostituto_it', imponibile: 1000 }));
+  prova('al sostituto d’imposta si mostrano tutti e cinque i passaggi',
+    ['Imponibile', 'IVA 22%', 'Totale del documento', 'Ritenuta d’acconto 20%', 'Importo da bonificare'],
+    sost.map(p => p.etichetta));
+  prova('e l’ultimo passaggio è quanto ti bonifica davvero',
+    1020, sost[sost.length - 1].importo);
+  const priv = f.passaggiDocumento(f.calcolaDocumento({ categoria: 'privato_it', imponibile: 1000 }));
+  prova('al privato non si mostra una ritenuta che non c’è',
+    ['Imponibile', 'IVA 22%', 'Totale del documento', 'Importo da bonificare'],
+    priv.map(p => p.etichetta));
+  const est = f.passaggiDocumento(f.calcolaDocumento({ categoria: 'estero_extra_ue', imponibile: 1000 }));
+  prova('all’estero l’IVA a zero si mostra lo stesso, con scritto perché',
+    'Operazione non soggetta, art. 7-ter DPR 633/72', est[1].nota);
+}
+
+console.log('\n— CHI EMETTE: cosa ferma una proforma e cosa no —');
+{
+  const completo = {
+    denominazione: 'Germano Guerriero', via: 'Via Roma 1', cap: '20100',
+    citta: 'Milano', provincia: 'MI', paese: 'IT',
+    partita_iva: '12345678901', regime: 'ordinario', iban: 'IT60X0542811101000000123456',
+    codice_fiscale: 'GRRGMN80A01F205X', intestatario: 'Germano Guerriero',
+    banca: 'Banca X', ateco: '70.20.09', email: 'a@b.it',
+  };
+  prova('con tutto compilato si può emettere', true, f.datiMancantiEmittente(completo).pronto);
+  prova('senza IBAN non si emette: il documento non direbbe dove pagare',
+    ['IBAN'], f.datiMancantiEmittente({ ...completo, iban: '' }).mancanti);
+  prova('senza partita IVA non si emette',
+    ['partita IVA'], f.datiMancantiEmittente({ ...completo, partita_iva: '' }).mancanti);
+  prova('nome e cognome bastano al posto della denominazione',
+    true, f.datiMancantiEmittente({ ...completo, denominazione: '', nome: 'Germano', cognome: 'Guerriero' }).pronto);
+  prova('il regime forfettario ferma tutto e spiega perché',
+    true, /forfettario/.test(f.datiMancantiEmittente({ ...completo, regime: 'forfettario' }).mancanti.join(' ')));
+  prova('un numero di telefono mancante NON ferma niente',
+    true, f.datiMancantiEmittente({ ...completo, telefono: '' }).pronto);
+  prova('ma il codice fiscale mancante viene comunque detto',
+    true, f.datiMancantiEmittente({ ...completo, codice_fiscale: '' }).consigliati.includes('codice fiscale'));
+  prova('una tabella «chi emette» ancora vuota non è pronta',
+    false, f.datiMancantiEmittente({}).pronto);
+}
+
 console.log(`\n${falliti ? '✗' : '✓'} ${falliti} prove fallite.`);
 process.exit(falliti ? 1 : 0);

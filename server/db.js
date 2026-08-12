@@ -524,6 +524,49 @@ async function init() {
   `);
   // ─────────────────────────────────────────────────────────────────────────
 
+  // ── FATTURAZIONE FASE 3 — CHI EMETTE ──────────────────────────────────────
+  // Dei dati di CHI emette il documento nell'Hub non c'era traccia: né partita
+  // IVA, né indirizzo, né IBAN, né una pagina di impostazioni. Per fatturare
+  // servivano i dati del cliente (Fase 1) — ma una proforma senza i dati di chi
+  // la manda non si può spedire a nessuno: chi la riceve non saprebbe dove pagare.
+  //
+  // UNA riga sola, sempre quella (id = 1): non è un elenco, è «chi sei tu». Il
+  // CHECK sull'id è ciò che impedisce che un giorno ne esistano due che si
+  // contraddicono, e che il documento peschi la sbagliata.
+  //
+  // ⚠️ `regime` parte da 'ordinario' perché è l'inquadramento dato dal
+  // commercialista l'11/08 (IVA ordinaria, NON forfettario) ed è quello su cui
+  // sono costruiti i conti. Resta un campo, non una costante, perché se un
+  // giorno cambiasse, i conti dovrebbero cambiare con lui e non di nascosto.
+  await query(`
+    CREATE TABLE IF NOT EXISTS emittente (
+      id             INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+      denominazione  TEXT,
+      nome           TEXT,
+      cognome        TEXT,
+      via            TEXT,
+      cap            TEXT,
+      citta          TEXT,
+      provincia      TEXT,
+      paese          TEXT DEFAULT 'IT',
+      partita_iva    TEXT,
+      codice_fiscale TEXT,
+      regime         TEXT DEFAULT 'ordinario',
+      ateco          TEXT,
+      iban           TEXT,
+      banca          TEXT,
+      intestatario   TEXT,
+      email          TEXT,
+      telefono       TEXT,
+      updated_at     TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  // La riga nasce vuota al primo avvio: così la pagina ha sempre qualcosa da
+  // mostrare e il salvataggio è sempre e solo un UPDATE, senza il ramo «esiste
+  // o non esiste ancora?» che è il punto in cui questi casi si rompono.
+  await query(`INSERT INTO emittente (id) VALUES (1) ON CONFLICT (id) DO NOTHING`);
+  // ─────────────────────────────────────────────────────────────────────────
+
   // Traccia di cosa è già stato letto: un modulo si elabora UNA volta sola.
   // Senza questo, a ogni giro l'automazione rileggerebbe gli stessi documenti e
   // riscriverebbe l'anagrafica ogni tre ore.

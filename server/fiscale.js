@@ -189,6 +189,164 @@ function daCommittente(k) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// I CONTI (spec §5 e §6) — da imponibile a «quanto ti bonificano»
+//
+// Portati qui in Fase 3 e non in Fase 5 come previsto: la proforma deve dire una
+// cifra a un cliente vero, e quella cifra dipende dalla sua categoria fiscale
+// esattamente come ci dipenderà il report. È la stessa aritmetica: scriverla due
+// volte vorrebbe dire darle due occasioni di divergere.
+//
+// ⚠️ Tutto questo vale finché CHI EMETTE è in IVA ordinaria (inquadramento dato
+// dal commercialista l'11/08). Un emittente forfettario non addebiterebbe l'IVA
+// affatto: per questo il regime dell'emittente è un dato obbligatorio e
+// `datiMancantiEmittente` non lascia passare una proforma senza.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Le aliquote non si scrivono dentro i conti: cambiano per legge, e devono
+// cambiare in UN punto solo (spec §5).
+const PARAMETRI = {
+  aliquota_iva: 22,
+  ritenuta: { aliquota: 20, tipo: 'RT01', causale: 'A' },
+  // Il bollo si applica SOPRA la soglia, non a parità: a 77,47 esatti non si mette.
+  bollo: { importo: 2.00, soglia: 77.47 },
+  ateco_principale: '70.20.09',
+};
+
+// La tabella decisionale della spec §6, scritta come TABELLA e non come una
+// catena di «se»: così si legge riga per riga e si prova riga per riga.
+const TRATTAMENTI = {
+  sostituto_it:    { iva: true,  ritenuta: true,  bollo: false, natura: null,    dicitura: null },
+  privato_it:      { iva: true,  ritenuta: false, bollo: false, natura: null,    dicitura: null },
+  forfettario_it:  { iva: true,  ritenuta: false, bollo: false, natura: null,    dicitura: null },
+  estero_extra_ue: { iva: false, ritenuta: false, bollo: true,  natura: 'N2.1',
+                     dicitura: 'Operazione non soggetta, art. 7-ter DPR 633/72' },
+};
+
+/**
+ * Arrotonda a 2 decimali per eccesso sul mezzo centesimo (half-up).
+ * `Math.round(v * 100) / 100` da solo NON basta: 1,005 in binario vale un
+ * pelo MENO di 1,005, quindi tornerebbe 1,00 invece di 1,01. Lo scostamento
+ * minuscolo rimette il numero dalla parte giusta della metà.
+ */
+function arrotonda(v) {
+  const c = Number(v || 0) * 100;
+  return Math.round(c + (c >= 0 ? 1e-9 : -1e-9)) / 100;
+}
+
+/**
+ * I conti di un documento, nell'ordine della spec §6.1.
+ *
+ * ⚠️ L'imponibile è la CIFRA CONCORDATA (prezzo × sessioni), MAI l'importo che
+ * arriva in banca. La spec al §6.1 passo 1 dice «imponibile = importo
+ * dell'incasso» e sbaglia: col suo stesso esempio fatturi 1.000, il cliente
+ * trattiene 200 di ritenuta e ti bonifica 1.020 — se 1.020 diventasse
+ * l'imponibile, IVA e ritenuta verrebbero calcolate su un numero inventato.
+ *
+ * @returns {object|null} null se la categoria non è decidibile: chi chiama deve
+ *          fermarsi e chiedere i dati, mai tirare a indovinare.
+ */
+function calcolaDocumento({ categoria, imponibile }) {
+  const t = TRATTAMENTI[categoria];
+  if (!t) return null;
+  // Si arrotonda A OGNI PASSAGGIO, non solo alla fine (spec §6.2): è così che
+  // calcola il gestionale, e i due numeri devono coincidere al centesimo,
+  // altrimenti il documento perde la sua funzione di controllo.
+  const imponibileR = arrotonda(imponibile);
+  const iva      = t.iva      ? arrotonda(imponibileR * PARAMETRI.aliquota_iva / 100) : 0;
+  const ritenuta = t.ritenuta ? arrotonda(imponibileR * PARAMETRI.ritenuta.aliquota / 100) : 0;
+  // Il bollo è voce esclusa ex art. 15: non entra nella base dell'IVA né in
+  // quella della ritenuta, e si espone sempre come riga a sé (spec §6.3).
+  const bollo = (t.bollo && imponibileR > PARAMETRI.bollo.soglia) ? PARAMETRI.bollo.importo : 0;
+  const totaleDocumento = arrotonda(imponibileR + iva + bollo);
+  const daPagare = arrotonda(totaleDocumento - ritenuta);
+  return {
+    categoria,
+    imponibile: imponibileR, iva, ritenuta, bollo,
+    totaleDocumento,
+    // Il «netto a pagare» della spec. Qui si chiama così perché è la domanda a
+    // cui risponde: quanto mi bonifica il cliente.
+    daPagare,
+    natura: t.natura, dicitura: t.dicitura,
+  };
+}
+
+/**
+ * Gli stessi conti spezzati nei PASSAGGI da mostrare, uno per riga.
+ *
+ * Richiesta di Germano (12/08): «l'importante è che siano visibili tutti i
+ * passaggi del conteggio». Sta qui e non nella pagina perché la proforma di
+ * carta e la schermata devono dire le stesse identiche righe: se ognuna se le
+ * costruisse per conto suo, prima o poi direbbero due cose diverse.
+ *
+ * Le etichette sono scritte dal punto di vista di CHI RICEVE il documento: è il
+ * cliente sostituto d'imposta a trattenere la ritenuta e a versarla allo Stato,
+ * non il coach.
+ */
+function passaggiDocumento(d) {
+  if (!d) return [];
+  const p = [{ etichetta: 'Imponibile', importo: d.imponibile, segno: '' }];
+  if (d.iva) {
+    p.push({ etichetta: `IVA ${PARAMETRI.aliquota_iva}%`, importo: d.iva, segno: '+' });
+  } else {
+    p.push({ etichetta: 'IVA', importo: 0, segno: '', nota: d.dicitura });
+  }
+  if (d.bollo) {
+    p.push({ etichetta: `Imposta di bollo (sopra € ${euro(PARAMETRI.bollo.soglia)})`,
+             importo: d.bollo, segno: '+' });
+  }
+  p.push({ etichetta: 'Totale del documento', importo: d.totaleDocumento, segno: '=', forte: true });
+  if (d.ritenuta) {
+    p.push({ etichetta: `Ritenuta d’acconto ${PARAMETRI.ritenuta.aliquota}%`,
+             nota: 'la trattieni tu e la versi allo Stato',
+             importo: d.ritenuta, segno: '−' });
+  }
+  p.push({ etichetta: 'Importo da bonificare', importo: d.daPagare, segno: '=', forte: true });
+  return p;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CHI EMETTE — cosa serve avere scritto prima di poter mandare una proforma
+//
+// Diviso in due elenchi apposta: `mancanti` ferma il documento, `consigliati`
+// no. Confonderli vorrebbe dire o bloccare il lavoro per un numero di telefono,
+// o lasciar partire un documento senza l'IBAN — e nessuna delle due è
+// accettabile.
+// ═══════════════════════════════════════════════════════════════════════════
+function datiMancantiEmittente(e) {
+  e = e || {};
+  const mancanti = [], consigliati = [];
+  const nomeCompleto = pulito(e.denominazione)
+    || pulito([e.nome, e.cognome].filter(Boolean).join(' '));
+
+  if (!nomeCompleto)          mancanti.push('denominazione (o nome e cognome)');
+  if (!pulito(e.via))         mancanti.push('indirizzo');
+  if (!pulito(e.cap))         mancanti.push('CAP');
+  if (!pulito(e.citta))       mancanti.push('città');
+  if (!pulito(e.provincia))   mancanti.push('provincia');
+  if (!pulito(e.paese))       mancanti.push('paese');
+  if (!pulito(e.partita_iva)) mancanti.push('partita IVA');
+  // Senza IBAN il documento non dice dove pagare: è il motivo per cui esiste.
+  if (!pulito(e.iban))        mancanti.push('IBAN');
+  // Il regime non è un dettaglio anagrafico: decide se sul documento ci va
+  // l'IVA. I conti qui dentro valgono per l'ordinario, quindi un regime
+  // diverso (o assente) deve fermare tutto invece di produrre cifre sbagliate.
+  const regime = pulito(e.regime).toLowerCase();
+  if (regime !== 'ordinario') {
+    mancanti.push(regime === 'forfettario'
+      ? 'regime: con il forfettario l’IVA non si addebita e i conti dell’Hub non valgono più — parlane col commercialista'
+      : 'regime fiscale');
+  }
+
+  if (!pulito(e.codice_fiscale)) consigliati.push('codice fiscale');
+  if (!pulito(e.intestatario))   consigliati.push('intestatario del conto');
+  if (!pulito(e.banca))          consigliati.push('banca');
+  if (!pulito(e.ateco))          consigliati.push('codice ATECO');
+  if (!pulito(e.email))          consigliati.push('email');
+
+  return { mancanti, consigliati, pronto: mancanti.length === 0 };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // LE ANOMALIE (spec §7.1 sezione B) — «chi non è fatturabile, e perché»
 //
 // Anche questa parte è pura: entrano tre elenchi già letti dal database, esce
@@ -303,5 +461,7 @@ function anomaliePerSoggetto(lista) {
 module.exports = {
   CATEGORIE, categoriaFiscale, datiMancanti, statoFatturabilita,
   daCliente, daCommittente,
-  TIPI_ANOMALIA, quoteProgetto, anomalie, anomaliePerSoggetto,
+  PARAMETRI, TRATTAMENTI, arrotonda, calcolaDocumento, passaggiDocumento,
+  datiMancantiEmittente,
+  TIPI_ANOMALIA, quoteProgetto, anomalie, anomaliePerSoggetto, euro,
 };
