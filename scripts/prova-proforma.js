@@ -112,6 +112,31 @@ console.log('\n— QUANDO NON SI PUÒ EMETTERE, E PERCHÉ (mai un blocco muto) �
       cliente: { ...cliente, codice_fiscale: '' }, righe }).length);
 }
 
+// ── IL PROMEMORIA: DAL PRIMO LUNEDÌ ────────────────────────────────────────
+// Germano ha scelto «sempre il primo lunedì» conoscendo il rischio (3 volte su
+// 12 cade a ridosso della fine del mese prima). Il calcolo va provato: sbagliato
+// di un giorno, il promemoria arriva quando non deve — o non arriva affatto, e
+// di un promemoria che non arriva non se ne accorge nessuno.
+console.log('\n— IL PRIMO LUNEDÌ —');
+{
+  const mat = require('../server/maturato');
+  prova('agosto 2026 comincia di sabato → primo lunedì il 3', 3, mat.giornoPrimoLunedi(2026, 8));
+  prova('novembre 2026 comincia di domenica → primo lunedì il 2 (il caso stretto)',
+    2, mat.giornoPrimoLunedi(2026, 11));
+  prova('febbraio 2027 comincia già di lunedì → primo lunedì il 1',
+    1, mat.giornoPrimoLunedi(2027, 2));
+  prova('un mese che comincia di martedì → primo lunedì il 7', 7, mat.giornoPrimoLunedi(2026, 9));
+
+  prova('il 2 agosto 2026 (domenica) il promemoria NON c’è ancora',
+    { attivo: false, meseLimite: '2026-07' }, mat.finestraPromemoria('2026-08-02'));
+  prova('il 3 agosto 2026 (primo lunedì) il promemoria c’è, e riguarda luglio',
+    { attivo: true, meseLimite: '2026-07' }, mat.finestraPromemoria('2026-08-03'));
+  prova('a metà mese c’è ancora: non è un solo giorno, è da lì in poi',
+    { attivo: true, meseLimite: '2026-07' }, mat.finestraPromemoria('2026-08-20'));
+  prova('a gennaio il mese da chiedere è dicembre dell’anno prima',
+    { attivo: true, meseLimite: '2025-12' }, mat.finestraPromemoria('2026-01-15'));
+}
+
 console.log('\n— IL NOME DEL FILE —');
 prova('la barra del numero diventa un trattino: «/» è vietato nei nomi dei file',
   'Proforma 2026-001 - Prova Soldi.pdf',

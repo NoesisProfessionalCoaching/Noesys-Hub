@@ -11,6 +11,7 @@ const mailer = require('./mailer');
 const moduli = require('./moduli');
 const fiscale = require('./fiscale');
 const proforma = require('./proforma');
+const maturato = require('./maturato');
 
 const router = express.Router();
 
@@ -237,7 +238,36 @@ async function mostraHome(req, res) {
             OR c.consenso_privacy IS NOT TRUE
          ORDER BY c.name`),
     ]);
+
+    // ── Pagamenti da chiedere (Fase 3, Tappa 3) ───────────────────────────────
+    // Il promemoria della chiusura del mese. Non è una mail e non è un lavoro
+    // notturno: è una riga in più qui, che compare dal primo lunedì del mese e
+    // sparisce da sola quando non c'è più niente da chiedere (scelta di Germano,
+    // 12/08). Il calcolo non è scritto qui — è lo STESSO di `maturato.js` che
+    // usano anche la pagina Proforma e la scheda cliente.
+    const finestra = maturato.finestraPromemoria();
+    let daChiedereRighe = [];
+    if (finestra.attivo) {
+      const tutti = await maturato.daChiedere();
+      // Solo i mesi già FINITI: del mese in corso non si chiede niente, non è
+      // ancora chiuso. Vale per il maturato e, con la stessa misura, per le bozze.
+      daChiedereRighe = tutti.map(c => {
+        const mesi  = c.mesi.filter(m => m.mese <= finestra.meseLimite);
+        const bozze = c.bozze.filter(b => b.mese <= finestra.meseLimite);
+        return {
+          id: c.id, name: c.name, mesi, bozze,
+          importo: mesi.reduce((s, m) => s + m.importo, 0),
+          n: mesi.reduce((s, m) => s + m.n, 0),
+          nBozze: bozze.reduce((s, b) => s + b.n, 0),
+        };
+      }).filter(c => c.n > 0 || c.nBozze > 0);
+    }
+
     res.send(homePage({
+      // ⚠️ Il nome per esteso, e non `daChiedere`: in questa stessa funzione c'è
+      // già `daChiudere` (i percorsi da chiudere), e due parole che si
+      // distinguono per una lettera sono un errore in attesa di succedere.
+      pagamentiDaChiedere: daChiedereRighe,
       nIndividuali: ind.rows[0].n,
       nProgetti: prog.rows[0].n, nProgettiAttivi: prog.rows[0].attivi,
       nCommittenti: comm.rows[0].n,
@@ -400,21 +430,20 @@ router.get('/dashboard/clients/:id', requireCoach, async (req, res) => {
                   FROM permessi_validi WHERE client_id=$1
                  ORDER BY fine DESC`, [req.params.id]).catch(() => ({ rows: [] })),
     ]);
-    // Fatturazione (Fase 3): le proforma di questo cliente, quali sedute sono già
-    // state chieste, e i dati di chi emette (servono a dire perché non si può
+    // Fatturazione (Fase 3): le proforma di questo cliente, quanto c'è da
+    // chiedergli, e i dati di chi emette (servono a dire perché non si può
     // emettere, invece di mostrare un pulsante che poi non funziona).
-    const [pfr, chieste, emr] = await Promise.all([
+    // ⭐ Il «da chiedere» arriva da `maturato.js`, lo stesso modulo che risponde
+    // alla home e alla pagina Proforma: la regola è scritta una volta sola.
+    const [pfr, mat, emr] = await Promise.all([
       db.query(`SELECT * FROM proforme WHERE client_id=$1
                  ORDER BY anno DESC, progressivo DESC`, [req.params.id]),
-      db.query(`SELECT r.seduta_id FROM proforma_righe r
-                  JOIN proforme p ON p.id = r.proforma_id
-                 WHERE p.client_id=$1 AND p.stato <> 'annullata'
-                   AND r.seduta_id IS NOT NULL`, [req.params.id]),
+      maturato.daChiedere(req.params.id),
       db.query('SELECT * FROM emittente WHERE id = 1'),
     ]);
     res.send(clientDetailPage(client, sr.rows, pr.rows, payr.rows, sedr.rows, prjr.rows, permr.rows, req, {
       proforme: pfr.rows,
-      seduteChieste: new Set(chieste.rows.map(r => r.seduta_id)),
+      maturato: mat[0] || null,
       emittente: emr.rows[0] || {},
     }));
   } catch (err) {
@@ -1643,6 +1672,60 @@ router.get('/dashboard/proforma/:id/pdf', requireCoach, async (req, res) => {
   }
 });
 
+// ── Amministrazione → Proforma (Fase 3, Tappa 3) ───────
+// La pagina è una SEQUENZA DI PASSAGGI, non un prospetto: chiedi → rileggi →
+// manda. Qui si raccolgono i dati dei tre passaggi; a metterli in fila ci pensa
+// `proformaPage()`.
+router.get('/dashboard/amministrazione/proforma', requireCoach, async (req, res) => {
+  try {
+    const [daChiedere, emr, pfr] = await Promise.all([
+      maturato.daChiedere(),
+      db.query('SELECT * FROM emittente WHERE id = 1'),
+      db.query(`SELECT pf.*, c.name AS cliente_nome
+                  FROM proforme pf LEFT JOIN clients c ON c.id = pf.client_id
+                 ORDER BY pf.anno DESC, pf.progressivo DESC`),
+    ]);
+    const emittente = emr.rows[0] || {};
+
+    // Perché NON si può chiedere: la ragione si calcola con lo STESSO modulo che
+    // usa la rotta di creazione, così la pagina non può promettere un pulsante
+    // che poi il server rifiuta. Servono i clienti per intero (i dati fiscali).
+    const ids = daChiedere.map(c => c.id);
+    const cl = ids.length
+      ? await db.query('SELECT * FROM clients WHERE id = ANY($1::text[])', [ids])
+      : { rows: [] };
+    const perId = new Map(cl.rows.map(c => [c.id, c]));
+    for (const c of daChiedere) {
+      c.motivi = proforma.motiviCheImpediscono({
+        emittente, cliente: perId.get(c.id) || {},
+        righe: new Array(c.nSessioni),
+      });
+    }
+    res.send(proformaPage(daChiedere, pfr.rows, req));
+  } catch (err) {
+    console.error('[proforma/pagina]', err);
+    res.status(500).send('Errore nel caricamento delle proforma');
+  }
+});
+
+// Annullare una proforma. Il documento NON si cancella e il suo numero NON si
+// riusa: resta lì con scritto ANNULLATA, che è come funziona ogni numerazione di
+// documenti. Quello che torna indietro sono le SESSIONI — tutte le query
+// guardano `stato <> 'annullata'`, quindi tornano da sole fra quelle da chiedere,
+// senza che nessuno debba spuntare niente.
+router.post('/dashboard/proforma/:id/annulla', requireCoach, async (req, res) => {
+  try {
+    const r = await db.query(
+      `UPDATE proforme SET stato = 'annullata' WHERE id = $1 AND stato <> 'annullata'
+       RETURNING numero`, [req.params.id]);
+    if (!r.rows.length) return res.status(404).json({ error: 'Proforma non trovata, o già annullata' });
+    res.json({ ok: true, numero: r.rows[0].numero });
+  } catch (err) {
+    console.error('[proforma/annulla]', err);
+    res.status(500).json({ error: "Errore nell'annullamento" });
+  }
+});
+
 // ── Chi emette (Fatturazione, Fase 3) ──────────────────
 // La riga è UNA sola e nasce vuota con la migrazione: qui non si crea e non si
 // cancella niente, si legge e si riscrive sempre quella.
@@ -2608,6 +2691,31 @@ function homePage(d, req) {
     `/dashboard/clients/${a.id}`, esc(a.name),
     a.n === 1 ? '1 dato' : a.n + ' dati')));
 
+  // ⭐ I pagamenti da chiedere (Fase 3, Tappa 3). Sta in cima perché è l'unico
+  // gruppo che riguarda dei soldi, e perché l'amministrazione è la cosa che
+  // Germano rimanda più volentieri: se non gliela mette davanti l'Hub, non se la
+  // ricorda nessuno.
+  // Una riga per PERSONA, non per mese e non per tipo di problema (regola
+  // dell'11/08): si apre quella scheda e si sistema tutto lì.
+  // Le BOZZE stanno nella riga della persona a cui appartengono, e chi ha SOLO
+  // bozze compare lo stesso: una sessione non approvata non matura, quindi
+  // resterebbe fuori dalla proforma senza che nessuno lo dica.
+  const gDaChiedere = gruppo('Pagamenti da chiedere', (d.pagamentiDaChiedere || []).map(c => {
+    // Chi ha solo bozze non ha mesi maturati: il mese lo dicono le bozze stesse,
+    // altrimenti la riga direbbe un nome e basta.
+    const mesi = (c.n ? c.mesi.map(m => m.mese) : c.bozze.map(b => b.mese))
+      .map(meseEsteso).join(' · ');
+    const bozze = c.nBozze
+      ? `<span style="color:#8a6d1e"> · ${c.nBozze === 1 ? '1 sessione ancora in bozza' : c.nBozze + ' sessioni ancora in bozza'}</span>`
+      : '';
+    const coda = c.n
+      ? `<strong style="color:var(--ink)">€ ${c.importo.toLocaleString('it-IT', { minimumFractionDigits: 2 })}</strong>`
+      : 'da approvare';
+    return voce(`/dashboard/clients/${c.id}`,
+      `${esc(c.name)} <span style="color:var(--hint);text-transform:capitalize">${mesi}</span>${bozze}`,
+      coda);
+  }));
+
   // Documentazione che manca, SOLO sui percorsi attivi (scelta di Germano 08/08).
   // I due casi restano distinti perché l'azione è diversa: «non arrivata» aspetta
   // il cliente, «ancora in bianco» aspetta il coach — è il caso di chi compila su
@@ -2615,7 +2723,7 @@ function homePage(d, req) {
   const gDocumenti = gruppo('Documentazione da completare', d.documenti.map(x => voce(
     `/dashboard/clients/${x.id}`, esc(x.name), x.stato)));
 
-  const attenzione = [gAppuntamenti, gBozze, gAnagrafiche, gChiudere, gDocumenti, gAzioni, gLead].filter(Boolean).join('');
+  const attenzione = [gAppuntamenti, gDaChiedere, gBozze, gAnagrafiche, gChiudere, gDocumenti, gAzioni, gLead].filter(Boolean).join('');
 
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub</title>${baseStyle()}</head><body>
   ${headerNoesys({})}
@@ -2917,7 +3025,6 @@ function renderSedutaRow(s) {
 function clientDetailPage(client, sessions, percorsi, payments, sedute, progetti, permessi, req, fatt) {
   fatt = fatt || {};
   const proforme = fatt.proforme || [];
-  const seduteChieste = fatt.seduteChieste || new Set();
   const link = PLATFORM_URL + '/c/' + client.token;
   sedute = sedute || [];
   permessi = permessi || [];
@@ -3084,96 +3191,80 @@ Germano`;
   // in una proforma viva ha smesso di essere «da chiedere» ed esce di qui. È la
   // stessa regola che impedisce di chiedere due volte la stessa sessione, e non
   // ha bisogno di nessuna casella da spuntare: la verità è la riga di proforma.
-  const maturatoMesi = new Map();          // 'AAAA-MM' → { n, nIntake, importo }
-  let bozzeNonApprovate = 0;
-  for (const p of percorsi) {
-    // I percorsi CONDIVISI (quelli di un progetto) compaiono qui ma i loro soldi
-    // vivono sul progetto: contarli anche come maturato personale del coachee
-    // significherebbe contarli due volte.
-    if (!p.client_id) continue;
-    if (p.modalita !== 'Standard' || !p.prezzo) continue;
-    const prezzoSessione = Number(p.prezzo);
-    for (const s of sedute) {
-      if (s.percorso_id !== p.id || !s.data) continue;
-      // Una bozza non è ancora un fatto: non matura, ma va CONTATA e detta,
-      // altrimenti resta fuori dalla proforma senza che nessuno se ne accorga.
-      if (s.stato !== 'confermata') { bozzeNonApprovate += 1; continue; }
-      if (seduteChieste.has(s.id)) continue;
-      const intake = s.tipo === 'Intake';
-      const mese = String(s.data).slice(0, 7);
-      const acc = maturatoMesi.get(mese) || { n: 0, nIntake: 0, importo: 0 };
-      acc.n += 1;
-      if (intake) acc.nIntake += 1;
-      acc.importo += prezzoSessione * (intake ? 2 : 1);
-      maturatoMesi.set(mese, acc);
-    }
-  }
-  const maturatoTot = [...maturatoMesi.values()].reduce((s, m) => s + m.importo, 0);
+  // ⭐ Dalla Tappa 3 il conto NON si fa più qui dentro: lo fa `maturato.js`, che
+  // è l'unico posto dove sta scritto che cosa vuol dire «da chiedere». Prima era
+  // ricopiato in questa pagina; ricopiarlo anche in home e in Amministrazione
+  // avrebbe voluto dire tre copie della stessa regola, libere di divergere.
+  const mat = fatt.maturato || { totale: 0, nSessioni: 0, mesi: [], bozze: [], nBozze: 0 };
+  const maturatoTot = mat.totale;
 
   // Perché NON si può chiedere il pagamento. Le ragioni sono le stesse che usa
   // la rotta quando crea il documento (stesso modulo), così non può succedere
   // che il pulsante prometta una cosa e il server ne faccia un'altra.
-  const nDaChiedere = [...maturatoMesi.values()].reduce((s, m) => s + m.n, 0);
-  const motiviBlocco = maturatoMesi.size === 0 ? [] : proforma.motiviCheImpediscono({
-    emittente: fatt.emittente || {}, cliente: client, righe: new Array(nDaChiedere),
+  const motiviBlocco = !mat.nSessioni ? [] : proforma.motiviCheImpediscono({
+    emittente: fatt.emittente || {}, cliente: client, righe: new Array(mat.nSessioni),
   });
-  const azioneMaturato = maturatoMesi.size === 0 ? '' : (motiviBlocco.length ? `
-        <div style="background:#fffdf6;border-left:3px solid var(--gold);border-radius:8px;padding:12px 14px;margin-top:12px">
+  const azioneMaturato = !mat.nSessioni ? '' : (motiviBlocco.length ? `
+        <div style="background:#fffdf6;border-left:3px solid var(--gold);border-radius:8px;padding:12px 14px;margin-top:10px">
           <div style="font-size:13px;font-weight:700;margin-bottom:5px">Non si può ancora chiedere il pagamento</div>
           <ul style="margin:0;padding-left:18px;font-size:13px;color:#4A4A4A">
             ${motiviBlocco.map(m => `<li style="margin-bottom:3px">${esc(m)}</li>`).join('')}
           </ul>
         </div>` : `
-        <div style="margin-top:12px">
+        <div style="margin-top:10px">
           <button onclick="chiediPagamento()" id="pf-btn" class="btn btn-primary btn-sm">
             Chiedi il pagamento — € ${maturatoTot.toLocaleString('it-IT', { minimumFractionDigits: 2 })}
           </button>
           <div id="pf-error" style="display:none;margin-top:10px" class="flash-error"></div>
         </div>`);
 
-  const avvisoBozze = (maturatoMesi.size && bozzeNonApprovate) ? `
+  const avvisoBozze = mat.nBozze ? `
         <div style="font-size:12px;color:#8a6d1e;background:#fdf6e3;border-radius:8px;padding:9px 12px;margin-top:10px">
-          ⚠️ ${bozzeNonApprovate === 1 ? 'C’è 1 sessione in bozza' : `Ci sono ${bozzeNonApprovate} sessioni in bozza`}:
-          finché non ${bozzeNonApprovate === 1 ? 'la approvi' : 'le approvi'} non ${bozzeNonApprovate === 1 ? 'entra' : 'entrano'} nella proforma.
+          ⚠️ ${mat.nBozze === 1 ? 'C’è 1 sessione in bozza' : `Ci sono ${mat.nBozze} sessioni in bozza`}:
+          finché non ${mat.nBozze === 1 ? 'la approvi' : 'le approvi'} non ${mat.nBozze === 1 ? 'entra' : 'entrano'} nella proforma.
         </div>` : '';
 
-  const maturatoBlock = maturatoMesi.size === 0 ? '' : `
-      <div style="margin-bottom:18px">
-        <div class="field-label" style="margin-bottom:2px">Maturato, non ancora chiesto</div>
-        ${[...maturatoMesi.entries()].sort((a, b) => b[0].localeCompare(a[0])).map(([mese, m]) => `
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid #eef1f5;flex-wrap:wrap">
-            <div style="font-size:14px;text-transform:capitalize">${meseEsteso(mese)}</div>
-            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-              <span style="font-size:12px;color:#aaa">${m.n} ${m.n === 1 ? 'sessione' : 'sessioni'}${m.nIntake ? ` · ${m.nIntake === 1 ? 'intake' : m.nIntake + ' intake'} ×2` : ''}</span>
-              <strong style="font-size:14px">€ ${m.importo.toLocaleString('it-IT', { minimumFractionDigits: 2 })}</strong>
-            </div>
-          </div>`).join('')}
-        ${avvisoBozze}
-        ${azioneMaturato}
-      </div>`;
-
-  // Le proforma già emesse. Il numero è un collegamento al PDF: si riscrive
-  // uguale ogni volta dai dati congelati, quindi non serve conservare il file.
+  // ⭐ DUE RIGHE, non l'elenco (decisione di Germano del 12/08, punto 9c). Qui
+  // serve sapere a colpo d'occhio, prima di una sessione, se quella persona ha
+  // qualcosa in sospeso: quanto c'è da chiedere, e com'è finita l'ultima volta.
+  // L'elenco completo, e i passaggi da fare, stanno in Amministrazione → Proforma.
   const STATO_PF = {
     emessa:    { label: 'Da mandare', bg: '#fff8dc', c: '#7a5c00' },
     inviata:   { label: 'Mandata',    bg: '#e8f4fd', c: '#1A5280' },
     annullata: { label: 'Annullata',  bg: '#f1f3f6', c: '#8a8a8a' },
   };
-  const proformeBlock = proforme.length === 0 ? '' : `
+  const rigaDue = (etichetta, dentro) => `
+      <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid #eef1f5;flex-wrap:wrap">
+        <div class="field-label" style="margin:0;flex:none">${etichetta}</div>
+        <div style="text-align:right;flex:1;min-width:200px">${dentro}</div>
+      </div>`;
+
+  const mesiTxt = mat.mesi.map(m =>
+    `${meseEsteso(m.mese)} · ${m.n} ${m.n === 1 ? 'sessione' : 'sessioni'}`).join(' — ');
+
+  const rigaDaChiedere = rigaDue('Da chiedere', mat.nSessioni ? `
+      <strong style="font-size:16px">€ ${maturatoTot.toLocaleString('it-IT', { minimumFractionDigits: 2 })}</strong>
+      <div style="font-size:12px;color:var(--hint);text-transform:capitalize">${mesiTxt}</div>`
+    : `<span style="font-size:13px;color:var(--hint)">niente in sospeso</span>`);
+
+  const ultima = proforme[0];              // già ordinate dalla più recente
+  const stU = ultima ? (STATO_PF[ultima.stato] || STATO_PF.emessa) : null;
+  const rigaUltima = !ultima ? '' : rigaDue('Ultima proforma', `
+      <a href="/dashboard/proforma/${ultima.id}/pdf" target="_blank" style="font-weight:700;color:var(--blue);text-decoration:none">n. ${esc(ultima.numero)}</a>
+      <span style="font-size:13px;color:var(--muted);margin-left:8px">${ultima.data_emissione ? itDate(ultima.data_emissione) : ''}</span>
+      <span style="font-size:13px;margin-left:8px">€ ${Number(ultima.da_pagare).toLocaleString('it-IT', { minimumFractionDigits: 2 })}</span>
+      <span class="badge" style="background:${stU.bg};color:${stU.c};margin-left:8px">${stU.label}</span>
+      ${proforme.length > 1 ? `<div style="font-size:12px;color:var(--hint)">altre ${proforme.length - 1} ${proforme.length - 1 === 1 ? 'proforma' : 'proforma'} prima di questa</div>` : ''}`);
+
+  const maturatoBlock = (!mat.nSessioni && !mat.nBozze && !proforme.length) ? '' : `
       <div style="margin-bottom:18px">
-        <div class="field-label" style="margin-bottom:2px">Proforma</div>
-        ${proforme.map(pf => { const st = STATO_PF[pf.stato] || STATO_PF.emessa; return `
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid #eef1f5;flex-wrap:wrap">
-            <div>
-              <a href="/dashboard/proforma/${pf.id}/pdf" target="_blank" style="font-size:14px;font-weight:700;color:var(--blue);text-decoration:none">n. ${esc(pf.numero)}</a>
-              <span style="font-size:12px;color:#aaa;margin-left:8px">${pf.data_emissione ? itDate(pf.data_emissione) : ''}</span>
-            </div>
-            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-              <strong style="font-size:14px">€ ${Number(pf.da_pagare).toLocaleString('it-IT', { minimumFractionDigits: 2 })}</strong>
-              <span class="badge" style="background:${st.bg};color:${st.c}">${st.label}</span>
-              <a href="/dashboard/proforma/${pf.id}/pdf" target="_blank" class="btn btn-neutral btn-sm">Apri il PDF</a>
-            </div>
-          </div>`; }).join('')}
+        ${rigaDaChiedere}
+        ${rigaUltima}
+        ${avvisoBozze}
+        ${azioneMaturato}
+        <div style="margin-top:12px">
+          <a href="/dashboard/amministrazione/proforma" style="font-size:12px;color:var(--blue);text-decoration:none">Vai all'Amministrazione →</a>
+        </div>
       </div>`;
 
   const progettiRows = progetti.map(pr => {
@@ -3230,7 +3321,6 @@ Germano`;
         <button onclick="openPayment()" class="btn btn-primary btn-sm">+ Pagamento</button>
       </div>
       ${maturatoBlock}
-      ${proformeBlock}
       ${progettiBlock}
       ${paymentsTable}
     </div>`;
@@ -4463,7 +4553,7 @@ function leadsPage(leads, req) {
 function amNav(attiva) {
   const voci = [
     { key: 'anomalie',  label: 'Anomalie',             href: '/dashboard/amministrazione' },
-    { key: 'proforma',  label: 'Proforma',             off: true },
+    { key: 'proforma',  label: 'Proforma',             href: '/dashboard/amministrazione/proforma' },
     { key: 'incassi',   label: 'Incassi',              off: true },
     { key: 'fatture',   label: 'Fatture da preparare', off: true },
     { key: 'emittente', label: 'Chi emette',           href: '/dashboard/amministrazione/emittente' },
@@ -4533,6 +4623,183 @@ function anomaliePage(anomalie, conteggi, req) {
     </p>
     ${anomalie.length ? gruppiHtml : vuoto}
   </div>
+  </body></html>`;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PAGINA PROFORMA (Fase 3, Tappa 3) — la lista dei passaggi.
+//
+// ⭐ Questa pagina NON è un prospetto di numeri da interpretare: è una sequenza
+// di cose da fare, dall'alto in basso — chiedi → rileggi → (manda). È la
+// richiesta di Germano del 12/08, ed è un requisito, non una premura:
+// l'amministrazione gli pesa, quindi ogni riga deve dire l'AZIONE, col numero
+// accanto, e non deve mai restare ferma in silenzio.
+//
+// I tre passaggi ci sono solo se hanno qualcosa dentro, tranne quando non c'è
+// proprio niente: in quel caso lo dice, invece di lasciare la pagina bianca.
+// ═══════════════════════════════════════════════════════════════════════════
+function proformaPage(daChiedere, proforme, req) {
+  const eur = n => '€ ' + Number(n).toLocaleString('it-IT', { minimumFractionDigits: 2 });
+
+  const passo = (n, titolo, sottotitolo, corpo) => `
+    <section style="margin-bottom:26px">
+      <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:3px">
+        <span style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;background:var(--blue);color:#fff;font-size:13px;font-weight:700;flex:none">${n}</span>
+        <h2 style="margin:0">${titolo}</h2>
+      </div>
+      <p style="color:var(--muted);font-size:13px;margin:0 0 12px 34px">${sottotitolo}</p>
+      ${corpo}
+    </section>`;
+
+  // ── 1. Da chiedere ────────────────────────────────────────────────────────
+  // Un riquadro per PERSONA (regola dell'11/08). Dentro: i mesi, le bozze che
+  // resterebbero fuori, e o il pulsante o il motivo per cui non c'è.
+  const chiediHtml = daChiedere.map(c => {
+    const mesi = c.mesi.map(m => `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 0;border-top:1px solid #f1f3f6;flex-wrap:wrap">
+        <span style="font-size:14px;text-transform:capitalize">${meseEsteso(m.mese)}</span>
+        <span style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+          <span style="font-size:12px;color:var(--hint)">${m.n} ${m.n === 1 ? 'sessione' : 'sessioni'}${m.nIntake ? ` · ${m.nIntake === 1 ? 'intake' : m.nIntake + ' intake'} ×2` : ''}</span>
+          <strong style="font-size:14px">${eur(m.importo)}</strong>
+        </span>
+      </div>`).join('');
+
+    const bozze = c.nBozze ? `
+      <div style="font-size:12px;color:#8a6d1e;background:#fdf6e3;border-radius:8px;padding:9px 12px;margin-top:10px">
+        ⚠️ ${c.nBozze === 1 ? 'C’è 1 sessione in bozza' : `Ci sono ${c.nBozze} sessioni in bozza`}
+        (${c.bozze.map(b => meseEsteso(b.mese)).join(', ')}):
+        finché non ${c.nBozze === 1 ? 'la approvi' : 'le approvi'} non ${c.nBozze === 1 ? 'entra' : 'entrano'} nella proforma.
+      </div>` : '';
+
+    // Niente pulsante senza spiegazione: se manca qualcosa si dice cosa e dove.
+    const azione = !c.nSessioni ? '' : (c.motivi && c.motivi.length ? `
+      <div style="background:#fffdf6;border-left:3px solid var(--gold);border-radius:8px;padding:12px 14px;margin-top:12px">
+        <div style="font-size:13px;font-weight:700;margin-bottom:5px">Non si può ancora chiedere il pagamento</div>
+        <ul style="margin:0;padding-left:18px;font-size:13px;color:#4A4A4A">
+          ${c.motivi.map(m => `<li style="margin-bottom:3px">${esc(m)}</li>`).join('')}
+        </ul>
+      </div>` : `
+      <div style="margin-top:12px">
+        <button onclick="chiedi('${c.id}')" id="ch-${c.id}" class="btn btn-primary btn-sm">
+          Chiedi il pagamento — ${eur(c.totale)}
+        </button>
+      </div>`);
+
+    return `
+      <div class="card" style="margin-bottom:14px">
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:2px">
+          <a href="/dashboard/clients/${c.id}" style="font-size:16px;font-weight:700;color:var(--blue);text-decoration:none">${esc(c.name || '(senza nome)')}</a>
+          ${c.nSessioni ? `<strong style="margin-left:auto;font-size:16px">${eur(c.totale)}</strong>` : ''}
+        </div>
+        ${mesi}${bozze}${azione}
+      </div>`;
+  }).join('');
+
+  // ── 2. Da mandare ─────────────────────────────────────────────────────────
+  const daMandare = proforme.filter(p => p.stato === 'emessa');
+  const mandareHtml = daMandare.map(p => `
+    <div class="card" style="margin-bottom:12px">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <div>
+          <a href="/dashboard/proforma/${p.id}/pdf" target="_blank" style="font-size:16px;font-weight:700;color:var(--blue);text-decoration:none">n. ${esc(p.numero)}</a>
+          <div style="font-size:13px;color:var(--muted)">
+            ${esc(p.cliente_nome || '(cliente cancellato)')} · ${p.data_emissione ? itDate(p.data_emissione) : ''}
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-left:auto">
+          <strong style="font-size:15px">${eur(p.da_pagare)}</strong>
+          <a href="/dashboard/proforma/${p.id}/pdf" target="_blank" class="btn btn-primary btn-sm">Apri il PDF</a>
+          <button onclick="annulla('${p.id}','${esc(p.numero)}',false)" class="btn btn-neutral btn-sm">Annulla</button>
+        </div>
+      </div>
+    </div>`).join('');
+
+  // ── 3. Già fatte ──────────────────────────────────────────────────────────
+  // Non è un passaggio da fare: è la ricevuta, e serve a non chiedere due volte.
+  const fatte = proforme.filter(p => p.stato !== 'emessa');
+  const fatteHtml = !fatte.length ? '' : `
+    <section style="margin-top:34px">
+      <h2 style="margin-bottom:4px;font-size:16px;color:var(--muted)">Già fatte</h2>
+      <div class="card" style="padding:4px 18px">
+        ${fatte.map(p => {
+          const ann = p.stato === 'annullata';
+          return `
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 0;border-top:1px solid #f1f3f6;flex-wrap:wrap">
+            <div>
+              <a href="/dashboard/proforma/${p.id}/pdf" target="_blank" style="font-weight:700;color:${ann ? 'var(--hint)' : 'var(--blue)'};text-decoration:none">n. ${esc(p.numero)}</a>
+              <span style="font-size:13px;color:var(--muted);margin-left:8px">${esc(p.cliente_nome || '—')}</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+              <span style="font-size:13px;color:${ann ? 'var(--hint)' : 'var(--ink)'}">${eur(p.da_pagare)}</span>
+              ${ann
+                ? `<span class="badge" style="background:#f1f3f6;color:#8a8a8a">Annullata</span>`
+                : `<span class="badge" style="background:#e8f4fd;color:#1A5280">Mandata${p.inviata_data ? ' il ' + itDate(p.inviata_data) : ''}</span>
+                   <button onclick="annulla('${p.id}','${esc(p.numero)}',true)" class="btn btn-neutral btn-sm">Annulla</button>`}
+            </div>
+          </div>`; }).join('')}
+      </div>
+    </section>`;
+
+  const nientePerNiente = !daChiedere.length && !proforme.length;
+
+  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Proforma</title>${baseStyle()}</head><body>
+  ${headerNoesys({ mondo: 'amministrazione' })}
+  <div class="container">
+    <h1>Amministrazione</h1>
+    ${amNav('proforma')}
+    <h2 style="margin-bottom:4px">Proforma</h2>
+    <p style="color:var(--muted);font-size:13px;margin-bottom:22px">
+      Chiedere ai clienti quello che hanno maturato, un passaggio alla volta.
+      La proforma <strong>non è una fattura</strong>: la fattura si emette dopo l'incasso.
+    </p>
+
+    ${nientePerNiente ? `
+      <div class="card" style="border-left:3px solid #4F8B73;background:#f4faf7">
+        <strong style="color:#2e6b52;font-size:15px">✅ Non c'è niente da chiedere.</strong>
+        <div style="font-size:13px;color:var(--muted);margin-top:6px">
+          Nessuna sessione a pagamento in attesa, e nessuna proforma da mandare.
+        </div>
+      </div>` : `
+      ${passo(1, 'Da chiedere', 'Sessioni già fatte e mai chieste. Il pulsante crea la proforma e le raccoglie tutte.',
+        daChiedere.length ? chiediHtml : `<div class="card" style="color:var(--muted);font-size:13px">Niente in attesa: tutto quello che era maturato è già stato chiesto.</div>`)}
+
+      ${passo(2, 'Da rileggere e mandare', 'Proforma create e non ancora spedite. Apri il PDF e controllalo prima di mandarlo.',
+        daMandare.length ? mandareHtml + `
+          <p style="font-size:12px;color:var(--hint);margin:6px 0 0">
+            L'invio per mail non c'è ancora: arriva col prossimo passo di questa fase.
+            Per ora il PDF si apre, si salva e si manda a mano.
+          </p>`
+        : `<div class="card" style="color:var(--muted);font-size:13px">Niente da mandare.</div>`)}
+
+      ${fatteHtml}`}
+  </div>
+  <script>
+    async function chiedi(id) {
+      if (!confirm('Creo la proforma con tutte le sessioni non ancora chieste?\\n\\nIl numero che le viene assegnato non potra\\' essere riusato.')) return;
+      const btn = document.getElementById('ch-' + id);
+      btn.disabled = true; btn.textContent = 'Creazione in corso…';
+      try {
+        const r = await fetch('/dashboard/clients/' + id + '/proforma', { method: 'POST' });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { alert(d.error || ('Errore ' + r.status)); btn.disabled = false; btn.textContent = 'Riprova'; return; }
+        window.open('/dashboard/proforma/' + d.id + '/pdf', '_blank');
+        location.reload();
+      } catch (e) { alert('Errore di rete: ' + e.message); btn.disabled = false; btn.textContent = 'Riprova'; }
+    }
+    async function annulla(id, numero, mandata) {
+      // Il numero non torna disponibile: si dice prima, non dopo.
+      var testo = 'Annullo la proforma n. ' + numero + '?\\n\\n'
+        + 'Il numero resta bruciato e non si riusa. Le sessioni tornano fra quelle da chiedere.';
+      if (mandata) testo += '\\n\\nATTENZIONE: questa proforma e\\' gia\\' stata mandata al cliente.';
+      if (!confirm(testo)) return;
+      try {
+        const r = await fetch('/dashboard/proforma/' + id + '/annulla', { method: 'POST' });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { alert(d.error || ('Errore ' + r.status)); return; }
+        location.reload();
+      } catch (e) { alert('Errore di rete: ' + e.message); }
+    }
+  </script>
   </body></html>`;
 }
 
