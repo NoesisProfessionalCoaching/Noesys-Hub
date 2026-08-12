@@ -663,6 +663,44 @@ async function init() {
   await query(`CREATE INDEX IF NOT EXISTS proforma_righe_seduta ON proforma_righe (seduta_id)`);
   // ─────────────────────────────────────────────────────────────────────────
 
+  // ── L'APPUNTAMENTO COME COSA A SÉ (12/08/2026) ───────────────────────────
+  // Fino a oggi il prossimo appuntamento non esisteva: erano due caselle in
+  // fondo al verbale dell'ultima sessione (`sedute.scadenza` + `prossima_ora`).
+  // Funziona finché le sessioni si fanno — ma quando una salta, il report non
+  // arriva mai e la nuova data non ha nessun posto dove stare. Germano, 11/08:
+  // «IL SISTEMA NON potrà mai saperlo, devo dirglielo io.» E dirglielo
+  // riscrivendo la chiusura di una sessione già avvenuta vorrebbe dire
+  // falsificarne il verbale — cosa che lui ha escluso il 12/08: «non voglio
+  // modificare i report, sarebbe scrivere cose inesatte».
+  //
+  // ⭐ QUESTA TABELLA NON SOSTITUISCE NIENTE. I report continuano a scrivere
+  // dove scrivevano, e la home continua a leggerli. Qui finisce SOLO quello che
+  // il coach tocca con le sue mani, e vale la regola «vince l'ultima notizia»:
+  // la riga scritta a mano copre quella del report finché non arriva un report
+  // più recente (che vuol dire che c'è stata un'altra sessione).
+  //
+  // `data` può essere NULL, e vuol dire una cosa precisa: «l'ho tolto io».
+  // Senza questa possibilità, cancellare la riga farebbe RIAPPARIRE
+  // l'appuntamento del report, cioè il contrario di quello che si è chiesto.
+  //
+  // UNA riga per percorso (UNIQUE): è così che la home ragiona da sempre — un
+  // percorso, un prossimo incontro — e rende il salvataggio un solo comando,
+  // senza il ramo «esiste o non esiste ancora?».
+  await query(`
+    CREATE TABLE IF NOT EXISTS appuntamenti (
+      id           TEXT PRIMARY KEY,
+      percorso_id  TEXT NOT NULL UNIQUE REFERENCES percorsi(id) ON DELETE CASCADE,
+      client_id    TEXT REFERENCES clients(id) ON DELETE CASCADE,
+      data         DATE,
+      ora          TEXT,
+      origine      TEXT NOT NULL DEFAULT 'mano',
+      note         TEXT,
+      created_at   TIMESTAMPTZ DEFAULT NOW(),
+      updated_at   TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  // ─────────────────────────────────────────────────────────────────────────
+
   // Traccia di cosa è già stato letto: un modulo si elabora UNA volta sola.
   // Senza questo, a ogni giro l'automazione rileggerebbe gli stessi documenti e
   // riscriverebbe l'anagrafica ogni tre ore.

@@ -12,6 +12,7 @@ const moduli = require('./moduli');
 const fiscale = require('./fiscale');
 const proforma = require('./proforma');
 const maturato = require('./maturato');
+const appuntamenti = require('./appuntamenti');
 
 const router = express.Router();
 
@@ -144,7 +145,10 @@ router.get('/dashboard/individuali', requireCoach, async (req, res) => {
 // Tutti i numeri vengono da dati che l'Hub ha già: nessun campo nuovo.
 async function mostraHome(req, res) {
   try {
-    const [ind, prog, comm, lead, bozze, daChiudere, azioni, richiami, appuntamenti,
+    // ⚠️ `appRows` e non `appuntamenti`: qui dentro si chiama il modulo
+    // `appuntamenti`, e una variabile con lo stesso nome — anche se assegnata
+    // dopo — lo renderebbe irraggiungibile già mentre si compone questa lista.
+    const [ind, prog, comm, lead, bozze, daChiudere, azioni, richiami, appRows,
            anagrafiche, documenti] = await Promise.all([
       db.query(`SELECT count(*)::int n FROM clients c
                  WHERE EXISTS (SELECT 1 FROM percorsi pi WHERE pi.client_id = c.id AND pi.progetto_id IS NULL)
@@ -183,27 +187,10 @@ async function mostraHome(req, res) {
       // recente che porti una data vera (il campo a volte è "—" o testo libero):
       // se quella data non è ancora passata, l'appuntamento compare. Passata,
       // sparisce da solo. "Oggi" è il giorno italiano, non quello del server UTC.
-      db.query(`SELECT cl.id AS client_id, cl.name, u.scad, u.ora
-                  FROM percorsi p
-                  JOIN clients cl ON cl.id = p.client_id
-                  JOIN LATERAL (
-                        SELECT s.scadenza::date AS scad,
-                               CASE WHEN s.prossima_ora ~ '^[0-9]{1,2}:[0-9]{2}$'
-                                    THEN s.prossima_ora END AS ora
-                          FROM sedute s
-                         WHERE s.percorso_id = p.id AND s.stato = 'confermata'
-                           AND s.scadenza ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
-                         ORDER BY s.data DESC NULLS LAST
-                         LIMIT 1) u ON TRUE
-                 WHERE p.stato = 'attivo'
-                   -- La riga sparisce quando passa l'ORA dell'appuntamento, non a
-                   -- mezzanotte. Se il report non dava l'orario non si può fare di
-                   -- meglio che tenerla fino a fine giornata (23:59).
-                   AND (u.scad + COALESCE(u.ora::time, TIME '23:59'))
-                       >= (NOW() AT TIME ZONE 'Europe/Rome')
-                 -- A parità di giorno conta l'ora: lpad perché l'orario è testo e
-                 -- "9:00" senza lo zero finirebbe dopo "10:30".
-                 ORDER BY u.scad, lpad(u.ora, 5, '0') NULLS LAST`),
+      // ⭐ Dal 12/08 la regola sta in `appuntamenti.js`: due sorgenti (il report
+      // e la mano del coach) e una regola sola, «vince l'ultima notizia». Sta
+      // lì e non qui perché la usa anche la scheda cliente.
+      appuntamenti.prossimi(),
 
       // ── Proposte lette dai documenti, in attesa di controllo ───────────────
       db.query(`SELECT id, name,
@@ -274,7 +261,7 @@ async function mostraHome(req, res) {
       nLead: lead.rows[0].n, nLeadAperti: lead.rows[0].aperti,
       bozze: bozze.rows, daChiudere: daChiudere.rows,
       azioni: azioni.rows, richiami: richiami.rows,
-      appuntamenti: appuntamenti.rows,
+      appuntamenti: appRows,
       anagrafiche: anagrafiche.rows,
       documenti: documenti.rows.map(x => ({
         id: x.id, name: x.name,
@@ -435,16 +422,18 @@ router.get('/dashboard/clients/:id', requireCoach, async (req, res) => {
     // emettere, invece di mostrare un pulsante che poi non funziona).
     // ⭐ Il «da chiedere» arriva da `maturato.js`, lo stesso modulo che risponde
     // alla home e alla pagina Proforma: la regola è scritta una volta sola.
-    const [pfr, mat, emr] = await Promise.all([
+    const [pfr, mat, emr, app] = await Promise.all([
       db.query(`SELECT * FROM proforme WHERE client_id=$1
                  ORDER BY anno DESC, progressivo DESC`, [req.params.id]),
       maturato.daChiedere(req.params.id),
       db.query('SELECT * FROM emittente WHERE id = 1'),
+      appuntamenti.perCliente(req.params.id),
     ]);
     res.send(clientDetailPage(client, sr.rows, pr.rows, payr.rows, sedr.rows, prjr.rows, permr.rows, req, {
       proforme: pfr.rows,
       maturato: mat[0] || null,
       emittente: emr.rows[0] || {},
+      appuntamenti: app,
     }));
   } catch (err) {
     console.error(err);
@@ -1672,6 +1661,47 @@ router.get('/dashboard/proforma/:id/pdf', requireCoach, async (req, res) => {
   }
 });
 
+// ── L'appuntamento, scritto a mano (12/08) ─────────────
+// Una riga per percorso: salvare è sempre un solo comando, senza il ramo
+// «esiste o non esiste ancora?». Serve a due cose che prima non si potevano
+// fare: spostare un incontro senza riscrivere il verbale di una sessione
+// passata, e segnarne uno che dai report non arriverà mai (la sessione saltata).
+//
+// ⚠️ Data vuota NON è un errore: vuol dire «tolgo l'appuntamento», e resta
+// scritto. Cancellare la riga invece farebbe riaffiorare quello del report.
+router.post('/dashboard/percorsi/:pid/appuntamento', requireCoach, express.json(), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const data = String(b.data || '').trim();
+    const ora  = String(b.ora || '').trim();
+    if (data && !/^\d{4}-\d{2}-\d{2}$/.test(data)) {
+      return res.status(400).json({ error: 'La data non è valida.' });
+    }
+    if (ora && !/^\d{1,2}:\d{2}$/.test(ora)) {
+      return res.status(400).json({ error: "L'ora va scritta come 15:00." });
+    }
+    // Un'ora senza data non vuol dire niente, e in home non comparirebbe:
+    // meglio dirlo che salvarla e lasciare il coach a chiedersi dov'è finita.
+    if (!data && ora) {
+      return res.status(400).json({ error: "Senza data l'ora non basta: scrivi il giorno." });
+    }
+    const p = await db.query('SELECT id, client_id FROM percorsi WHERE id = $1', [req.params.pid]);
+    if (!p.rows.length) return res.status(404).json({ error: 'Percorso non trovato' });
+
+    await db.query(`
+      INSERT INTO appuntamenti (id, percorso_id, client_id, data, ora, origine, updated_at)
+      VALUES ($1, $2, $3, $4, $5, 'mano', NOW())
+      ON CONFLICT (percorso_id) DO UPDATE
+        SET data = EXCLUDED.data, ora = EXCLUDED.ora,
+            origine = 'mano', updated_at = NOW()`,
+      [uuidv4(), req.params.pid, p.rows[0].client_id, data || null, ora || null]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[appuntamento]', err);
+    res.status(500).json({ error: "Errore nel salvataggio dell'appuntamento" });
+  }
+});
+
 // ── Amministrazione → Proforma (Fase 3, Tappa 3) ───────
 // La pagina è una SEQUENZA DI PASSAGGI, non un prospetto: chiedi → rileggi →
 // manda. Qui si raccolgono i dati dei tre passaggi; a metterli in fila ci pensa
@@ -2742,9 +2772,21 @@ function homePage(d, req) {
   // data è passata la riga non c'è più: il gruppo si mostra solo se ha voci.
   // L'ora c'è solo se il report la diceva: senza, resta la sola data (meglio di
   // un orario inventato).
-  const gAppuntamenti = gruppo('Prossimi appuntamenti', d.appuntamenti.map(a => voce(
-    `/dashboard/clients/${a.client_id}`, esc(a.name),
-    itDate(a.scad) + (a.ora ? ` · <strong style="color:var(--ink)">${esc(a.ora)}</strong>` : ''))));
+  // ⭐ Dal 12/08 ogni riga ha la sua matita: l'appuntamento si sposta da QUI,
+  // che è il posto dove Germano lo guarda, senza aprire la scheda e senza
+  // toccare il verbale della sessione da cui era nato.
+  // ⚠️ Non si può usare `voce()`: quella è un <a>, e un pulsante dentro un
+  // collegamento è marcato sbagliato (e il clic finirebbe sul collegamento).
+  // Qui la riga è un contenitore, col nome che resta un collegamento.
+  const gAppuntamenti = gruppo('Prossimi appuntamenti', d.appuntamenti.map(a => `
+    <div class="hm-voce">
+      <span><a href="/dashboard/clients/${a.client_id}" style="text-decoration:none;color:inherit">${esc(a.name)}</a></span>
+      <span class="hm-voce-coda">
+        ${itDate(a.scad)}${a.ora ? ` · <strong style="color:var(--ink)">${esc(a.ora)}</strong>` : ''}
+        <button onclick="apriApp('${a.percorso_id}','${esc(a.name)}','${a.scad || ''}','${esc(a.ora || '')}')"
+                class="btn btn-neutral btn-sm" style="margin-left:8px" title="Sposta l'appuntamento">✎</button>
+      </span>
+    </div>`));
 
   const gBozze = gruppo('Sessioni in bozza da approvare', d.bozze.map(b => voce(
     b.client_id ? `/dashboard/clients/${b.client_id}` : (b.progetto_id ? `/dashboard/progetti/${b.progetto_id}` : '/dashboard/individuali'),
@@ -2827,6 +2869,61 @@ function homePage(d, req) {
     </section>
 
   </div>
+
+  ${/* La finestrella dell'appuntamento: tre righe e due pulsanti. Deve restare
+        piccola — si apre per spostare un incontro, non per compilare una scheda. */ ''}
+  <div id="modal-app" class="modal-overlay">
+    <div class="modal" style="max-width:420px">
+      <h2 style="margin-bottom:4px">Sposta l'appuntamento</h2>
+      <p style="color:var(--muted);font-size:13px;margin-bottom:16px"><span id="ap-chi"></span></p>
+      <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:12px">
+        <div class="form-group"><label>Data</label><input id="ap-data" type="date"></div>
+        <div class="form-group"><label>Ora</label><input id="ap-ora" type="time"></div>
+      </div>
+      <p style="color:var(--hint);font-size:12px;margin-bottom:14px">
+        Quello che scrivi qui non tocca i report: resta scritto finché non arriva
+        il report di una sessione più recente.
+      </p>
+      <div id="ap-error" style="display:none" class="flash-error"></div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button onclick="document.getElementById('modal-app').style.display='none'" class="btn btn-neutral" style="flex:1">Annulla</button>
+        <button id="ap-salva" onclick="salvaApp()" class="btn btn-primary" style="flex:1">Salva</button>
+      </div>
+      <button onclick="togliApp()" class="btn btn-danger btn-sm" style="width:100%;margin-top:10px">Togli l'appuntamento</button>
+    </div>
+  </div>
+
+  <script>
+    var appPercorso = null;
+    function apriApp(pid, chi, data, ora) {
+      appPercorso = pid;
+      document.getElementById('ap-chi').textContent = chi;
+      document.getElementById('ap-data').value = data || '';
+      document.getElementById('ap-ora').value = /^\\d{1,2}:\\d{2}$/.test(ora || '') ? ora : '';
+      document.getElementById('ap-error').style.display = 'none';
+      document.getElementById('modal-app').style.display = 'flex';
+    }
+    async function scriviApp(data, ora) {
+      var err = document.getElementById('ap-error');
+      var btn = document.getElementById('ap-salva');
+      btn.disabled = true; err.style.display = 'none';
+      try {
+        var r = await fetch('/dashboard/percorsi/' + appPercorso + '/appuntamento', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ data: data, ora: ora }) });
+        var j = await r.json().catch(function(){ return {}; });
+        if (!r.ok) { err.textContent = j.error || ('Errore ' + r.status); err.style.display = 'block'; btn.disabled = false; return; }
+        location.reload();
+      } catch (e) { err.textContent = 'Errore di rete: ' + e.message; err.style.display = 'block'; btn.disabled = false; }
+    }
+    function salvaApp() {
+      scriviApp(document.getElementById('ap-data').value, document.getElementById('ap-ora').value);
+    }
+    function togliApp() {
+      if (!confirm('Tolgo l\\'appuntamento?\\n\\nSparisce dai promemoria. Ne potrai segnare uno nuovo dalla scheda del cliente.')) return;
+      scriviApp('', '');
+    }
+  </script>
   </body></html>`;
 }
 
@@ -3171,6 +3268,36 @@ Germano`;
       <div style="font-size:13px;background:#fff8ec;padding:10px 14px;border-radius:8px;border-left:3px solid var(--gold);margin-bottom:14px">
         La relazione con il cliente è <strong>conclusa</strong>, ma ${attiviOra.length === 1 ? 'un percorso risulta' : attiviOra.length + ' percorsi risultano'} ancora <strong>${attiviOra.length === 1 ? 'attivo' : 'attivi'}</strong>. Se ${attiviOra.length === 1 ? 'è finito' : 'sono finiti'}, ${attiviOra.length === 1 ? 'chiudilo' : 'chiudili'} qui sotto; se ${attiviOra.length === 1 ? 'prosegue' : 'proseguono'}, va bene così.
       </div>` : '';
+  // ── Il prossimo appuntamento (12/08) ────────────────
+  // Sta qui, sopra i percorsi, perché è la cosa che si guarda prima di una
+  // sessione. E soprattutto: è l'UNICO punto da cui si può segnare un incontro
+  // che dai report non arriverà mai — quello di una sessione saltata, che in
+  // home non compare perché la sua data è già passata.
+  // Una riga per percorso attivo, anche quando l'appuntamento non c'è: è
+  // proprio quel vuoto che va visto.
+  const oggiIso = new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Rome' });
+  const appHtml = (fatt.appuntamenti || []).map(a => {
+    const passato = a.scad && String(a.scad) < oggiIso;
+    const quando = !a.scad
+      ? `<span style="color:var(--hint)">nessun appuntamento fissato</span>`
+      : `<strong style="color:${passato ? 'var(--hint)' : 'var(--ink)'}">${itDate(a.scad)}${a.ora ? ` · ore ${esc(a.ora)}` : ''}</strong>${passato ? ` <span style="font-size:12px;color:#8a6d1e">— è già passato</span>` : ''}`;
+    return `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid #eef1f5;flex-wrap:wrap">
+        <div style="font-size:14px">
+          ${quando}
+          <div style="font-size:11px;color:var(--hint)">${esc(a.percorso_tipo || 'Percorso')}${a.scad ? ` · ${a.fonte === 'mano' ? 'scritto da te' : 'dal report'}` : ''}</div>
+        </div>
+        <button onclick="apriApp('${a.percorso_id}','${a.scad || ''}','${esc(a.ora || '')}')" class="btn btn-neutral btn-sm">
+          ${a.scad ? 'Cambia' : 'Segna un appuntamento'}
+        </button>
+      </div>`;
+  }).join('');
+  const appuntamentoHtml = !(fatt.appuntamenti || []).length ? '' : `
+    <div class="card">
+      <h2 style="margin-bottom:2px">Prossimo appuntamento</h2>
+      ${appHtml}
+    </div>`;
+
   const percorsiHtml = `
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
@@ -3701,6 +3828,7 @@ Germano`;
       ${azioniHtml}
     </div>
 
+    ${appuntamentoHtml}
     ${percorsiHtml}
     ${paymentsHtml}
     ${seduteHtml}
@@ -3934,6 +4062,29 @@ Germano`;
     </div>
   </div>
 
+  <!-- MODAL APPUNTAMENTO (12/08) — la data del prossimo incontro, a mano.
+       Non tocca nessun report: quello che si scrive qui vive per conto suo. -->
+  <div id="modal-app" class="modal-overlay">
+    <div class="modal-box" style="width:420px;max-width:94vw">
+      <h2 style="margin-bottom:4px">Prossimo appuntamento</h2>
+      <p style="color:var(--muted);font-size:13px;margin-bottom:16px">${esc(client.name)}</p>
+      <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:12px">
+        <div class="form-group"><label>Data</label><input id="ap-data" type="date"></div>
+        <div class="form-group"><label>Ora</label><input id="ap-ora" type="time"></div>
+      </div>
+      <p style="color:var(--hint);font-size:12px;margin-bottom:14px">
+        Non modifica nessun report. Resta scritto finché non arriva il report di
+        una sessione più recente.
+      </p>
+      <div id="ap-error" style="display:none" class="flash-error"></div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button onclick="document.getElementById('modal-app').style.display='none'" class="btn btn-neutral" style="flex:1">Annulla</button>
+        <button id="ap-salva" onclick="salvaApp()" class="btn btn-primary" style="flex:1">Salva</button>
+      </div>
+      <button onclick="togliApp()" class="btn btn-danger btn-sm" style="width:100%;margin-top:10px">Togli l'appuntamento</button>
+    </div>
+  </div>
+
   <!-- MODAL SEDUTA (diario sessioni) -->
   <div id="modal-seduta" class="modal-overlay">
     <div class="modal-box" style="width:600px;max-width:94vw">
@@ -4079,6 +4230,35 @@ Germano`;
         alert(n + (n === 1 ? ' bozza creata' : ' bozze create') + '. La trovi qui sotto, evidenziata, da approvare.');
         location.reload();
       } catch (e) { alert('Errore di rete: ' + e.message); reset(); }
+    }
+    // ── Appuntamento (12/08) ──
+    var appPercorso = null;
+    function apriApp(pid, data, ora) {
+      appPercorso = pid;
+      document.getElementById('ap-data').value = data || '';
+      document.getElementById('ap-ora').value = /^\\d{1,2}:\\d{2}$/.test(ora || '') ? ora : '';
+      document.getElementById('ap-error').style.display = 'none';
+      document.getElementById('modal-app').style.display = 'flex';
+    }
+    async function scriviApp(data, ora) {
+      var err = document.getElementById('ap-error');
+      var btn = document.getElementById('ap-salva');
+      btn.disabled = true; err.style.display = 'none';
+      try {
+        var r = await fetch('/dashboard/percorsi/' + appPercorso + '/appuntamento', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ data: data, ora: ora }) });
+        var j = await r.json().catch(function(){ return {}; });
+        if (!r.ok) { err.textContent = j.error || ('Errore ' + r.status); err.style.display = 'block'; btn.disabled = false; return; }
+        location.reload();
+      } catch (e) { err.textContent = 'Errore di rete: ' + e.message; err.style.display = 'block'; btn.disabled = false; }
+    }
+    function salvaApp() {
+      scriviApp(document.getElementById('ap-data').value, document.getElementById('ap-ora').value);
+    }
+    function togliApp() {
+      if (!confirm('Tolgo l\\'appuntamento?')) return;
+      scriviApp('', '');
     }
     function copyLink(url) { navigator.clipboard.writeText(url).then(() => { const t=document.getElementById('toast'); t.textContent='Link copiato!'; t.style.display='block'; setTimeout(()=>t.style.display='none',2000); }); }
     function openEdit() { document.getElementById('modal-edit').style.display='flex'; }
