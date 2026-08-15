@@ -227,6 +227,22 @@ async function mostraHome(req, res) {
          ORDER BY c.name`),
     ]);
 
+    // ── Proforma create e non ancora spedite (13/08) ──────────────────────────
+    // ⚠️ A differenza dei «Pagamenti da chiedere» qui sotto, questo gruppo NON è
+    // legato al primo lunedì del mese: si vede SEMPRE. Una proforma ferma è
+    // ferma anche il 14, e legarla al calendario vorrebbe dire nasconderla per
+    // tre settimane. Chi decide cos'è «ferma» è `proforma.daMandare`.
+    const fermeRows = await db.query(
+      `SELECT pf.id, pf.numero, pf.data_emissione, pf.da_pagare, pf.drive_url, pf.stato,
+              c.id AS client_id, c.name AS cliente
+         FROM proforme pf LEFT JOIN clients c ON c.id = pf.client_id
+        WHERE pf.stato = 'emessa'
+        ORDER BY pf.data_emissione, pf.anno, pf.progressivo`);
+    const oggiIt = maturato.oggiRoma();
+    const proformeFerme = fermeRows.rows.filter(proforma.daMandare).map(pf => ({
+      ...pf, giorni: proforma.giorniFerma(pf, oggiIt),
+    }));
+
     // ── Pagamenti da chiedere (Fase 3, Tappa 3) ───────────────────────────────
     // Il promemoria della chiusura del mese. Non è una mail e non è un lavoro
     // notturno: è una riga in più qui, che compare dal primo lunedì del mese e
@@ -256,6 +272,7 @@ async function mostraHome(req, res) {
       // già `daChiudere` (i percorsi da chiudere), e due parole che si
       // distinguono per una lettera sono un errore in attesa di succedere.
       pagamentiDaChiedere: daChiedereRighe,
+      proformeFerme,
       nIndividuali: ind.rows[0].n,
       nProgetti: prog.rows[0].n, nProgettiAttivi: prog.rows[0].attivi,
       nCommittenti: comm.rows[0].n,
@@ -2944,6 +2961,22 @@ function homePage(d, req) {
       coda);
   }));
 
+  // ⭐ Le proforma ferme (13/08). Stanno SOPRA i pagamenti da chiedere perché
+  // sono più avanti nella catena: il documento c'è già, manca solo mandarlo —
+  // ed è il passo che costa meno e vale di più.
+  // Il collegamento porta ad Amministrazione → Proforma e non alla scheda del
+  // cliente: è lì che stanno le due azioni («apri il PDF» e «Rivedi e manda»),
+  // e una riga che chiede di fare una cosa deve portare dove la si fa.
+  // Da GIORNI_FERMA in su la riga alza la voce (Germano, 13/08: 7 giorni).
+  const gFerme = gruppo('Proforma da mandare', (d.proformeFerme || []).map(p => {
+    const insiste = p.giorni !== null && p.giorni >= proforma.GIORNI_FERMA;
+    const quanto  = proforma.daQuantoFerma(p.giorni);
+    return voce('/dashboard/amministrazione/proforma',
+      `${esc(p.cliente || 'Destinatario cancellato')} <span style="color:var(--hint)">· ${esc(p.numero)}</span>`,
+      `<span style="color:${insiste ? '#a4342a' : 'var(--hint)'};${insiste ? 'font-weight:700' : ''}">${quanto}</span>
+       <strong style="color:var(--ink);margin-left:10px">€ ${Number(p.da_pagare || 0).toLocaleString('it-IT', { minimumFractionDigits: 2 })}</strong>`);
+  }));
+
   // Documentazione che manca, SOLO sui percorsi attivi (scelta di Germano 08/08).
   // I due casi restano distinti perché l'azione è diversa: «non arrivata» aspetta
   // il cliente, «ancora in bianco» aspetta il coach — è il caso di chi compila su
@@ -2951,7 +2984,7 @@ function homePage(d, req) {
   const gDocumenti = gruppo('Documentazione da completare', d.documenti.map(x => voce(
     `/dashboard/clients/${x.id}`, esc(x.name), x.stato)));
 
-  const attenzione = [gAppuntamenti, gDaChiedere, gBozze, gAnagrafiche, gChiudere, gDocumenti, gAzioni, gLead].filter(Boolean).join('');
+  const attenzione = [gAppuntamenti, gFerme, gDaChiedere, gBozze, gAnagrafiche, gChiudere, gDocumenti, gAzioni, gLead].filter(Boolean).join('');
 
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub</title>${baseStyle()}</head><body>
   ${headerNoesys({})}
@@ -5062,7 +5095,9 @@ function proformaPage(daChiedere, proforme, req) {
   }).join('');
 
   // ── 2. Da mandare ─────────────────────────────────────────────────────────
-  const daMandare = proforme.filter(p => p.stato === 'emessa');
+  // Chi è «da mandare» lo dice il modulo, non questa pagina: dal 13/08 la stessa
+  // domanda la fa anche la home, e due filtri scritti a mano divergerebbero.
+  const daMandare = proforme.filter(proforma.daMandare);
 
   // Quello che la finestrella d'invio deve avere in mano. Il testo lo prepara
   // `proforma.testoMail()`: la pagina non lo scrive, così è lo stesso testo
@@ -5103,7 +5138,7 @@ function proformaPage(daChiedere, proforme, req) {
   // ⚠️ `inviata_data` è un MOMENTO, non una data: con itDate() usciva «Wed Aug
   // 12», perché quella funzione taglia una stringa ISO e qui arriva un timestamp.
   // itDateTime() lo scrive in ora italiana — e su una cosa spedita l'ora serve.
-  const fatte = proforme.filter(p => p.stato !== 'emessa');
+  const fatte = proforme.filter(p => !proforma.daMandare(p));
   const fatteHtml = !fatte.length ? '' : `
     <section style="margin-top:34px">
       <h2 style="margin-bottom:4px;font-size:16px;color:var(--muted)">Già fatte</h2>

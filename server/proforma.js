@@ -454,8 +454,56 @@ function nomeFile(p) {
   return [('Proforma ' + numero).trim(), chi].filter(Boolean).join(' - ') + '.pdf';
 }
 
+// ── UNA PROFORMA FERMA ──────────────────────────────────────────────────────
+// Germano, 13/08: «se genero la proforma ma non la invio, non c'è nessun
+// reminder». Era vero, ed era uno stallo silenzioso — proprio quello che la
+// decisione 12 vietava: appena la proforma nasce, le sue sessioni entrano nel
+// documento e spariscono dal «maturato da chiedere», quindi la riga in home se
+// ne andava per sempre e il documento restava lì senza che nessuno lo dicesse.
+//
+// La regola sta QUI e non nelle pagine perché ora la usano in due — la home e
+// Amministrazione → Proforma — e due copie sarebbero due occasioni di divergere
+// (è la stessa lezione dei conti fiscali e di `maturato.js`).
+//
+// ⚠️ «emessa» vuol dire ESATTAMENTE «creata e non ancora spedita»: l'invio la
+// porta a 'inviata' (routes: UPDATE ... SET stato = 'inviata') e l'annullamento
+// a 'annullata'. Quindi una proforma ferma smette di esserlo da sola, senza
+// nessuna X da premere — la stessa regola dei gruppi in home.
+
+const GIORNI_FERMA = 7;   // da qui in su la riga in home alza la voce (Germano, 13/08)
+
+function daMandare(pf) {
+  return pf && pf.stato === 'emessa';
+}
+
+/**
+ * Da quanti giorni la proforma è ferma.
+ * @param {object} pf la proforma (serve `data_emissione`).
+ * @param {string} oggiIso il giorno ITALIANO 'AAAA-MM-GG' (mai quello UTC del
+ *   server: a mezzanotte e mezza a Roma in UTC è ancora ieri, e il conto
+ *   sarebbe sfasato di un giorno).
+ * @returns {number|null} i giorni interi, `null` se la data non c'è.
+ */
+function giorniFerma(pf, oggiIso) {
+  const da = pf && pf.data_emissione ? String(pf.data_emissione).slice(0, 10) : '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(da) || !/^\d{4}-\d{2}-\d{2}$/.test(oggiIso || '')) return null;
+  // Due date pure si confrontano in UTC: nessun fuso, nessuna ora legale di mezzo.
+  const g = Math.round((Date.parse(oggiIso) - Date.parse(da)) / 86400000);
+  return g >= 0 ? g : 0;   // una data futura non è «ferma da -1 giorni»
+}
+
+// Come si scrive quell'attesa, in parole. Sta qui perché la frase deve essere
+// identica ovunque compaia.
+function daQuantoFerma(giorni) {
+  if (giorni === null || giorni === undefined) return '';
+  if (giorni === 0) return 'creata oggi';
+  if (giorni === 1) return 'ferma da ieri';
+  return `ferma da ${giorni} giorni`;
+}
+
 module.exports = {
   numeroProforma, righeDaSedute, componiProforma, motiviCheImpediscono,
   fotoEmittente, fotoDestinatario,
   generaPdf, nomeFile, testoMail, archiviaSuDrive,
+  GIORNI_FERMA, daMandare, giorniFerma, daQuantoFerma,
 };
