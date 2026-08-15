@@ -1,0 +1,438 @@
+// ═══════════════════════════════════════════════════════════════════════════
+// LA FINESTRELLA DEL PIANO DI PAGAMENTO — una sola, per due pagine.
+//
+// Nasce il 15/08/2026 con la fetta C. Fino a ieri questa roba stava scritta
+// dentro la pagina del progetto; il pacchetto ha bisogno della stessa identica
+// cosa, e Germano l'ha detto chiaro: **riusarla, non riscriverla**.
+// Il motivo non è l'eleganza: due copie della stessa finestrella sono due
+// occasioni di divergere, ed è esattamente il guaio che abbiamo appena finito
+// di riparare fra la scheda del progetto e quella del cliente.
+//
+// Qui dentro c'è SOLO ciò che è uguale per tutti:
+//   · il disegno della finestrella (markup)
+//   · le funzioni che la fanno vivere (ricalcolo, aggiungi/togli rata, scadenze)
+//   · la tabella di SOLA LETTURA che sta sulla scheda
+// Restano alla pagina le cose che cambiano davvero: chi sono i pagatori, dove
+// si salva, e che comandi ha ogni riga.
+//
+// ⚠️ DUE LEZIONI DEL 15/08 CHE QUESTO FILE DEVE PROTEGGERE:
+// 1. **Dentro la finestrella il DOM è la verità mentre scrivi.** Si aggiornano
+//    solo i TESTI derivati (percentuale, somme, verifica, scadenza) e non si
+//    tocca MAI l'HTML degli input: rifarli a ogni tasto distruggeva il campo e
+//    buttava il cursore sul body (22 campi su 22). Toccare il DOM è ammesso solo
+//    su un CLIC esplicito, dove nessuno sta scrivendo.
+// 2. **Niente apici inclinati nei commenti** del blocco JS restituito da `js()`:
+//    chiudono la template literal e la pagina non compila più. Presa due volte.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const tranche = require('./tranche');
+
+/**
+ * Il disegno della finestrella.
+ * @param {object} o
+ * @param {string} o.labelValore  come si chiama la cifra totale in questa pagina
+ *   («Valore del progetto» per un progetto, «Prezzo del pacchetto» per un percorso).
+ * @param {number|null} o.valore
+ * @param {string} o.dataMeta   'AAAA-MM-GG' o ''
+ * @param {string} o.dataFine   'AAAA-MM-GG' o ''
+ * @param {string} o.sottotitolo
+ * @param {boolean} o.mostraDividi  «Dividi in parti uguali» ha senso solo dove i
+ *   pagatori sono più di uno: su un pacchetto paga una persona sola.
+ */
+function modale(o) {
+  const val = o.valore != null ? o.valore : '';
+  return `
+    ${/* La larghezza è 860px FISSA e non un massimo: il 14/08 avevo scritto
+          max-width credendo di allargarla, ma .modal-box ha gia' una width, e
+          un massimo piu' grande non allarga niente. Restava da 520 mentre la
+          tabella dentro ne chiedeva 718 — 198px fuori dal bordo. */ ''}
+    <div class="modal-overlay" id="modal-piano">
+      <div class="modal-box" style="width:860px">
+        <h3 style="margin-top:0">Il piano di pagamento</h3>
+        <p style="font-size:12.5px;color:var(--muted);margin-top:-6px">${o.sottotitolo}</p>
+
+        <div style="display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+          <div class="form-group" style="margin:0"><label>${o.labelValore} €</label>
+            <input id="q-totale" type="number" step="1" min="0" value="${val}"
+                   placeholder="es. 1200" oninput="ricalcolaPiano()" style="width:130px"></div>
+          <div class="form-group" style="margin:0"><label>Metà percorso</label>
+            <input id="pi-meta" type="date" value="${o.dataMeta || ''}"
+                   oninput="ricalcolaPiano()" style="width:150px"></div>
+          <div class="form-group" style="margin:0"><label>Fine prevista</label>
+            <input id="pi-fine" type="date" value="${o.dataFine || ''}"
+                   oninput="ricalcolaPiano()" style="width:150px"></div>
+        </div>
+
+        <div id="piano-pagatori"></div>
+
+        <div id="piano-verifica" style="margin-top:10px;font-size:12.5px"></div>
+        <div id="piano-error" style="display:none;margin-top:8px" class="flash-error"></div>
+
+        <div class="modal-actions" style="margin-top:16px">
+          ${o.mostraDividi ? `<button onclick="dividiEqui()" class="btn btn-neutral btn-sm">Dividi in parti uguali</button>` : ''}
+          <span style="flex:1"></span>
+          <button onclick="chiudiPiano()" class="btn btn-neutral">Annulla</button>
+          <button onclick="salvaTutto()" class="btn btn-primary">Salva il piano</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+/**
+ * La finestrella «È arrivato il pagamento».
+ * ⚠️ PONTE FINO ALLA FETTA C3 — da togliere quando la proforma di una rata e il
+ * promemoria dell'incasso saranno in piedi. Germano (15/08): «chiesta» si
+ * accende da sola quando parte la mail, e l'incasso si conferma smarcando un
+ * promemoria. Finché quella catena non c'è, senza questo comando non si
+ * potrebbe segnare niente e la scheda non sarebbe collaudabile.
+ * La data si CHIEDE: scriverci «oggi» d'ufficio metterebbe la fattura nel mese
+ * sbagliato, ed è il difetto D3 corretto il 15/08.
+ */
+function modaleIncasso() {
+  return `
+    <div class="modal-overlay" id="modal-incasso">
+      <div class="modal-box" style="max-width:420px">
+        <h3 style="margin-top:0">È arrivato il pagamento</h3>
+        <p id="incasso-che" style="font-size:13px;color:var(--muted);margin-top:-6px"></p>
+        <div class="form-group"><label>Quando è arrivato</label>
+          <input id="incasso-data" type="date" style="width:170px"></div>
+        <p style="font-size:11.5px;color:var(--hint)">
+          Non è il giorno in cui lo segni: è il giorno in cui i soldi sono arrivati davvero.
+          È da questa data che dipende in quale mese va la fattura.</p>
+        <div class="modal-actions">
+          <button onclick="chiudiIncasso()" class="btn btn-neutral">Annulla</button>
+          <button onclick="confermaIncasso()" class="btn btn-primary">Segna incassata</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+/**
+ * Le funzioni che fanno vivere finestrella e tabella. Da mettere dentro il
+ * <script> della pagina.
+ * @param {object} o
+ * @param {Array} o.piani       [{key, pid, nome, ruolo, quota, tipo, righe:[...]}]
+ * @param {string} o.dataFirma  la data da cui si contano le rate «alla firma»
+ * @param {boolean} o.quotaPerPagatore  true dove ogni pagatore ha una sua quota
+ *   (progetto). false dove il pagatore è uno solo e la sua quota È il totale
+ *   (pacchetto): lì un secondo campo direbbe la stessa cosa due volte, e due
+ *   campi che dicono la stessa cosa prima o poi si contraddicono.
+ * ⚠️ La pagina deve definire per conto suo: `azioniPagatore(pg)` (i comandi
+ * della riga di gruppo) e `salvaTutto()` (dove si salva).
+ */
+function js(o) {
+  const inneschiOpt = Object.entries(tranche.INNESCHI)
+    .map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('');
+  return `
+    // ── Il piano di pagamento — parte condivisa (piano-ui.js) ──
+    // Si salvano gli EURO; la percentuale è solo un modo di scriverli, e si
+    // ricalcola sempre da importo/quota (regola del 27/07).
+    var PIANI = ${JSON.stringify(o.piani).replace(/</g, '\\u003c')};
+    var DATA_FIRMA = ${JSON.stringify(o.dataFirma || '')};
+    var INNESCHI_OPT = ${JSON.stringify(inneschiOpt).replace(/</g, '\\u003c')};
+    var STATI = ${JSON.stringify(tranche.STATI).replace(/</g, '\\u003c')};
+    var QUOTA_PER_PAGATORE = ${o.quotaPerPagatore ? 'true' : 'false'};
+
+    function scadenzaTranche(t) {
+      var base = t.innesco === 'firma' ? DATA_FIRMA
+               : t.innesco === 'meta'  ? (document.getElementById('pi-meta') || {}).value
+               : (document.getElementById('pi-fine') || {}).value;
+      if (!base) return null;
+      var d = new Date(base + 'T12:00:00Z');
+      d.setUTCDate(d.getUTCDate() + (Number(t.giorni) || 0));
+      return d.toISOString().slice(0, 10);
+    }
+    function itData(iso) {
+      if (!iso) return '';
+      var q = iso.split('-');
+      return q[2] + '/' + q[1] + '/' + q[0];
+    }
+    function pianoDi(key) {
+      for (var i = 0; i < PIANI.length; i++) if (PIANI[i].key === key) return PIANI[i];
+      return null;
+    }
+    function esc2(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
+    function eur2(n) { return (Math.round(Number(n)||0)).toLocaleString('it-IT'); }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // LA TABELLA — SOLA LETTURA. Nessun campo da scrivere: quelli stanno tutti
+    // nella finestrella. Mostra cio che e SALVATO, non le proposte: una rata
+    // proposta non e un impegno, e vederla qui faceva credere che ci fosse un
+    // piano dove non c era.
+    // ═══════════════════════════════════════════════════════════════════════
+    function disegnaPiano() {
+      var body = document.getElementById('amm-righe');
+      if (!body) return;
+      var html = '';
+      PIANI.forEach(function (pg) {
+        var salvate = pg.righe.filter(function (t) { return t.id; });
+        html += '<tr style="background:#f7f9fb">'
+          + '<td><strong>' + esc2(pg.nome || '—') + '</strong>'
+          + ' <span style="font-size:11px;color:var(--hint)">' + pg.ruolo + '</span></td>'
+          + '<td><strong>' + (pg.quota ? '€ ' + eur2(pg.quota) : '<span style="color:var(--hint)">quota da scrivere</span>') + '</strong></td>'
+          + '<td colspan="2" style="font-size:12px;color:var(--hint)">'
+          + (salvate.length ? salvate.length + (salvate.length === 1 ? ' rata' : ' rate') : 'nessun piano salvato')
+          + '</td>'
+          + '<td style="text-align:right;white-space:nowrap">' + azioniPagatore(pg) + '</td></tr>';
+
+        if (!salvate.length && pg.quota) {
+          html += '<tr><td colspan="5" style="padding-left:26px;font-size:12.5px;color:var(--hint)">'
+            + 'Il piano non è ancora salvato — apri «Modifica il piano».</td></tr>';
+        }
+        salvate.forEach(function (t) {
+          var perc = pg.quota ? Math.round(t.importo / pg.quota * 100) : null;
+          var scad = scadenzaTranche(t);
+          var st = STATI[t.stato] || STATI.da_chiedere;
+          // Chiesta non si mette a mano: la accendera la proforma (fetta C3).
+          // Qui la si sa gia leggere. L unico comando e il PONTE.
+          var comando = t.stato === 'incassata'
+            ? '<span style="font-size:11.5px;color:var(--hint)">' + (t.data_incasso ? 'il ' + itData(t.data_incasso) : '') + '</span>'
+              + ' <button onclick="segnaStato(\\'' + t.id + '\\',\\'da_chiedere\\')" class="btn btn-neutral btn-sm" title="Torna indietro">Annulla</button>'
+            : '<button onclick="apriIncasso(\\'' + t.id + '\\',\\'' + esc2(pg.nome) + ' — ' + esc2(t.etichetta) + ', € ' + eur2(t.importo) + '\\')" class="btn btn-neutral btn-sm">È arrivato</button>';
+          html += '<tr>'
+            + '<td style="padding-left:26px">' + esc2(t.etichetta)
+            + (perc !== null ? ' <span style="font-size:11px;color:var(--hint)">' + perc + '%</span>' : '') + '</td>'
+            + '<td style="white-space:nowrap">€ ' + eur2(t.importo) + '</td>'
+            + '<td style="font-size:12px;white-space:nowrap;color:' + (scad ? 'var(--ink)' : 'var(--hint)') + '">'
+            + (scad ? itData(scad) : '—') + '</td>'
+            + '<td style="white-space:nowrap"><span class="badge" style="background:' + st.bg + ';color:' + st.c + '">' + st.label + '</span></td>'
+            + '<td style="text-align:right;white-space:nowrap">' + comando + '</td>'
+            + '</tr>';
+        });
+      });
+      if (!PIANI.length) html = '<tr><td colspan="5" class="empty">Nessun pagatore: apri «Modifica il piano».</td></tr>';
+      body.innerHTML = html;
+      if (typeof dopoDisegnaPiano === 'function') dopoDisegnaPiano();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // LA FINESTRELLA — qui si scrive, e QUI GLI INPUT NON SI RIDISEGNANO MAI
+    // mentre digiti. Era quello il difetto: ogni tasto rifaceva la tabella con
+    // innerHTML, il campo spariva sotto le dita e il cursore finiva sul body.
+    // Adesso il DOM e la verita finche la finestrella e aperta: si aggiornano
+    // solo i TESTI derivati (la percentuale, le somme, la verifica).
+    // ═══════════════════════════════════════════════════════════════════════
+    function rigaPianoHtml(key, t) {
+      return '<tr data-key="' + key + '">'
+        + '<td><input class="pr-et" value="' + esc2(t.etichetta) + '" style="width:120px"></td>'
+        + '<td style="white-space:nowrap"><input class="pr-imp" type="number" step="1" min="0" value="' + (Math.round(Number(t.importo)||0)) + '" oninput="ricalcolaPiano()" style="width:96px">'
+        + ' <span class="pr-perc" style="font-size:11px;color:var(--hint)"></span></td>'
+        + '<td><select class="pr-inn" onchange="ricalcolaPiano()" style="width:140px">' + INNESCHI_OPT + '</select></td>'
+        + '<td><input class="pr-gg" type="number" step="1" min="0" value="' + (Number(t.giorni)||0) + '" oninput="ricalcolaPiano()" style="width:56px"></td>'
+        + '<td class="pr-scad" style="font-size:12px;white-space:nowrap;color:var(--hint)"></td>'
+        + '<td style="text-align:right"><button onclick="togliRiga(this)" class="btn btn-danger btn-sm" title="Togli la rata">🗑</button></td>'
+        + '</tr>';
+    }
+    function costruisciFinestrella() {
+      var box = document.getElementById('piano-pagatori');
+      if (!box) return;
+      var html = '';
+      PIANI.forEach(function (pg) {
+        // Dove il pagatore e uno solo, la sua quota E il totale: niente secondo
+        // campo. Il riquadro lo dichiara con data-quota-totale e quotaDi() va a
+        // leggere il totale, cosi il resto del codice non cambia di una riga.
+        var intestazione = QUOTA_PER_PAGATORE
+          ? '<span style="margin-left:auto;display:flex;align-items:center;gap:8px">'
+            + '<label style="margin:0;text-transform:none;letter-spacing:0;font-size:12px;color:var(--muted)">Quota €</label>'
+            + (pg.tipo === 'committente'
+               ? '<input id="q-comm" type="number" step="1" min="0" value="' + (pg.quota || '') + '" oninput="ricalcolaPiano()" placeholder="€" style="width:110px">'
+               : '<input class="q-coachee" data-part="' + pg.pid + '" type="number" step="1" min="0" value="' + (pg.quota || '') + '" oninput="ricalcolaPiano()" placeholder="€" style="width:110px">')
+            + '<button onclick="aggiungiRiga(\\'' + pg.key + '\\')" class="btn btn-neutral btn-sm">+ rata</button>'
+            + '</span>'
+          : '<span style="margin-left:auto">'
+            + '<button onclick="aggiungiRiga(\\'' + pg.key + '\\')" class="btn btn-neutral btn-sm">+ rata</button>'
+            + '</span>';
+        html += '<div class="pg-box" data-key="' + pg.key + '"' + (QUOTA_PER_PAGATORE ? '' : ' data-quota-totale="1"')
+          + ' style="border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:12px">'
+          + '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">'
+          + '<strong>' + esc2(pg.nome || '—') + '</strong>'
+          + '<span style="font-size:11px;color:var(--hint)">' + pg.ruolo + '</span>'
+          + intestazione + '</div>'
+          + '<div style="overflow-x:auto">'
+          + '<table style="width:100%"><thead><tr>'
+          + '<th style="text-align:left;font-size:11px;color:var(--muted)">Rata</th>'
+          + '<th style="text-align:left;font-size:11px;color:var(--muted)">Importo €</th>'
+          + '<th style="text-align:left;font-size:11px;color:var(--muted)">Quando</th>'
+          + '<th style="text-align:left;font-size:11px;color:var(--muted)">Giorni</th>'
+          + '<th style="text-align:left;font-size:11px;color:var(--muted)">Scade il</th>'
+          + '<th></th></tr></thead>'
+          + '<tbody class="pg-righe">' + pg.righe.map(function (t) { return rigaPianoHtml(pg.key, t); }).join('') + '</tbody></table></div>'
+          + '<div class="pg-check" style="font-size:12px;margin-top:6px"></div>'
+          + '</div>';
+      });
+      if (!PIANI.length) html = '<div class="empty">Nessun pagatore.</div>';
+      box.innerHTML = html;
+      // Le tendine si riempiono DOPO: il markup delle opzioni e uguale per tutte
+      // e il valore scelto si perderebbe.
+      PIANI.forEach(function (pg) {
+        var righe = box.querySelectorAll('.pg-box[data-key="' + pg.key + '"] .pg-righe tr');
+        pg.righe.forEach(function (t, i) {
+          var sel = righe[i] && righe[i].querySelector('.pr-inn');
+          if (sel) sel.value = t.innesco;
+        });
+      });
+      ricalcolaPiano();
+    }
+    function leggiRiga(tr) {
+      return {
+        etichetta: tr.querySelector('.pr-et').value,
+        importo: Math.round(Number(tr.querySelector('.pr-imp').value) || 0),
+        innesco: tr.querySelector('.pr-inn').value,
+        giorni: Number(tr.querySelector('.pr-gg').value) || 0,
+      };
+    }
+    function quotaDi(box) {
+      if (box.getAttribute('data-quota-totale')) {
+        return Math.round(Number((document.getElementById('q-totale') || {}).value) || 0);
+      }
+      var q = box.querySelector('#q-comm') || box.querySelector('.q-coachee');
+      return Math.round(Number(q ? q.value : 0) || 0);
+    }
+    // ⭐ NON tocca l HTML degli input: aggiorna solo i testi che dipendono da
+    // quello che hai appena scritto. E la riga che rende la scheda scrivibile.
+    function ricalcolaPiano() {
+      var totale = Math.round(Number((document.getElementById('q-totale') || {}).value) || 0);
+      var somma = 0;
+      document.querySelectorAll('#piano-pagatori .pg-box').forEach(function (box) {
+        var quota = quotaDi(box);
+        somma += quota;
+        var sommaRate = 0;
+        box.querySelectorAll('.pg-righe tr').forEach(function (tr) {
+          var r = leggiRiga(tr);
+          sommaRate += r.importo;
+          tr.querySelector('.pr-perc').textContent = quota ? '= ' + Math.round(r.importo / quota * 100) + '%' : '';
+          var s = scadenzaTranche(r);
+          tr.querySelector('.pr-scad').textContent = s ? itData(s) : '—';
+        });
+        var diff = quota - sommaRate;
+        var c = box.querySelector('.pg-check');
+        c.innerHTML = !quota ? '<span style="color:var(--hint)">Scrivi la cifra concordata.</span>'
+          : (diff === 0 ? '<span style="color:#4F8B73">Le rate tornano: € ' + eur2(quota) + '.</span>'
+             : '<span style="color:#b45309">' + (diff > 0 ? 'Mancano € ' + eur2(diff) : '€ ' + eur2(-diff) + ' di troppo')
+               + ' — le rate fanno € ' + eur2(sommaRate) + ' su € ' + eur2(quota) + '.</span>');
+      });
+      var v = document.getElementById('piano-verifica');
+      if (v) {
+        // Dove il pagatore e uno solo, il riquadro sopra dice gia tutto: una
+        // seconda riga che ripete lo stesso conto e solo rumore.
+        v.innerHTML = !QUOTA_PER_PAGATORE ? ''
+          : (!totale ? '<span style="color:var(--hint)">Scrivi il valore del progetto.</span>'
+             : (somma === totale ? '<span style="color:#4F8B73">Le quote coprono € ' + eur2(totale) + ' — torna.</span>'
+                : '<span style="color:#b45309">Le quote sommano € ' + eur2(somma) + ' su € ' + eur2(totale)
+                  + (totale - somma > 0 ? ': mancano € ' + eur2(totale - somma) : ': € ' + eur2(somma - totale) + ' di troppo') + '.</span>'));
+      }
+    }
+    function apriPiano() { document.getElementById('modal-piano').style.display = 'flex'; ricalcolaPiano(); }
+    function chiudiPiano() { document.getElementById('modal-piano').style.display = 'none'; }
+    // ⭐ La rata nuova nasce con quello che MANCA, non con zero: prima nasceva a
+    // 0 € e faceva scattare subito due errori insieme (una rata a zero e le
+    // rate non tornano), bloccando il salvataggio. Il pulsante creava un guasto.
+    function aggiungiRiga(key) {
+      var box = document.querySelector('#piano-pagatori .pg-box[data-key="' + key + '"]');
+      if (!box) return;
+      var quota = quotaDi(box), somma = 0;
+      box.querySelectorAll('.pg-righe tr').forEach(function (tr) { somma += leggiRiga(tr).importo; });
+      var manca = Math.max(quota - somma, 0);
+      var tb = box.querySelector('.pg-righe');
+      var n = tb.querySelectorAll('tr').length + 1;
+      tb.insertAdjacentHTML('beforeend', rigaPianoHtml(key,
+        { etichetta: 'Rata ' + n, importo: manca, innesco: 'fine', giorni: 30 }));
+      // ⚠️ La tendina nasce senza niente di scelto: le opzioni sono nel markup,
+      // ma il valore va messo DOPO averla inserita. Senza questa riga una rata
+      // nuova diceva sempre Alla firma, qualunque cosa volesse il codice — e
+      // una rata con l innesco sbagliato ha la scadenza sbagliata.
+      var ultime = tb.querySelectorAll('tr');
+      var sel = ultime[ultime.length - 1].querySelector('.pr-inn');
+      if (sel) sel.value = 'fine';
+      ricalcolaPiano();
+    }
+    function togliRiga(btn) { var tr = btn.closest('tr'); tr.parentNode.removeChild(tr); ricalcolaPiano(); }
+
+    // Legge la finestrella e restituisce, per ogni pagatore, quota e righe.
+    // ⚠️ Si legge dai CAMPI, non da PIANI: e il DOM la verita mentre si scrive.
+    function leggiFinestrella() {
+      var perKey = {};
+      document.querySelectorAll('#piano-pagatori .pg-box').forEach(function (box) {
+        var key = box.getAttribute('data-key');
+        var righe = [];
+        box.querySelectorAll('.pg-righe tr').forEach(function (tr, i) {
+          var r = leggiRiga(tr);
+          r.ordine = i;
+          righe.push(r);
+        });
+        var pg = pianoDi(key) || {};
+        perKey[key] = { quota: quotaDi(box), righe: righe, pid: pg.pid || null, tipo: pg.tipo };
+      });
+      return perKey;
+    }
+
+    async function segnaStato(id, stato, dataIncasso) {
+      try {
+        var r = await fetch('/dashboard/tranche/' + id + '/stato', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ stato: stato, data_incasso: dataIncasso || null }) });
+        var j = await r.json().catch(function () { return {}; });
+        if (!r.ok) { alert(j.error || ('Errore ' + r.status)); return; }
+        location.reload();
+      } catch (e) { alert('Errore di rete: ' + e.message); }
+    }
+    // ⚠️ PONTE fino alla fetta C3.
+    var INCASSO_ID = null;
+    function apriIncasso(id, che) {
+      INCASSO_ID = id;
+      document.getElementById('incasso-che').textContent = che;
+      document.getElementById('incasso-data').value = new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Rome' });
+      document.getElementById('modal-incasso').style.display = 'flex';
+    }
+    function chiudiIncasso() { document.getElementById('modal-incasso').style.display = 'none'; }
+    function confermaIncasso() {
+      var d = document.getElementById('incasso-data').value;
+      if (!d) { alert('Scrivi quando è arrivato il pagamento.'); return; }
+      segnaStato(INCASSO_ID, 'incassata', d);
+    }`;
+}
+
+/**
+ * I quattro numeri in cima all'Amministrazione. Stessi nomi e stessi colori
+ * ovunque: «chiesto ma non ancora pagato» è lo stato in cui si vive per
+ * settimane, e senza una casella sua sparirebbe dentro «da incassare».
+ * @param {object} t4 il risultato di `tranche.totali()`
+ * @param {boolean} conPiano  se esiste già un piano salvato
+ */
+function quattroNumeri(t4, conPiano) {
+  const eur = n => Number(n || 0).toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const n = (label, id, valore, bg, cLab, cVal) => `
+          <div class="amm-num" style="background:${bg};border-radius:8px;padding:9px 11px">
+            <div style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:${cLab}">${label}</div>
+            <div id="${id}" class="amm-num-v" style="font-size:17px;font-weight:700;color:${cVal}">€ ${eur(valore)}</div>
+          </div>`;
+  return `
+        <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:8px">
+          ${n('Concordato',  'amm-atteso',     t4.concordato, '#f4f7fa', '#9AA0AA', 'var(--ink)')}
+          ${n('Da chiedere', 'amm-dachiedere', t4.daChiedere, '#f7f9fb', '#6B7280', '#4a5568')}
+          ${n('Chiesto',     'amm-chiesto',    t4.chiesto,    '#fdf6ec', '#b7791f', '#7a5c00')}
+          ${n('Incassato',   'amm-incassato',  t4.incassato,  '#eafaf1', '#4F8B73', '#065f46')}
+        </div>
+        ${!conPiano ? `<div style="font-size:11.5px;color:var(--hint);margin-top:4px">Gli ultimi tre restano a zero finché non salvi il piano.</div>` : ''}`;
+}
+
+/**
+ * Le righe di un pagatore, pronte per la finestrella: quelle SALVATE se ci
+ * sono, altrimenti la proposta dell'Hub. La proposta non si salva da sola —
+ * finché non premi Salva non è un impegno con nessuno.
+ */
+function righeDi(salvate, quota, tipo) {
+  if (salvate && salvate.length) {
+    return salvate.map(t => ({
+      id: t.id, etichetta: t.etichetta, importo: Math.round(Number(t.importo)),
+      innesco: t.innesco, giorni: Number(t.giorni),
+      stato: t.stato || 'da_chiedere',
+      data_incasso: t.data_incasso ? String(t.data_incasso).slice(0, 10) : null,
+    }));
+  }
+  return quota > 0
+    ? tranche.pianoProposto(quota, tipo).map(r => ({ ...r, id: null, stato: 'da_chiedere', data_incasso: null }))
+    : [];
+}
+
+module.exports = { modale, modaleIncasso, js, quattroNumeri, righeDi };

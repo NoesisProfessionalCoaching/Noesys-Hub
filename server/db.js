@@ -737,6 +737,26 @@ async function init() {
                  REFERENCES partecipazioni(id) ON DELETE CASCADE`);
   await query(`ALTER TABLE tranche_progetto ADD COLUMN IF NOT EXISTS stato TEXT NOT NULL DEFAULT 'da_chiedere'`);
   await query(`ALTER TABLE tranche_progetto ADD COLUMN IF NOT EXISTS data_incasso DATE`);
+  // ⭐ FETTA C (15/08/2026) — LA RATA IMPARA A STARE ANCHE SU UN PERCORSO.
+  // Germano: «il pacchetto segue la logica del committente, con percentuali
+  // variabili» → un percorso a Pacchetto paga a rate esattamente come un
+  // progetto. Serviva scegliere fra allargare questa tabella o farne una
+  // seconda: una seconda avrebbe voluto dire scrivere DUE VOLTE tutto quello che
+  // viene dopo (chiedi la rata, incassi, promemoria), e due copie divergono.
+  // Quindi **una rata vive in un posto solo**, e dice a che cosa appartiene.
+  // ⚠️ `progetto_id` smette di essere obbligatorio. È un vincolo che si ALLENTA:
+  // nessuna riga già scritta può diventare invalida. Per lo stesso motivo NON si
+  // aggiunge un CHECK «o l'uno o l'altro»: un CHECK viene verificato su tutte le
+  // righe esistenti e, se una non gli piace, `init()` fallisce **all'avvio** e
+  // l'Hub non parte. La regola sta nel codice che scrive, dove può spiegarsi.
+  await query(`ALTER TABLE tranche_progetto ADD COLUMN IF NOT EXISTS percorso_id TEXT
+                 REFERENCES percorsi(id) ON DELETE CASCADE`);
+  await query(`ALTER TABLE tranche_progetto ALTER COLUMN progetto_id DROP NOT NULL`);
+  await query(`CREATE INDEX IF NOT EXISTS tranche_progetto_perc ON tranche_progetto (percorso_id)`);
+  // «Metà percorso» per i percorsi, come già per i progetti: l'Hub non può
+  // dedurre quando un percorso sarà a metà, lo scrive il coach. Finché è vuota,
+  // la rata legata a quel momento non ha una scadenza — e la pagina lo dice.
+  await query(`ALTER TABLE percorsi ADD COLUMN IF NOT EXISTS data_meta DATE`);
   // «Metà percorso» l'Hub non lo può dedurre — non sa quando un progetto sarà a
   // metà. Lo scrive il coach; finché è vuoto quella tranche non si può chiedere,
   // e la pagina lo dice invece di restare ferma in silenzio.

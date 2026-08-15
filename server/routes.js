@@ -14,6 +14,9 @@ const proforma = require('./proforma');
 const maturato = require('./maturato');
 const appuntamenti = require('./appuntamenti');
 const tranche = require('./tranche');
+// La finestrella del piano di pagamento: una sola, usata dalla scheda del
+// progetto E da quella del cliente (fetta C, 15/08). Vedi piano-ui.js.
+const pianoUi = require('./piano-ui');
 
 const router = express.Router();
 
@@ -440,18 +443,26 @@ router.get('/dashboard/clients/:id', requireCoach, async (req, res) => {
     // emettere, invece di mostrare un pulsante che poi non funziona).
     // ⭐ Il «da chiedere» arriva da `maturato.js`, lo stesso modulo che risponde
     // alla home e alla pagina Proforma: la regola è scritta una volta sola.
-    const [pfr, mat, emr, app] = await Promise.all([
+    const [pfr, mat, emr, app, trr] = await Promise.all([
       db.query(`SELECT * FROM proforme WHERE client_id=$1
                  ORDER BY anno DESC, progressivo DESC`, [req.params.id]),
       maturato.daChiedere(req.params.id),
       db.query('SELECT * FROM emittente WHERE id = 1'),
       appuntamenti.perCliente(req.params.id),
+      // Fetta C (15/08) — le rate dei percorsi a Pacchetto. Stessa tabella delle
+      // rate dei progetti: una rata vive in un posto solo, e dice a chi
+      // appartiene. Qui si guardano quelle legate a un PERCORSO di questo cliente.
+      db.query(`SELECT t.* FROM tranche_progetto t
+                  JOIN percorsi p ON p.id = t.percorso_id
+                 WHERE p.client_id=$1
+                 ORDER BY t.percorso_id, t.ordine`, [req.params.id]),
     ]);
     res.send(clientDetailPage(client, sr.rows, pr.rows, payr.rows, sedr.rows, prjr.rows, permr.rows, req, {
       proforme: pfr.rows,
       maturato: mat[0] || null,
       emittente: emr.rows[0] || {},
       appuntamenti: app,
+      tranchePercorsi: trr.rows,
     }));
   } catch (err) {
     console.error(err);
@@ -1753,6 +1764,67 @@ router.post('/dashboard/progetti/:id/piano', requireCoach, express.json(), async
     res.json({ ok: true });
   } catch (err) {
     console.error('[piano]', err);
+    res.status(500).json({ error: 'Errore nel salvataggio del piano' });
+  }
+});
+
+// ── Il piano di pagamento di un PACCHETTO — fetta C (15/08) ──────────────
+// Stessa idea della rotta qui sopra, su un contenitore diverso: qui il pagatore
+// è uno solo (il cliente) e la cifra concordata è il prezzo del percorso, che in
+// un Pacchetto è il TOTALE e non il prezzo di una sessione.
+// ⚠️ Si salva anche il prezzo: nella finestrella è lo stesso campo su cui si
+// controlla che le rate tornino, e farlo salvare altrove vorrebbe dire poter
+// chiudere la finestrella con un piano che non torna più con la cifra.
+router.post('/dashboard/percorsi/:id/piano', requireCoach, express.json(), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const pr = await db.query('SELECT id, modalita FROM percorsi WHERE id = $1', [req.params.id]);
+    if (!pr.rows.length) return res.status(404).json({ error: 'Percorso non trovato' });
+    if (pr.rows[0].modalita !== 'Pacchetto') {
+      // Un percorso Standard si paga a sessione: un piano di rate lì dentro
+      // sarebbe un secondo modo di dire quanto deve, e due modi litigano.
+      return res.status(400).json({ error: 'Il piano a rate vale solo per i percorsi a Pacchetto.' });
+    }
+
+    const prezzo = Math.round(Number(b.prezzo) || 0);
+    if (prezzo <= 0) return res.status(400).json({ error: 'Scrivi il prezzo del pacchetto.' });
+
+    const righe = (Array.isArray(b.righe) ? b.righe : []).map((r, i) => ({
+      ordine: i,
+      etichetta: String(r.etichetta || '').trim() || ('Rata ' + (i + 1)),
+      importo: Math.round(Number(r.importo) || 0),
+      innesco: String(r.innesco || 'firma'),
+      giorni: Math.round(Number(r.giorni) || 0),
+      stato: tranche.STATI[r.stato] ? r.stato : 'da_chiedere',
+      data_incasso: r.data_incasso || null,
+    }));
+    // Le stesse regole delle rate di un progetto, dallo stesso modulo: un piano
+    // che non somma la cifra concordata produrrebbe proforma sbagliate una per
+    // una, senza che nessun documento sembri storto.
+    const guai = tranche.problemi(righe, prezzo);
+    if (guai.length) return res.status(400).json({ error: guai.join(' ') });
+
+    const meta = String(b.data_meta || '').trim();
+    const fine = String(b.data_fine || '').trim();
+    const dataOk = d => !d || /^\d{4}-\d{2}-\d{2}$/.test(d);
+    if (!dataOk(meta)) return res.status(400).json({ error: 'La data di metà percorso non è valida.' });
+    if (!dataOk(fine)) return res.status(400).json({ error: 'La data di fine non è valida.' });
+
+    await db.transazione(async (q) => {
+      await q('UPDATE percorsi SET prezzo = $2, data_meta = $3, data_fine = $4 WHERE id = $1',
+        [req.params.id, prezzo, meta || null, fine || null]);
+      await q('DELETE FROM tranche_progetto WHERE percorso_id = $1', [req.params.id]);
+      for (const r of righe) {
+        await q(`INSERT INTO tranche_progetto
+                   (id, percorso_id, ordine, etichetta, importo, innesco, giorni, stato, data_incasso)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          [uuidv4(), req.params.id, r.ordine, r.etichetta,
+           r.importo, r.innesco, r.giorni, r.stato, r.data_incasso]);
+      }
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[piano-percorso]', err);
     res.status(500).json({ error: 'Errore nel salvataggio del piano' });
   }
 });
@@ -3657,6 +3729,89 @@ Germano`;
         </div>
       </div>`;
 
+  // ── I PERCORSI A PACCHETTO — fetta C (15/08/2026) ────────────────────
+  // In un pacchetto la cifra è concordata all'inizio: non matura sessione per
+  // sessione, si paga a rate. Germano: «il pacchetto segue la logica del
+  // committente, con percentuali variabili» → stessa tabella di rate, stessa
+  // finestrella, stessi quattro numeri del progetto. Una sola idea di «rata».
+  // ⚠️ Fino a oggi un percorso a Pacchetto usciva da tutto IN SILENZIO
+  // (`maturato.js` conta solo `modalita = 'Standard'`): non era un guasto, era
+  // un pezzo di modello che non era mai stato costruito.
+  const trPerc = fatt.tranchePercorsi || [];
+  const pacchetti = percorsi
+    .filter(pc => pc.modalita === 'Pacchetto' && pc.client_id === client.id)
+    .map(pc => {
+      const quota   = pc.prezzo != null ? Math.round(Number(pc.prezzo)) : 0;
+      const salvate = trPerc.filter(t => t.percorso_id === pc.id);
+      return {
+        id: pc.id,
+        titolo: `${pc.tipo || 'Percorso'}${pc.data_inizio ? ' · dal ' + itDate(pc.data_inizio) : ''}`,
+        quota, salvate,
+        data_inizio: pc.data_inizio ? String(pc.data_inizio).slice(0, 10) : '',
+        data_meta:   pc.data_meta   ? String(pc.data_meta).slice(0, 10)   : '',
+        data_fine:   pc.data_fine   ? String(pc.data_fine).slice(0, 10)   : '',
+        righe: pianoUi.righeDi(salvate, quota, 'committente'),
+        tot4:  tranche.totali(salvate, quota),
+        // La scadenza si calcola qui, col modulo puro: le tre date stanno sul
+        // percorso, e «metà percorso» può ancora non esserci — che è
+        // un'informazione, non un errore.
+        scadenze: salvate.map(t => tranche.scadenza(t, pc)),
+      };
+    });
+
+  const pacchettoBlock = pc => {
+    const righeSalvate = pc.salvate.map((t, i) => {
+      const st   = tranche.STATI[t.stato || 'da_chiedere'] || tranche.STATI.da_chiedere;
+      const imp  = Math.round(Number(t.importo));
+      const perc = pc.quota ? Math.round(imp / pc.quota * 100) : null;
+      const scad = pc.scadenze[i];
+      // ⚠️ PONTE fino alla fetta C3, come sulla scheda del progetto: «chiesta»
+      // si accenderà da sola quando partirà la proforma della rata.
+      const comando = (t.stato === 'incassata')
+        ? `<span style="font-size:11.5px;color:var(--hint)">${t.data_incasso ? 'il ' + itDate(t.data_incasso) : ''}</span>
+           <button onclick="segnaStato('${t.id}','da_chiedere')" class="btn btn-neutral btn-sm" title="Torna indietro">Annulla</button>`
+        : `<button onclick="apriIncasso('${t.id}','${esc(t.etichetta)}, € ${imp.toLocaleString('it-IT')}')" class="btn btn-neutral btn-sm">È arrivato</button>`;
+      return `<tr>
+          <td>${esc(t.etichetta)}${perc !== null ? ` <span style="font-size:11px;color:var(--hint)">${perc}%</span>` : ''}</td>
+          <td style="white-space:nowrap">€ ${imp.toLocaleString('it-IT')}</td>
+          <td style="font-size:12px;white-space:nowrap;color:${scad ? 'var(--ink)' : 'var(--hint)'}">${scad ? itDate(scad) : '—'}</td>
+          <td style="white-space:nowrap"><span class="badge" style="background:${st.bg};color:${st.c}">${st.label}</span></td>
+          <td style="text-align:right;white-space:nowrap">${comando}</td>
+        </tr>`;
+    }).join('');
+    // Una scheda non deve dire «pronto» senza dire cosa fare: se il piano non
+    // c'è, qui c'è scritto che manca e il pulsante per farlo è a fianco.
+    const vuoto = !pc.quota
+      ? `<div style="font-size:12.5px;color:#b45309;padding:8px 0">Questo pacchetto non ha ancora un prezzo: scrivilo nel piano.</div>`
+      : `<div style="font-size:12.5px;color:#b45309;padding:8px 0">Il piano delle rate non è ancora impostato — apri «Modifica il piano».</div>`;
+    return `
+      <div style="border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:12px">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+          <div>
+            <strong style="font-size:14px">Pacchetto</strong>
+            <span style="font-size:12px;color:var(--hint);margin-left:6px">${esc(pc.titolo)}</span>
+          </div>
+          <button onclick="apriPianoPacchetto('${pc.id}')" class="btn btn-primary btn-sm">Modifica il piano</button>
+        </div>
+        ${pianoUi.quattroNumeri(pc.tot4, pc.salvate.length > 0)}
+        ${pc.salvate.length ? `<div style="overflow-x:auto;margin-top:10px"><table style="min-width:460px">
+          <thead><tr>
+            <th style="text-align:left;font-size:11px;color:var(--muted)">Rata</th>
+            <th style="text-align:left;font-size:11px;color:var(--muted)">Importo</th>
+            <th style="text-align:left;font-size:11px;color:var(--muted)">Scade il</th>
+            <th style="text-align:left;font-size:11px;color:var(--muted)">A che punto</th>
+            <th></th>
+          </tr></thead>
+          <tbody>${righeSalvate}</tbody>
+        </table></div>` : vuoto}
+      </div>`;
+  };
+  const pacchettiHtml = pacchetti.length ? `
+      <div style="margin-bottom:18px">
+        <div class="field-label" style="margin-bottom:6px">Percorsi a pacchetto</div>
+        ${pacchetti.map(pacchettoBlock).join('')}
+      </div>` : '';
+
   const progettiRows = progetti.map(pr => {
     const ric = (pr.stato_pag_coachee || 'atteso') === 'ricevuto';
     const q   = pr.quota_coachee != null ? Number(pr.quota_coachee) : null;
@@ -3704,7 +3859,13 @@ Germano`;
   // pagina Proforma: la stessa domanda non si scrive tre volte.
   // I tre numeri del riepilogo restano nel titolo, quindi si leggono anche a
   // sezione chiusa: è l'informazione, non l'azione.
-  const soldiInSospeso = maturatoTot > 0 || totAtteso > 0 || proforme.some(proforma.daMandare);
+  // Un pacchetto è «in sospeso» quando c'è una rata ancora da chiedere o già
+  // chiesta e non arrivata — e anche quando il piano non c'è proprio: quel
+  // vuoto è la cosa da vedere per prima.
+  const pacchettoInSospeso = pacchetti.some(pc =>
+    !pc.salvate.length || pc.tot4.daChiedere > 0 || pc.tot4.chiesto > 0);
+  const soldiInSospeso = maturatoTot > 0 || totAtteso > 0 || proforme.some(proforma.daMandare)
+    || pacchettoInSospeso;
   const paymentsHtml = sezione(
     `<h2 style="margin:0">Amministrazione
       <span style="font-size:12px;font-weight:400;color:#aaa;margin-left:10px">
@@ -3714,6 +3875,7 @@ Germano`;
       </span>
     </h2>`,
     `${maturatoBlock}
+      ${pacchettiHtml}
       ${progettiBlock}
       ${paymentsTable}`,
     soldiInSospeso,
@@ -4326,6 +4488,18 @@ Germano`;
     </div>
   </div>
 
+  ${/* Fetta C — la finestrella del piano di un pacchetto. È LA STESSA della
+        scheda del progetto (piano-ui.js): qui cambia solo come si chiama la
+        cifra e dove si salva. Compare solo se questo cliente ha un pacchetto,
+        così le altre schede non si portano dietro markup che non usano. */ ''}
+  ${pacchetti.length ? pianoUi.modale({
+    labelValore: 'Prezzo del pacchetto',
+    valore: null,
+    dataMeta: '', dataFine: '',
+    sottotitolo: 'Quanto costa il pacchetto e in quante volte si paga. Si scrivono gli euro: la percentuale la calcola l\'Hub.',
+    mostraDividi: false,
+  }) + pianoUi.modaleIncasso() : ''}
+
   <div id="toast" style="display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--navy);color:#fff;padding:10px 20px;border-radius:20px;font-size:13px;font-weight:600;z-index:200">Fatto!</div>
   <script>
     const CID = '${client.id}';
@@ -4333,6 +4507,64 @@ Germano`;
     const PERM_BASE = '${PLATFORM_URL}/c/${client.token}';
     const PERM_NOMI = ${JSON.stringify(Object.fromEntries(STRUMENTI.map(t => [t.key, t.nome]))).replace(/</g, '\\u003c')};
     const PERM_SCAD = ${prossimaSess ? `'${prossimaSess}'` : 'null'};
+
+    ${pacchetti.length ? `
+    ${/* ── FETTA C — il piano di un pacchetto ─────────────────────────────
+          La finestrella arriva tutta da piano-ui.js: qui non si riscrive
+          niente, si dice solo QUALE pacchetto si sta impostando e DOVE si
+          salva. Parte con PIANI vuoto e si riempie al clic su «Modifica il
+          piano»: un cliente può avere più di un pacchetto, e ognuno ha le sue
+          date e il suo prezzo. Riempire il DOM su un CLIC è ammesso — la
+          regola vieta di rifarlo mentre qualcuno sta scrivendo. */ ''}
+    ${pianoUi.js({ piani: [], dataFirma: '', quotaPerPagatore: false })}
+
+    var PACCHETTI = ${JSON.stringify(pacchetti.map(pc => ({
+      id: pc.id, titolo: pc.titolo, quota: pc.quota, righe: pc.righe,
+      data_inizio: pc.data_inizio, data_meta: pc.data_meta, data_fine: pc.data_fine,
+    }))).replace(/</g, '\\u003c')};
+    var PACC_ID = null;
+
+    // Sulla scheda del cliente il pagatore è la persona di cui stai già
+    // guardando la scheda: non c'è niente da aprire né da togliere.
+    function azioniPagatore(pg) { return ''; }
+
+    function apriPianoPacchetto(id) {
+      var pc = null;
+      for (var i = 0; i < PACCHETTI.length; i++) if (PACCHETTI[i].id === id) pc = PACCHETTI[i];
+      if (!pc) return;
+      PACC_ID = id;
+      DATA_FIRMA = pc.data_inizio || '';
+      PIANI = [{ key: 'pacchetto', pid: null, nome: pc.titolo, ruolo: 'pacchetto',
+                 quota: pc.quota, tipo: 'committente', righe: pc.righe }];
+      document.getElementById('q-totale').value = pc.quota || '';
+      document.getElementById('pi-meta').value  = pc.data_meta || '';
+      document.getElementById('pi-fine').value  = pc.data_fine || '';
+      costruisciFinestrella();
+      apriPiano();
+    }
+
+    async function salvaTutto() {
+      var err = document.getElementById('piano-error');
+      err.style.display = 'none';
+      try {
+        // Si legge dai CAMPI, non da PIANI: dentro la finestrella il DOM è la
+        // verità mentre si scrive (la lezione del 15/08).
+        var perKey = leggiFinestrella();
+        var k = Object.keys(perKey)[0];
+        if (!k) { err.textContent = 'Non ci sono rate da salvare.'; err.style.display = 'block'; return; }
+        var r = await fetch('/dashboard/percorsi/' + PACC_ID + '/piano', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prezzo: document.getElementById('q-totale').value,
+            data_meta: document.getElementById('pi-meta').value,
+            data_fine: document.getElementById('pi-fine').value,
+            righe: perKey[k].righe }) });
+        var j = await r.json().catch(function () { return {}; });
+        if (!r.ok) { err.textContent = j.error || ('Errore ' + r.status); err.style.display = 'block'; return; }
+        location.reload();
+      } catch (e) { err.textContent = 'Errore di rete: ' + e.message; err.style.display = 'block'; }
+    }
+    ` : ''}
     const PERM_NOME_CLIENTE = ${JSON.stringify(mailNome || client.name).replace(/</g, '\\u003c')};
     const PERM_ORE = ${PERMESSO_ORE_SESSIONE};
     const SEDUTE = ${JSON.stringify(Object.fromEntries(sedute.map(s => [s.id, { id: s.id, percorso_id: s.percorso_id, tipo: s.tipo, data: s.data, ore: Number(s.ore), obiettivo: s.obiettivo || '', argomenti: s.argomenti || '', attivita: s.attivita || '', scadenza: s.scadenza || '', prossima_ora: s.prossima_ora || '', eseguita: s.eseguita || '', note: s.note || '' }]))).replace(/</g, '\\u003c')};
@@ -6017,15 +6249,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
 
   const piani = pagatori.map(pg => {
     const suoi = pianoSalvato.filter(t => (t.partecipazione_id || null) === pg.pid);
-    return { ...pg, nuovo: !suoi.length,
-      righe: suoi.length
-        ? suoi.map(t => ({ id: t.id, etichetta: t.etichetta, importo: Math.round(Number(t.importo)),
-            innesco: t.innesco, giorni: Number(t.giorni),
-            stato: t.stato || 'da_chiedere',
-            data_incasso: t.data_incasso ? String(t.data_incasso).slice(0, 10) : null }))
-        : (pg.quota > 0
-            ? tranche.pianoProposto(pg.quota, pg.tipo).map(r => ({ ...r, id: null, stato: 'da_chiedere', data_incasso: null }))
-            : []) };
+    return { ...pg, nuovo: !suoi.length, righe: pianoUi.righeDi(suoi, pg.quota, pg.tipo) };
   });
 
   // ⭐ I QUATTRO NUMERI si contano dalle tranche SALVATE, non dalle proposte:
@@ -6150,25 +6374,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
             vive per settimane, e dentro un generico «da incassare» spariva.
             Vengono dalle rate SALVATE — una proposta non è un impegno. */ ''}
       <div id="amm-body" style="display:${ammQuoteSet ? 'block' : 'none'};margin-bottom:12px">
-        <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:8px">
-          <div class="amm-num" style="background:#f4f7fa;border-radius:8px;padding:9px 11px">
-            <div style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:#9AA0AA">Concordato</div>
-            <div id="amm-atteso" class="amm-num-v" style="font-size:17px;font-weight:700;color:var(--ink)">€ ${eur(tot4.concordato)}</div>
-          </div>
-          <div class="amm-num" style="background:#f7f9fb;border-radius:8px;padding:9px 11px">
-            <div style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:#6B7280">Da chiedere</div>
-            <div id="amm-dachiedere" class="amm-num-v" style="font-size:17px;font-weight:700;color:#4a5568">€ ${eur(tot4.daChiedere)}</div>
-          </div>
-          <div class="amm-num" style="background:#fdf6ec;border-radius:8px;padding:9px 11px">
-            <div style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:#b7791f">Chiesto</div>
-            <div id="amm-chiesto" class="amm-num-v" style="font-size:17px;font-weight:700;color:#7a5c00">€ ${eur(tot4.chiesto)}</div>
-          </div>
-          <div class="amm-num" style="background:#eafaf1;border-radius:8px;padding:9px 11px">
-            <div style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:#4F8B73">Incassato</div>
-            <div id="amm-incassato" class="amm-num-v" style="font-size:17px;font-weight:700;color:#065f46">€ ${eur(tot4.incassato)}</div>
-          </div>
-        </div>
-        ${!pianoSalvato.length ? `<div style="font-size:11.5px;color:var(--hint);margin-top:4px">Gli ultimi tre restano a zero finché non salvi.</div>` : ''}
+        ${pianoUi.quattroNumeri(tot4, pianoSalvato.length > 0)}
       </div>
 
       ${/* ⭐ 15/08 — LA SCHEDA NON SI SCRIVE PIÙ, SI LEGGE. Germano: «la trovo
@@ -6218,60 +6424,15 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
           e un margine per le etichette lunghe. Sta dentro un portatile e anche
           un iPad in orizzontale; sotto i 768px il CSS lo riporta già a tutta
           larghezza da solo. */ ''}
-    <div class="modal-overlay" id="modal-piano">
-      <div class="modal-box" style="width:860px">
-        <h3 style="margin-top:0">Il piano di pagamento</h3>
-        <p style="font-size:12.5px;color:var(--muted);margin-top:-6px">
-          Quanto vale il progetto, chi paga quanto, e in quante volte. Si scrivono gli euro:
-          la percentuale la calcola l'Hub.</p>
-
-        <div style="display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:14px">
-          <div class="form-group" style="margin:0"><label>Valore del progetto €</label>
-            <input id="q-totale" type="number" step="1" min="0" value="${qTot != null ? qTot : ''}"
-                   placeholder="es. 10000" oninput="ricalcolaPiano()" style="width:130px"></div>
-          <div class="form-group" style="margin:0"><label>Metà percorso</label>
-            <input id="pi-meta" type="date" value="${p.data_meta ? String(p.data_meta).slice(0,10) : ''}"
-                   oninput="ricalcolaPiano()" style="width:150px"></div>
-          <div class="form-group" style="margin:0"><label>Fine prevista</label>
-            <input id="pi-fine" type="date" value="${p.data_fine ? String(p.data_fine).slice(0,10) : ''}"
-                   oninput="ricalcolaPiano()" style="width:150px"></div>
-        </div>
-
-        <div id="piano-pagatori"></div>
-
-        <div id="piano-verifica" style="margin-top:10px;font-size:12.5px"></div>
-        <div id="piano-error" style="display:none;margin-top:8px" class="flash-error"></div>
-
-        <div class="modal-actions" style="margin-top:16px">
-          <button onclick="dividiEqui()" class="btn btn-neutral btn-sm">Dividi in parti uguali</button>
-          <span style="flex:1"></span>
-          <button onclick="chiudiPiano()" class="btn btn-neutral">Annulla</button>
-          <button onclick="salvaTutto()" class="btn btn-primary">Salva il piano</button>
-        </div>
-      </div>
-    </div>
-
-    ${/* ⚠️ PONTE FINO ALLA FETTA A2 — da togliere quando arriva.
-          Germano (15/08): «chiesta» si accenderà da sola quando parte la mail
-          della proforma, e l'incasso si confermerà da un promemoria. Finché
-          quella catena non c'è, senza questo comando non si potrebbe segnare
-          NIENTE e la scheda non sarebbe collaudabile. Sceglie la data, perché
-          scriverci «oggi» d'ufficio metterebbe la fattura nel mese sbagliato. */ ''}
-    <div class="modal-overlay" id="modal-incasso">
-      <div class="modal-box" style="max-width:420px">
-        <h3 style="margin-top:0">È arrivato il pagamento</h3>
-        <p id="incasso-che" style="font-size:13px;color:var(--muted);margin-top:-6px"></p>
-        <div class="form-group"><label>Quando è arrivato</label>
-          <input id="incasso-data" type="date" style="width:170px"></div>
-        <p style="font-size:11.5px;color:var(--hint)">
-          Non è il giorno in cui lo segni: è il giorno in cui i soldi sono arrivati davvero.
-          È da questa data che dipende in quale mese va la fattura.</p>
-        <div class="modal-actions">
-          <button onclick="chiudiIncasso()" class="btn btn-neutral">Annulla</button>
-          <button onclick="confermaIncasso()" class="btn btn-primary">Segna incassata</button>
-        </div>
-      </div>
-    </div>
+    ${pianoUi.modale({
+      labelValore: 'Valore del progetto',
+      valore: qTot,
+      dataMeta: p.data_meta ? String(p.data_meta).slice(0, 10) : '',
+      dataFine: p.data_fine ? String(p.data_fine).slice(0, 10) : '',
+      sottotitolo: 'Quanto vale il progetto, chi paga quanto, e in quante volte. Si scrivono gli euro: la percentuale la calcola l\'Hub.',
+      mostraDividi: true,
+    })}
+    ${pianoUi.modaleIncasso()}
 
     <div class="card" style="margin-bottom:18px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
@@ -6383,240 +6544,30 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
   <script>
     const PID = ${JSON.stringify(p.id)};
 
-    // ── Il piano di pagamento del committente (12/08) ──
-    // Le righe vivono in questo array e la tabella si ridisegna da lì: aggiungere
-    // o togliere una tranche non lascia mai la pagina e i dati in disaccordo.
-    // Si salvano gli EURO; la percentuale è solo un modo di scriverli, e si
-    // ricalcola sempre da importo/quota.
-    var PIANI = ${JSON.stringify(piani).replace(/</g, '\\u003c')};
-    var DATA_FIRMA = ${JSON.stringify(p.data_inizio ? String(p.data_inizio).slice(0, 10) : '')};
-    var INNESCHI_OPT = ${JSON.stringify(inneschiOpt).replace(/</g, '\\u003c')};
-    var STATI = ${JSON.stringify(tranche.STATI).replace(/</g, '\\u003c')};
+    ${/* ⭐ 15/08 — LA FINESTRELLA DEL PIANO NON STA PIÙ QUI DENTRO.
+          Sta in `piano-ui.js` e la usa anche la scheda del cliente, perché un
+          percorso a Pacchetto paga a rate esattamente come un progetto
+          (decisione di Germano del 15/08). Tenerne due copie avrebbe voluto
+          dire due occasioni di divergere — lo stesso guaio che avevamo appena
+          finito di riparare fra la scheda del progetto e quella del cliente. */ ''}
+    ${pianoUi.js({
+      piani,
+      dataFirma: p.data_inizio ? String(p.data_inizio).slice(0, 10) : '',
+      quotaPerPagatore: true,
+    })}
 
-    function scadenzaTranche(t) {
-      var base = t.innesco === 'firma' ? DATA_FIRMA
-               : t.innesco === 'meta'  ? (document.getElementById('pi-meta') || {}).value
-               : (document.getElementById('pi-fine') || {}).value;
-      if (!base) return null;
-      var d = new Date(base + 'T12:00:00Z');
-      d.setUTCDate(d.getUTCDate() + (Number(t.giorni) || 0));
-      return d.toISOString().slice(0, 10);
+    // ── Quello che cambia da pagina a pagina ─────────────────────────────
+    // I comandi sulla riga di un pagatore. Qui si apre la sua scheda e lo si
+    // toglie dal progetto; sulla scheda del cliente non c'è niente da fare,
+    // perché il pagatore è la persona di cui stai già guardando la scheda.
+    function azioniPagatore(pg) {
+      if (pg.tipo === 'committente') return '';
+      return '<a href="/dashboard/clients/' + pg.client_id + '" class="btn btn-neutral btn-sm">Scheda</a>'
+        + ' <button onclick="removeCoachee(\\'' + pg.pid + '\\')" class="btn btn-danger btn-sm" title="Togli dal progetto">🗑</button>';
     }
-    function itData(iso) {
-      if (!iso) return '';
-      var q = iso.split('-');
-      return q[2] + '/' + q[1] + '/' + q[0];
-    }
-    function pianoDi(key) {
-      for (var i = 0; i < PIANI.length; i++) if (PIANI[i].key === key) return PIANI[i];
-      return null;
-    }
-    function esc2(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
-    function eur2(n) { return (Math.round(Number(n)||0)).toLocaleString('it-IT'); }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // LA TABELLA — SOLA LETTURA. Nessun campo da scrivere: quelli stanno tutti
-    // nella finestrella. Mostra ciò che è SALVATO, non le proposte: una rata
-    // proposta non è un impegno, e vederla qui faceva credere che ci fosse un
-    // piano dove non c'era.
-    // ═══════════════════════════════════════════════════════════════════════
-    function disegnaPiano() {
-      var body = document.getElementById('amm-righe');
-      if (!body) return;
-      var html = '';
-      PIANI.forEach(function (pg) {
-        var salvate = pg.righe.filter(function (t) { return t.id; });
-        var azioni = pg.tipo === 'committente' ? ''
-          : '<a href="/dashboard/clients/' + pg.client_id + '" class="btn btn-neutral btn-sm">Scheda</a>'
-            + ' <button onclick="removeCoachee(\\'' + pg.pid + '\\')" class="btn btn-danger btn-sm" title="Togli dal progetto">🗑</button>';
-        html += '<tr style="background:#f7f9fb">'
-          + '<td><strong>' + esc2(pg.nome || '—') + '</strong>'
-          + ' <span style="font-size:11px;color:var(--hint)">' + pg.ruolo + '</span></td>'
-          + '<td><strong>' + (pg.quota ? '€ ' + eur2(pg.quota) : '<span style="color:var(--hint)">quota da scrivere</span>') + '</strong></td>'
-          + '<td colspan="2" style="font-size:12px;color:var(--hint)">'
-          + (salvate.length ? salvate.length + (salvate.length === 1 ? ' rata' : ' rate') : 'nessun piano salvato')
-          + '</td>'
-          + '<td style="text-align:right;white-space:nowrap">' + azioni + '</td></tr>';
-
-        if (!salvate.length && pg.quota) {
-          html += '<tr><td colspan="5" style="padding-left:26px;font-size:12.5px;color:var(--hint)">'
-            + 'Il piano non è ancora salvato — apri «Modifica il piano».</td></tr>';
-        }
-        salvate.forEach(function (t) {
-          var perc = pg.quota ? Math.round(t.importo / pg.quota * 100) : null;
-          var scad = scadenzaTranche(t);
-          var st = STATI[t.stato] || STATI.da_chiedere;
-          // ⚠️ «Chiesta» non si mette a mano: la accende la mail della proforma
-          // (fetta A2). Qui la si sa già leggere. L'unico comando è il PONTE.
-          var comando = t.stato === 'incassata'
-            ? '<span style="font-size:11.5px;color:var(--hint)">' + (t.data_incasso ? 'il ' + itData(t.data_incasso) : '') + '</span>'
-              + ' <button onclick="segnaStato(\\'' + t.id + '\\',\\'da_chiedere\\')" class="btn btn-neutral btn-sm" title="Torna indietro">Annulla</button>'
-            : '<button onclick="apriIncasso(\\'' + t.id + '\\',\\'' + esc2(pg.nome) + ' — ' + esc2(t.etichetta) + ', € ' + eur2(t.importo) + '\\')" class="btn btn-neutral btn-sm">È arrivato</button>';
-          html += '<tr>'
-            + '<td style="padding-left:26px">' + esc2(t.etichetta)
-            + (perc !== null ? ' <span style="font-size:11px;color:var(--hint)">' + perc + '%</span>' : '') + '</td>'
-            + '<td style="white-space:nowrap">€ ' + eur2(t.importo) + '</td>'
-            + '<td style="font-size:12px;white-space:nowrap;color:' + (scad ? 'var(--ink)' : 'var(--hint)') + '">'
-            + (scad ? itData(scad) : '—') + '</td>'
-            + '<td style="white-space:nowrap"><span class="badge" style="background:' + st.bg + ';color:' + st.c + '">' + st.label + '</span></td>'
-            + '<td style="text-align:right;white-space:nowrap">' + comando + '</td>'
-            + '</tr>';
-        });
-      });
-      if (!PIANI.length) html = '<tr><td colspan="5" class="empty">Nessun pagatore: apri «Modifica il piano» e scrivi il valore del progetto.</td></tr>';
-      body.innerHTML = html;
-      recalcQuota();
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // LA FINESTRELLA — qui si scrive, e QUI GLI INPUT NON SI RIDISEGNANO MAI
-    // mentre digiti. Era quello il difetto: ogni tasto rifaceva la tabella con
-    // innerHTML, il campo spariva sotto le dita e il cursore finiva sul body.
-    // Adesso il DOM è la verità finché la finestrella è aperta: si aggiornano
-    // solo i TESTI derivati (la percentuale, le somme, la verifica).
-    // Le righe si costruiscono una volta al caricamento — così esistono anche
-    // per salvaAmmSilenzioso, che le cerca quando la pagina si ricarica.
-    // (⚠️ niente apici inclinati nei commenti qui dentro: chiudono il blocco.)
-    // ═══════════════════════════════════════════════════════════════════════
-    function rigaPianoHtml(key, t) {
-      return '<tr data-key="' + key + '">'
-        + '<td><input class="pr-et" value="' + esc2(t.etichetta) + '" style="width:120px"></td>'
-        + '<td style="white-space:nowrap"><input class="pr-imp" type="number" step="1" min="0" value="' + (Math.round(Number(t.importo)||0)) + '" oninput="ricalcolaPiano()" style="width:96px">'
-        + ' <span class="pr-perc" style="font-size:11px;color:var(--hint)"></span></td>'
-        + '<td><select class="pr-inn" onchange="ricalcolaPiano()" style="width:140px">' + INNESCHI_OPT + '</select></td>'
-        + '<td><input class="pr-gg" type="number" step="1" min="0" value="' + (Number(t.giorni)||0) + '" oninput="ricalcolaPiano()" style="width:56px"></td>'
-        + '<td class="pr-scad" style="font-size:12px;white-space:nowrap;color:var(--hint)"></td>'
-        + '<td style="text-align:right"><button onclick="togliRiga(this)" class="btn btn-danger btn-sm" title="Togli la rata">🗑</button></td>'
-        + '</tr>';
-    }
-    function costruisciFinestrella() {
-      var box = document.getElementById('piano-pagatori');
-      if (!box) return;
-      var html = '';
-      PIANI.forEach(function (pg) {
-        var campoQuota = pg.tipo === 'committente'
-          ? '<input id="q-comm" type="number" step="1" min="0" value="' + (pg.quota || '') + '" oninput="ricalcolaPiano()" placeholder="€" style="width:110px">'
-          : '<input class="q-coachee" data-part="' + pg.pid + '" type="number" step="1" min="0" value="' + (pg.quota || '') + '" oninput="ricalcolaPiano()" placeholder="€" style="width:110px">';
-        html += '<div class="pg-box" data-key="' + pg.key + '" style="border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:12px">'
-          + '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">'
-          + '<strong>' + esc2(pg.nome || '—') + '</strong>'
-          + '<span style="font-size:11px;color:var(--hint)">' + pg.ruolo + '</span>'
-          + '<span style="margin-left:auto;display:flex;align-items:center;gap:8px">'
-          + '<label style="margin:0;text-transform:none;letter-spacing:0;font-size:12px;color:var(--muted)">Quota €</label>'
-          + campoQuota
-          + '<button onclick="aggiungiRiga(\\'' + pg.key + '\\')" class="btn btn-neutral btn-sm">+ rata</button>'
-          + '</span></div>'
-          + '<div style="overflow-x:auto">'
-          + '<table style="width:100%"><thead><tr>'
-          + '<th style="text-align:left;font-size:11px;color:var(--muted)">Rata</th>'
-          + '<th style="text-align:left;font-size:11px;color:var(--muted)">Importo €</th>'
-          + '<th style="text-align:left;font-size:11px;color:var(--muted)">Quando</th>'
-          + '<th style="text-align:left;font-size:11px;color:var(--muted)">Giorni</th>'
-          + '<th style="text-align:left;font-size:11px;color:var(--muted)">Scade il</th>'
-          + '<th></th></tr></thead>'
-          + '<tbody class="pg-righe">' + pg.righe.map(function (t) { return rigaPianoHtml(pg.key, t); }).join('') + '</tbody></table></div>'
-          + '<div class="pg-check" style="font-size:12px;margin-top:6px"></div>'
-          + '</div>';
-      });
-      if (!PIANI.length) html = '<div class="empty">Nessun pagatore: aggiungi prima un cliente al progetto.</div>';
-      box.innerHTML = html;
-      // Le tendine si riempiono DOPO: il markup delle opzioni è uguale per tutte
-      // e il valore scelto si perderebbe.
-      PIANI.forEach(function (pg) {
-        var righe = box.querySelectorAll('.pg-box[data-key="' + pg.key + '"] .pg-righe tr');
-        pg.righe.forEach(function (t, i) {
-          var sel = righe[i] && righe[i].querySelector('.pr-inn');
-          if (sel) sel.value = t.innesco;
-        });
-      });
-      ricalcolaPiano();
-    }
-    function leggiRiga(tr) {
-      return {
-        etichetta: tr.querySelector('.pr-et').value,
-        importo: Math.round(Number(tr.querySelector('.pr-imp').value) || 0),
-        innesco: tr.querySelector('.pr-inn').value,
-        giorni: Number(tr.querySelector('.pr-gg').value) || 0,
-      };
-    }
-    function quotaDi(box) {
-      var q = box.querySelector('#q-comm') || box.querySelector('.q-coachee');
-      return Math.round(Number(q ? q.value : 0) || 0);
-    }
-    // ⭐ NON tocca l'HTML degli input: aggiorna solo i testi che dipendono da
-    // quello che hai appena scritto. È la riga che rende la scheda scrivibile.
-    function ricalcolaPiano() {
-      var totale = Math.round(Number((document.getElementById('q-totale') || {}).value) || 0);
-      var somma = 0;
-      document.querySelectorAll('#piano-pagatori .pg-box').forEach(function (box) {
-        var quota = quotaDi(box);
-        somma += quota;
-        var sommaRate = 0;
-        box.querySelectorAll('.pg-righe tr').forEach(function (tr) {
-          var r = leggiRiga(tr);
-          sommaRate += r.importo;
-          tr.querySelector('.pr-perc').textContent = quota ? '= ' + Math.round(r.importo / quota * 100) + '%' : '';
-          var s = scadenzaTranche(r);
-          tr.querySelector('.pr-scad').textContent = s ? itData(s) : '—';
-        });
-        var diff = quota - sommaRate;
-        var c = box.querySelector('.pg-check');
-        c.innerHTML = !quota ? '<span style="color:var(--hint)">Scrivi la quota di chi paga.</span>'
-          : (diff === 0 ? '<span style="color:#4F8B73">Le rate tornano: € ' + eur2(quota) + '.</span>'
-             : '<span style="color:#b45309">' + (diff > 0 ? 'Mancano € ' + eur2(diff) : '€ ' + eur2(-diff) + ' di troppo')
-               + ' — le rate fanno € ' + eur2(sommaRate) + ' su € ' + eur2(quota) + '.</span>');
-      });
-      var v = document.getElementById('piano-verifica');
-      if (v) {
-        v.innerHTML = !totale ? '<span style="color:var(--hint)">Scrivi il valore del progetto.</span>'
-          : (somma === totale ? '<span style="color:#4F8B73">Le quote coprono € ' + eur2(totale) + ' — torna.</span>'
-             : '<span style="color:#b45309">Le quote sommano € ' + eur2(somma) + ' su € ' + eur2(totale)
-               + (totale - somma > 0 ? ': mancano € ' + eur2(totale - somma) : ': € ' + eur2(somma - totale) + ' di troppo') + '.</span>');
-      }
-    }
-    function apriPiano() { document.getElementById('modal-piano').style.display = 'flex'; ricalcolaPiano(); }
-    function chiudiPiano() { document.getElementById('modal-piano').style.display = 'none'; }
-    // ⭐ La rata nuova nasce con quello che MANCA, non con zero: prima nasceva a
-    // 0 € e faceva scattare subito due errori insieme («una rata a zero» e «le
-    // rate non tornano»), bloccando il salvataggio. Il pulsante creava un guasto.
-    function aggiungiRiga(key) {
-      var box = document.querySelector('#piano-pagatori .pg-box[data-key="' + key + '"]');
-      if (!box) return;
-      var quota = quotaDi(box), somma = 0;
-      box.querySelectorAll('.pg-righe tr').forEach(function (tr) { somma += leggiRiga(tr).importo; });
-      var manca = Math.max(quota - somma, 0);
-      var tb = box.querySelector('.pg-righe');
-      var n = tb.querySelectorAll('tr').length + 1;
-      tb.insertAdjacentHTML('beforeend', rigaPianoHtml(key,
-        { etichetta: 'Rata ' + n, importo: manca, innesco: 'fine', giorni: 30 }));
-      ricalcolaPiano();
-    }
-    function togliRiga(btn) { var tr = btn.closest('tr'); tr.parentNode.removeChild(tr); ricalcolaPiano(); }
-
-    async function segnaStato(id, stato, dataIncasso) {
-      try {
-        var r = await fetch('/dashboard/tranche/' + id + '/stato', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ stato: stato, data_incasso: dataIncasso || null }) });
-        var j = await r.json().catch(function () { return {}; });
-        if (!r.ok) { alert(j.error || ('Errore ' + r.status)); return; }
-        location.reload();
-      } catch (e) { alert('Errore di rete: ' + e.message); }
-    }
-    // ⚠️ PONTE fino alla fetta A2 (vedi la finestrella qui sopra).
-    var INCASSO_ID = null;
-    function apriIncasso(id, che) {
-      INCASSO_ID = id;
-      document.getElementById('incasso-che').textContent = che;
-      document.getElementById('incasso-data').value = new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Rome' });
-      document.getElementById('modal-incasso').style.display = 'flex';
-    }
-    function chiudiIncasso() { document.getElementById('modal-incasso').style.display = 'none'; }
-    function confermaIncasso() {
-      var d = document.getElementById('incasso-data').value;
-      if (!d) { alert('Scrivi quando è arrivato il pagamento.'); return; }
-      segnaStato(INCASSO_ID, 'incassata', d);
-    }
+    // Il riepilogo in cima alla scheda si rifà dopo la tabella: è un testo
+    // derivato, non un campo, e qui nessuno sta scrivendo.
+    function dopoDisegnaPiano() { recalcQuota(); }
 
     // Fetta B (Mattone 2) — sessioni collettive del percorso condiviso.
     const COLL_PID = ${JSON.stringify(percCond ? percCond.id : '')};
@@ -6847,21 +6798,12 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
       const err = document.getElementById('piano-error');
       err.style.display = 'none';
       try {
-        // ⚠️ Dal 15/08 si legge dai CAMPI della finestrella, non da PIANI: è il
-        // DOM la verità mentre si scrive, ed è l'unico modo di non ridisegnare
-        // gli input a ogni tasto (il difetto D1). PIANI serve solo a costruirla.
-        const perKey = {};
-        document.querySelectorAll('#piano-pagatori .pg-box').forEach(function (box) {
-          const key = box.getAttribute('data-key');
-          const righe = [];
-          box.querySelectorAll('.pg-righe tr').forEach(function (tr, i) {
-            const r = leggiRiga(tr);
-            r.ordine = i;
-            righe.push(r);
-          });
-          perKey[key] = { quota: quotaDi(box), righe: righe, pid: (pianoDi(key) || {}).pid || null,
-                          tipo: (pianoDi(key) || {}).tipo };
-        });
+        // ⚠️ Si legge dai CAMPI della finestrella, non da PIANI: è il DOM la
+        // verità mentre si scrive, ed è l'unico modo di non ridisegnare gli
+        // input a ogni tasto (il difetto D1). Lo fa leggiFinestrella(), che sta
+        // nel modulo condiviso perche serve identica alle due pagine.
+        // (⚠️ niente apici inversi qui dentro: chiudono la template literal.)
+        const perKey = leggiFinestrella();
         const chiavi = Object.keys(perKey);
         const commKey = chiavi.filter(function (k) { return perKey[k].tipo === 'committente'; })[0];
 

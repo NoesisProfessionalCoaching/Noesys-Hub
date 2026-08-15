@@ -5,10 +5,11 @@
   "scripts": {
     "start": "node server/index.js",
     "prova-migrazione": "node --env-file=.env scripts/prova-migrazione.js",
+    "prova-file": "for f in server/*.js; do node --check \"$f\" || exit 1; done; echo '✓ i file del server compilano tutti.'",
     "prova-js": "node scripts/prova-js-pagine.js",
     "prova-fiscale": "node scripts/prova-fiscale.js",
     "prova-proforma": "node scripts/prova-proforma.js",
-    "prova": "npm run prova-js && npm run prova-fiscale && npm run prova-proforma && npm run prova-tranche && npm run prova-migrazione",
+    "prova": "npm run prova-file && npm run prova-js && npm run prova-fiscale && npm run prova-proforma && npm run prova-tranche && npm run prova-migrazione",
     "prova-tranche": "node scripts/prova-tranche.js"
   },
   "dependencies": {
