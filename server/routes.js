@@ -6054,11 +6054,37 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
       #amm .form-group { margin-bottom: 8px; }
       #amm label { font-size: 10px; margin-bottom: 2px; }
       #amm .amm-num { padding: 8px 10px; }
+      /* ⚠️ Col dito, la finestrella del piano deve stare dentro lo schermo.
+         La regola generale delle finestrelle sotto i 768px è width:auto, e
+         "auto" con dentro una TABELLA vuol dire «larga quanto la tabella»: il
+         riquadro sbordava di 4px e faceva scorrere di lato TUTTA la pagina.
+         Qui si fissa al 100% dello spazio disponibile, così è la tabella a
+         scorrere dentro il suo riquadro (che ha overflow-x) invece della
+         pagina. Regola mirata a questa sola finestrella: le altre non hanno
+         tabelle dentro e non vanno toccate. */
       #amm .amm-num-v { font-size: 15px; }
       #amm .amm-pagatore { margin-top: 10px; padding-top: 9px; }
       #amm .amm-sep { margin-top: 16px; padding-top: 12px; }
       #amm #q-riepilogo { padding: 6px 10px; font-size: 12px; margin-top: 8px; }
       #amm p { font-size: 12px; }
+    }
+    ${/* ⚠️ QUESTO BLOCCO STA FUORI da quello qui sopra, e ci deve restare.
+          L'avevo scritto dentro `@media (min-width: 1025px)`: «sopra 1025 E
+          insieme sotto 768» non è mai vero, quindi la regola non si applicava
+          mai e la misura non cambiava di un pixel. Prima di dire che una regola
+          non funziona, guardare dentro quale media query è finita. */ ''}
+    @media (max-width: 768px) {
+      /* Col dito la finestrella del piano deve stare nello schermo: la regola
+         generale delle finestrelle è width:auto, e "auto" con dentro una
+         TABELLA vuol dire «larga quanto la tabella». */
+      #modal-piano .modal-box { width: 100% !important; }
+      /* 🔴 IL VERO COLPEVOLE dello scorrimento laterale su telefono — e non era
+         la finestrella: i QUATTRO NUMERI stanno in quattro colonne fisse e a
+         375px sbordavano di 36px, trascinandosi dietro tutta la pagina,
+         finestrella compresa (un overlay si misura sul documento). Difetto che
+         c'era già dal 12/08. Sotto i 768px vanno su due righe da due. */
+      #amm-body > div { grid-template-columns: repeat(2, 1fr) !important; }
+      #amm .amm-num { min-width: 0; }
     }
   </style></head><body>
   ${headerNoesys({ mondo: 'progetti', sub: 'progetti', briciole: [
@@ -6182,8 +6208,18 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
           e `ricaricaConservando`, che tengono le modifiche non salvate quando la
           pagina si ricarica per altri motivi (aggiungi partecipante, cartelle,
           fasi). Cambiarli avrebbe rotto quella rete in silenzio. */ ''}
+    ${/* ⚠️ 15/08 — QUI SERVE `width`, NON `max-width`. Germano: «la finestra non
+          contiene tutti i campi, bisogna scorrere orizzontalmente». Avevo scritto
+          max-width:720px credendo di allargarla, ma `.modal-box` ha
+          **width: 520px** fisso: un max-width più grande non allarga niente, e
+          la finestrella è sempre rimasta da 520 mentre la tabella dentro ne
+          chiedeva 718. Misurato: 198px fuori dal bordo.
+          860 = 718 della tabella + i due padding (box 52 + riquadro pagatore 26)
+          e un margine per le etichette lunghe. Sta dentro un portatile e anche
+          un iPad in orizzontale; sotto i 768px il CSS lo riporta già a tutta
+          larghezza da solo. */ ''}
     <div class="modal-overlay" id="modal-piano">
-      <div class="modal-box" style="max-width:720px">
+      <div class="modal-box" style="width:860px">
         <h3 style="margin-top:0">Il piano di pagamento</h3>
         <p style="font-size:12.5px;color:var(--muted);margin-top:-6px">
           Quanto vale il progetto, chi paga quanto, e in quante volte. Si scrivono gli euro:
@@ -6470,6 +6506,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
           + campoQuota
           + '<button onclick="aggiungiRiga(\\'' + pg.key + '\\')" class="btn btn-neutral btn-sm">+ rata</button>'
           + '</span></div>'
+          + '<div style="overflow-x:auto">'
           + '<table style="width:100%"><thead><tr>'
           + '<th style="text-align:left;font-size:11px;color:var(--muted)">Rata</th>'
           + '<th style="text-align:left;font-size:11px;color:var(--muted)">Importo €</th>'
@@ -6477,7 +6514,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
           + '<th style="text-align:left;font-size:11px;color:var(--muted)">Giorni</th>'
           + '<th style="text-align:left;font-size:11px;color:var(--muted)">Scade il</th>'
           + '<th></th></tr></thead>'
-          + '<tbody class="pg-righe">' + pg.righe.map(function (t) { return rigaPianoHtml(pg.key, t); }).join('') + '</tbody></table>'
+          + '<tbody class="pg-righe">' + pg.righe.map(function (t) { return rigaPianoHtml(pg.key, t); }).join('') + '</tbody></table></div>'
           + '<div class="pg-check" style="font-size:12px;margin-top:6px"></div>'
           + '</div>';
       });
