@@ -52,7 +52,7 @@ function modale(o) {
         <p style="font-size:12.5px;color:var(--muted);margin-top:-6px">${o.sottotitolo}</p>
 
         <div style="display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:14px">
-          <div class="form-group" style="margin:0"><label>${o.labelValore} €</label>
+          <div class="form-group" style="margin:0"><label id="q-totale-label">${o.labelValore} €</label>
             <input id="q-totale" type="number" step="1" min="0" value="${val}"
                    placeholder="es. 1200" oninput="ricalcolaPiano()" style="width:130px"></div>
           <div class="form-group" style="margin:0"><label>Metà percorso</label>
@@ -62,6 +62,14 @@ function modale(o) {
             <input id="pi-fine" type="date" value="${o.dataFine || ''}"
                    oninput="ricalcolaPiano()" style="width:150px"></div>
         </div>
+        ${/* ⚠️ Quando la cifra e le date appartengono a un'altra pagina, i campi
+              si MOSTRANO SPENTI invece di sparire: servono a capire da dove
+              escono le scadenze. Un campo spento senza spiegazione però è solo
+              un dispetto, quindi qui sotto c'è scritto dove si cambiano.
+              Chi spegne e chi accende è il JS, al momento in cui si apre: la
+              stessa finestrella serve un pacchetto (dove il prezzo si scrive) e
+              la quota di un progetto (dove no). */ ''}
+        <div id="piano-nota" style="display:none;font-size:11.5px;color:var(--hint);margin:-8px 0 12px"></div>
 
         <div id="piano-pagatori"></div>
 
@@ -321,6 +329,19 @@ function js(o) {
                 : '<span style="color:#b45309">Le quote sommano € ' + eur2(somma) + ' su € ' + eur2(totale)
                   + (totale - somma > 0 ? ': mancano € ' + eur2(totale - somma) : ': € ' + eur2(somma - totale) + ' di troppo') + '.</span>'));
       }
+    }
+    // Prepara la finestrella per un caso o per l'altro. bloccati = la cifra e
+    // le date appartengono a un altra pagina: si vedono ma non si toccano.
+    // (⚠️ niente apici inversi qui dentro: chiudono la template literal.)
+    function preparaPiano(etichetta, bloccati, nota) {
+      var lab = document.getElementById('q-totale-label');
+      if (lab) lab.textContent = etichetta + ' €';
+      ['q-totale', 'pi-meta', 'pi-fine'].forEach(function (id) {
+        var el = document.getElementById(id);
+        if (el) el.disabled = !!bloccati;
+      });
+      var n = document.getElementById('piano-nota');
+      if (n) { n.textContent = nota || ''; n.style.display = nota ? 'block' : 'none'; }
     }
     function apriPiano() { document.getElementById('modal-piano').style.display = 'flex'; ricalcolaPiano(); }
     function chiudiPiano() { document.getElementById('modal-piano').style.display = 'none'; }
