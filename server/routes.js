@@ -3434,19 +3434,49 @@ Germano`;
         </button>
       </div>`;
   }).join('');
-  const appuntamentoHtml = !(fatt.appuntamenti || []).length ? '' : `
+  // ── LE SEZIONI SI PIEGANO (Germano, 13/08) ──────────────────────────────────
+  // «Tutte le schede tranne ANAGRAFICA dovrebbero essere espandibili come
+  // PERCORSI». ⚠️ Chiesto cosa intendesse, perché Percorsi era l'unica che NON
+  // si chiudeva: ha scelto la FRECCETTA sulla sezione (come Scheda Cliente e
+  // Strumenti), non le righe che si aprono una per una.
+  //
+  // ⭐ E ha scelto come devono nascere: **aperte solo se hanno qualcosa in
+  // sospeso**. Quindi ogni sezione porta la SUA domanda — non c'è un criterio
+  // unico, perché «in sospeso» vuol dire una cosa diversa per ognuna — e la
+  // domanda sta scritta accanto alla sezione che riguarda.
+  //
+  // ⚠️ I pulsanti che finiscono nel <summary> devono fermare il clic
+  // (`event.stopPropagation()`), altrimenti premerli chiude la sezione invece
+  // di fare quello che dicono.
+  // ⚠️ L'ANAGRAFICA non si tocca: non è una sezione pieghevole e resta fissa in
+  // cima, com'è oggi (e con dentro il riquadro «pronto per fatturare»).
+  const sezione = (titolo, corpo, aperta, azioni) => `
     <div class="card">
-      <h2 style="margin-bottom:2px">Prossimo appuntamento</h2>
-      ${appHtml}
+      <details class="sec"${aperta ? ' open' : ''}>
+        <summary style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;cursor:pointer">
+          <span style="display:flex;align-items:center;gap:8px"><span class="sec-caret">▸</span>${titolo}</span>
+          ${azioni ? `<span style="display:inline-flex;gap:8px;align-items:center">${azioni}</span>` : ''}
+        </summary>
+        <div style="margin-top:14px">${corpo}</div>
+      </details>
     </div>`;
 
-  const percorsiHtml = `
-    <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
-        <h2 style="margin:0">Percorsi</h2>
-        <button onclick="openPercorso()" class="btn btn-primary btn-sm">+ Nuovo percorso</button>
-      </div>
-      ${avvisoStati}
+  // In sospeso qui = c'è un percorso attivo SENZA appuntamento, o con uno già
+  // passato (è proprio quel vuoto che va visto), oppure ce n'è uno entro una
+  // settimana — quello che stai per fare davvero. Se sono tutti fissati e
+  // lontani, la sezione riposa chiusa.
+  const fra7giorni = new Date(Date.parse(oggiIso) + 7 * 86400000).toISOString().slice(0, 10);
+  const appInSospeso = (fatt.appuntamenti || []).some(a =>
+    !a.scad || String(a.scad) < oggiIso || String(a.scad) <= fra7giorni);
+  const appuntamentoHtml = !(fatt.appuntamenti || []).length ? '' :
+    sezione('<h2 style="margin:0">Prossimo appuntamento</h2>', appHtml, appInSospeso);
+
+  // In sospeso qui = c'è un percorso ATTIVO, cioè un lavoro in corso. Un cliente
+  // con soli percorsi conclusi apre la scheda senza doverli scorrere.
+  const percorsiInSospeso = percorsi.some(p => p.stato === 'attivo');
+  const percorsiHtml = sezione(
+    `<h2 style="margin:0">Percorsi <span style="font-weight:400;font-size:13px;color:#aaa">(${percorsi.length})</span></h2>`,
+    `${avvisoStati}
       ${percorsi.length === 0 ? `<div class="empty">Nessun percorso registrato.</div>` : `
       <table>
         <thead><tr><th>Tipo</th><th>Lavoro svolto</th><th>Modalità</th><th>Prezzo</th><th>Periodo</th><th>Stato</th><th></th></tr></thead>
@@ -3477,8 +3507,9 @@ Germano`;
               : `<button onclick="editPercorso('${p.id}')" class="btn btn-neutral btn-sm" title="Correggi modalità, prezzo, sessioni previste">Modifica</button> ${p.stato==='attivo' ? `<button onclick="chiudiPercorso('${p.id}','${fineIso}','${fineIt}')" class="btn btn-neutral btn-sm">Chiudi il percorso</button>` : ''}<span style="display:inline-block;width:14px"></span><button onclick="delPercorso('${p.id}')" class="btn btn-danger btn-sm" title="Elimina il percorso">🗑</button>`}</td>
           </tr>`; }).join('')}
         </tbody>
-      </table>`}
-    </div>`;
+      </table>`}`,
+    percorsiInSospeso,
+    `<button onclick="event.stopPropagation();openPercorso()" class="btn btn-primary btn-sm">+ Nuovo percorso</button>`);
 
   // ── Scheda Cliente (una riga per sessione: la tabella storica di Cowork) ──
   const seduteBody = percorsi.length === 0
@@ -3495,9 +3526,12 @@ Germano`;
   // ovunque nell'Hub (le bozze non valgono per le ore ICF finché non le approvi).
   const oreConfermate = sedute.reduce((s, x) =>
     s + (x.stato === 'confermata' ? (Number(x.ore) || 0) : 0), 0);
+  // In sospeso qui = ci sono sessioni in BOZZA da approvare. Prima nasceva
+  // sempre aperta; dal 13/08 vale lo stesso criterio di tutte le altre.
+  const bozzeDaApprovare = sedute.some(s => s.stato === 'bozza');
   const seduteHtml = `
     <div class="card">
-      <details class="sec" open>
+      <details class="sec"${bozzeDaApprovare ? ' open' : ''}>
         <summary style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;cursor:pointer">
           <span style="display:flex;align-items:center;gap:8px"><span class="sec-caret">▸</span><h2 style="margin:0">Scheda Cliente <span style="font-weight:400;font-size:13px;color:#aaa">(${sedute.length} ${sedute.length === 1 ? 'sessione' : 'sessioni'}${oreConfermate > 0 ? ` · ${fmtOre(oreConfermate)} h` : ''})</span></h2></span>
           <span style="display:inline-flex;gap:8px;align-items:center">
@@ -3654,22 +3688,26 @@ Germano`;
           </tr>`).join('')}
         </tbody>
       </table>` : (progetti.length ? '' : `<div class="empty">Nessun pagamento registrato.</div>`);
-  const paymentsHtml = `
-    <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
-        <h2 style="margin:0">Amministrazione
-          <span style="font-size:12px;font-weight:400;color:#aaa;margin-left:10px">
-            Incassato: <strong style="color:#4F8B73">€ ${totRicevuto.toLocaleString('it-IT',{minimumFractionDigits:2})}</strong>
-            ${totAtteso > 0 ? ` · Da incassare: <strong style="color:#D8AE2E">€ ${totAtteso.toLocaleString('it-IT',{minimumFractionDigits:2})}</strong>` : ''}
-            ${maturatoTot > 0 ? ` · Maturato: <strong style="color:#1A5280">€ ${maturatoTot.toLocaleString('it-IT',{minimumFractionDigits:2})}</strong>` : ''}
-          </span>
-        </h2>
-        <button onclick="openPayment()" class="btn btn-primary btn-sm">+ Pagamento</button>
-      </div>
-      ${maturatoBlock}
+  // In sospeso qui = ci sono SOLDI CHE ASPETTANO: qualcosa di maturato da
+  // chiedere, una proforma creata e non ancora spedita, o un pagamento atteso.
+  // ⚠️ Chi è «da mandare» lo dice `proforma.daMandare`, come in home e nella
+  // pagina Proforma: la stessa domanda non si scrive tre volte.
+  // I tre numeri del riepilogo restano nel titolo, quindi si leggono anche a
+  // sezione chiusa: è l'informazione, non l'azione.
+  const soldiInSospeso = maturatoTot > 0 || totAtteso > 0 || proforme.some(proforma.daMandare);
+  const paymentsHtml = sezione(
+    `<h2 style="margin:0">Amministrazione
+      <span style="font-size:12px;font-weight:400;color:#aaa;margin-left:10px">
+        Incassato: <strong style="color:#4F8B73">€ ${totRicevuto.toLocaleString('it-IT',{minimumFractionDigits:2})}</strong>
+        ${totAtteso > 0 ? ` · Da incassare: <strong style="color:#D8AE2E">€ ${totAtteso.toLocaleString('it-IT',{minimumFractionDigits:2})}</strong>` : ''}
+        ${maturatoTot > 0 ? ` · Maturato: <strong style="color:#1A5280">€ ${maturatoTot.toLocaleString('it-IT',{minimumFractionDigits:2})}</strong>` : ''}
+      </span>
+    </h2>`,
+    `${maturatoBlock}
       ${progettiBlock}
-      ${paymentsTable}
-    </div>`;
+      ${paymentsTable}`,
+    soldiInSospeso,
+    `<button onclick="event.stopPropagation();openPayment()" class="btn btn-primary btn-sm">+ Pagamento</button>`);
 
   // ── Strumenti utilizzati — sezione a fisarmonica ─────
   // Nomi e icone IDENTICI a quelli che il cliente vede in Coaching-Tools: uno
