@@ -423,7 +423,7 @@ router.get('/dashboard/clients/:id', requireCoach, async (req, res) => {
       db.query('SELECT * FROM sedute WHERE client_id=$1 ORDER BY data ASC NULLS LAST, created_at ASC', [req.params.id]),
       // Progetti di cui il coachee fa parte: SOLA LETTURA, per riflettere la sua
       // quota business sulla scheda. Il pagamento vive sul progetto (payments non toccata).
-      db.query(`SELECT pa.quota_coachee, pa.stato_pag_coachee, pa.data_pag_coachee,
+      db.query(`SELECT pa.id AS part_id, pa.quota_coachee,
                        pr.id AS progetto_id, pr.titolo, c.denominazione AS committente_nome
                 FROM partecipazioni pa
                 JOIN progetti pr ON pr.id = pa.progetto_id
@@ -443,7 +443,7 @@ router.get('/dashboard/clients/:id', requireCoach, async (req, res) => {
     // emettere, invece di mostrare un pulsante che poi non funziona).
     // ⭐ Il «da chiedere» arriva da `maturato.js`, lo stesso modulo che risponde
     // alla home e alla pagina Proforma: la regola è scritta una volta sola.
-    const [pfr, mat, emr, app, trr] = await Promise.all([
+    const [pfr, mat, emr, app, trr, trp] = await Promise.all([
       db.query(`SELECT * FROM proforme WHERE client_id=$1
                  ORDER BY anno DESC, progressivo DESC`, [req.params.id]),
       maturato.daChiedere(req.params.id),
@@ -456,6 +456,18 @@ router.get('/dashboard/clients/:id', requireCoach, async (req, res) => {
                   JOIN percorsi p ON p.id = t.percorso_id
                  WHERE p.client_id=$1
                  ORDER BY t.percorso_id, t.ordine`, [req.params.id]),
+      // Fetta C2 (15/08) — le rate che questa persona paga DENTRO un progetto.
+      // ⚠️ Prima qui si leggeva `stato_pag_coachee`, un interruttore acceso/spento
+      // sull'INTERA quota che dal 12/08 non scrive più nessuno (i pulsanti che lo
+      // accendevano sono spariti quando è arrivato il piano a rate). Restava un
+      // numero congelato a prima di allora: finché tutto è «da chiedere» dice il
+      // vero per caso, ma il giorno che segni incassata una rata sulla pagina del
+      // progetto, qui continuerebbe a comparire «Da incassare» per l'intera quota.
+      // ⭐ Una sola verità: la rata.
+      db.query(`SELECT t.* FROM tranche_progetto t
+                  JOIN partecipazioni pa ON pa.id = t.partecipazione_id
+                 WHERE pa.client_id=$1
+                 ORDER BY t.partecipazione_id, t.ordine`, [req.params.id]),
     ]);
     res.send(clientDetailPage(client, sr.rows, pr.rows, payr.rows, sedr.rows, prjr.rows, permr.rows, req, {
       proforme: pfr.rows,
@@ -463,6 +475,7 @@ router.get('/dashboard/clients/:id', requireCoach, async (req, res) => {
       emittente: emr.rows[0] || {},
       appuntamenti: app,
       tranchePercorsi: trr.rows,
+      tranchePartecipazioni: trp.rows,
     }));
   } catch (err) {
     console.error(err);
@@ -3624,17 +3637,29 @@ Germano`;
       </details>
     </div>`;
 
-  // ── Amministrazione ──────────────────────────────────
-  // UN posto solo per i soldi del coachee: pagamenti personali (tabella payments)
-  // + riflesso SOLA LETTURA delle quote nei progetti (business). La quota business
-  // NON si scrive in payments — vive sul progetto, qui si legge e si somma (una
-  // sola verità). Così Amministrazione non resta vuota per un coachee business.
-  const projRicevuto = progetti.reduce((s,pr)=> s + (((pr.stato_pag_coachee||'atteso')==='ricevuto' && pr.quota_coachee!=null) ? Number(pr.quota_coachee) : 0), 0);
-  const projAtteso   = progetti.reduce((s,pr)=> s + (((pr.stato_pag_coachee||'atteso')!=='ricevuto' && pr.quota_coachee!=null) ? Number(pr.quota_coachee) : 0), 0);
-  const payRicevuto  = payments.filter(p=>p.stato==='ricevuto').reduce((s,p)=>s+Number(p.importo),0);
-  const payAtteso    = payments.filter(p=>p.stato==='atteso').reduce((s,p)=>s+Number(p.importo),0);
-  const totRicevuto  = payRicevuto + projRicevuto;
-  const totAtteso    = payAtteso + projAtteso;
+  // ── Amministrazione — FETTA C2 (15/08/2026) ──────────────────────────
+  // Germano: «continua a essere caotica… sei sicuro che sia pensata
+  // correttamente? non mi voglio trovare a rifare le cose mille volte».
+  // Aveva ragione: qui dentro c'erano TRE MODI DIVERSI DI DIRE SOLDI, nati in
+  // momenti diversi e mai messi d'accordo — il maturato dei percorsi a sessione,
+  // un riflesso delle quote di progetto che leggeva un interruttore ormai morto,
+  // e la vecchia tabella dei pagamenti scritti a mano.
+  // ⭐ LA MOSSA NON È FONDERLI IN UNA TABELLA SOLA: i soldi arrivano davvero da
+  // posti diversi, e nasconderlo non aiuterebbe nessuno. È fargli parlare LA
+  // STESSA LINGUA — le stesse parole e gli stessi quattro numeri (Concordato ·
+  // Da chiedere · Chiesto · Incassato) — e togliere l'unica fonte che mentiva.
+  //
+  // ⚠️ La tabella `payments` NON si tocca: guardando i dati veri il 15/08 sono 7
+  // righe, tutte «scambio servizi» a 0,00 €, l'ultima del 10/08. È in USO — serve
+  // a segnare che uno scambio servizi è saldato — e lo scambio servizi è per
+  // decisione di Germano fuori da questo cantiere. L'avevo dato per morto nel
+  // piano: era un'assunzione mia, smentita dai dati.
+  const trPart = fatt.tranchePartecipazioni || [];
+  // Solo l'atteso: serve a decidere se la sezione nasce aperta. L'incassato di
+  // qui non si somma più con niente (sono registrazioni fuori dal conto), e
+  // tenerlo come variabile orfana è il modo migliore per ritrovarselo sommato
+  // per sbaglio fra sei mesi.
+  const payAtteso = payments.filter(p=>p.stato==='atteso').reduce((s,p)=>s+Number(p.importo),0);
 
   // ── Maturato ─────────────────────────────────────────
   // Con la modalità Standard si paga OGNI SESSIONE, quindi quello che hai maturato
@@ -3812,30 +3837,48 @@ Germano`;
         ${pacchetti.map(pacchettoBlock).join('')}
       </div>` : '';
 
-  const progettiRows = progetti.map(pr => {
-    const ric = (pr.stato_pag_coachee || 'atteso') === 'ricevuto';
-    const q   = pr.quota_coachee != null ? Number(pr.quota_coachee) : null;
-    const dtc = ric && pr.data_pag_coachee ? ` il ${itDate(pr.data_pag_coachee)}` : '';
-    return `
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid #eef1f5;flex-wrap:wrap">
-        <div>
-          <strong style="font-size:14px">${esc(pr.titolo)}</strong>
-          <div style="font-size:12px;color:#aaa">Committente: ${esc(pr.committente_nome)}</div>
-        </div>
-        <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-          <span style="font-size:13px;color:#4a5568">Quota: <strong>${q != null ? '€ ' + q.toLocaleString('it-IT',{minimumFractionDigits:2}) : '<span style="color:#aaa">da definire</span>'}</strong></span>
-          <span class="badge" style="background:${ric?'#d1fae5':'#fff8dc'};color:${ric?'#065f46':'#7a5c00'}">${ric?'Incassato'+dtc:'Da incassare'}</span>
+  // ── La quota che questa persona paga dentro un progetto ──────────────
+  // ⭐ Adesso viene dalle RATE, come sulla pagina del progetto: le stesse
+  // parole, gli stessi quattro numeri. Prima c'era un'etichetta
+  // «Incassato / Da incassare» che parlava dell'INTERA quota e nasceva da un
+  // interruttore che nessuno aggiorna più.
+  // ⚠️ Resta di SOLA LETTURA e manda al progetto: il piano di un progetto si
+  // tocca nella pagina del progetto, e avere due posti dove si scrive la stessa
+  // cosa è il difetto che stiamo togliendo, non uno da aggiungere.
+  const progettiConto = progetti.map(pr => {
+    const q       = pr.quota_coachee != null ? Math.round(Number(pr.quota_coachee)) : 0;
+    const salvate = trPart.filter(t => t.partecipazione_id === pr.part_id);
+    return { pr, q, salvate, tot4: tranche.totali(salvate, q) };
+  });
+  const progettiRows = progettiConto.map(({ pr, q, salvate, tot4 }) => `
+      <div style="padding:12px 0;border-top:1px solid #eef1f5">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:8px">
+          <div>
+            <strong style="font-size:14px">${esc(pr.titolo)}</strong>
+            <div style="font-size:12px;color:#aaa">Committente: ${esc(pr.committente_nome)}</div>
+          </div>
           <a href="/dashboard/progetti/${pr.progetto_id}" class="btn btn-neutral btn-sm">Gestisci nel progetto</a>
         </div>
-      </div>`;
-  }).join('');
+        ${!q
+          ? `<div style="font-size:12.5px;color:#b45309">Quota da definire — si scrive nel progetto.</div>`
+          : pianoUi.quattroNumeri(tot4, salvate.length > 0)}
+        ${q && !salvate.length
+          ? `<div style="font-size:12.5px;color:#b45309;margin-top:6px">Il piano delle rate non è ancora impostato — si fa nel progetto.</div>`
+          : ''}
+      </div>`).join('');
   const progettiBlock = progetti.length ? `
       <div style="margin-bottom:${payments.length ? '18px' : '0'}">
-        <div class="field-label" style="margin-bottom:2px">Progetti (business)</div>
+        <div class="field-label" style="margin-bottom:2px">Quote nei progetti</div>
         ${progettiRows}
       </div>` : '';
   const paymentsTable = payments.length ? `
-      ${progetti.length ? `<div class="field-label" style="margin-bottom:2px">Pagamenti personali</div>` : ''}
+      ${/* ⚠️ NON è un doppione degli altri blocchi: è il registro dei pagamenti
+            scritti a mano, e oggi serve **solo** allo scambio servizi (7 righe
+            in produzione al 15/08, tutte a 0,00 €). Lo scambio servizi sta
+            fuori dal cantiere dei soldi per decisione di Germano, quindi questi
+            importi restano fuori dai tre numeri in cima. */ ''}
+      <div class="field-label" style="margin-bottom:2px">Pagamenti registrati a mano</div>
+      <div style="font-size:11.5px;color:var(--hint);margin-bottom:6px">Fuori dal conto qui sopra: è quello che si usa per lo scambio servizi.</div>
       <table>
         <thead><tr><th>Importo</th><th>Tipo</th><th>Data</th><th>Stato</th><th>Note</th><th></th></tr></thead>
         <tbody>
@@ -3864,14 +3907,35 @@ Germano`;
   // vuoto è la cosa da vedere per prima.
   const pacchettoInSospeso = pacchetti.some(pc =>
     !pc.salvate.length || pc.tot4.daChiedere > 0 || pc.tot4.chiesto > 0);
-  const soldiInSospeso = maturatoTot > 0 || totAtteso > 0 || proforme.some(proforma.daMandare)
-    || pacchettoInSospeso;
+  const progettoInSospeso = progettiConto.some(g =>
+    g.q > 0 && (!g.salvate.length || g.tot4.daChiedere > 0 || g.tot4.chiesto > 0));
+  const soldiInSospeso = maturatoTot > 0 || payAtteso > 0 || proforme.some(proforma.daMandare)
+    || pacchettoInSospeso || progettoInSospeso;
+
+  // ⭐ I TRE NUMERI IN CIMA, uguali per chiunque: da chiedere · chiesto ·
+  // incassato. «Concordato» non sale quassù di proposito — per un percorso a
+  // sessione non esiste una cifra concordata, matura settimana per settimana, e
+  // un totale che vale per due casi su tre sarebbe un numero da interpretare.
+  // Sta dentro ogni blocco, dove vuol dire qualcosa.
+  // ⚠️ Si sommano SOLO cifre della stessa natura: imponibili (il maturato e le
+  // rate). Le proforma NON entrano qui: i loro totali contengono l'IVA, e
+  // sommarli alle rate darebbe un numero che non è né l'uno né l'altro.
+  // «Chiesto» resta a zero finché non arriva C3 — è la proforma di una rata ad
+  // accenderlo, ed è giusto che si veda che oggi non c'è.
+  const sommaStato = (chiave) =>
+    pacchetti.reduce((s, pc) => s + pc.tot4[chiave], 0)
+    + progettiConto.reduce((s, g) => s + g.tot4[chiave], 0);
+  const totDaChiedere = maturatoTot + sommaStato('daChiedere');
+  const totChiesto    = sommaStato('chiesto');
+  const totIncassato  = sommaStato('incassato');
+  const numeroTitolo = (etichetta, valore, colore) => valore <= 0 ? '' :
+    ` · ${etichetta}: <strong style="color:${colore}">€ ${valore.toLocaleString('it-IT',{minimumFractionDigits:2})}</strong>`;
   const paymentsHtml = sezione(
     `<h2 style="margin:0">Amministrazione
       <span style="font-size:12px;font-weight:400;color:#aaa;margin-left:10px">
-        Incassato: <strong style="color:#4F8B73">€ ${totRicevuto.toLocaleString('it-IT',{minimumFractionDigits:2})}</strong>
-        ${totAtteso > 0 ? ` · Da incassare: <strong style="color:#D8AE2E">€ ${totAtteso.toLocaleString('it-IT',{minimumFractionDigits:2})}</strong>` : ''}
-        ${maturatoTot > 0 ? ` · Maturato: <strong style="color:#1A5280">€ ${maturatoTot.toLocaleString('it-IT',{minimumFractionDigits:2})}</strong>` : ''}
+        Da chiedere: <strong style="color:#1A5280">€ ${totDaChiedere.toLocaleString('it-IT',{minimumFractionDigits:2})}</strong>
+        ${numeroTitolo('Chiesto', totChiesto, '#D8AE2E')}
+        ${numeroTitolo('Incassato', totIncassato, '#4F8B73')}
       </span>
     </h2>`,
     `${maturatoBlock}
