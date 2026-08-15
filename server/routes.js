@@ -1769,12 +1769,22 @@ router.post('/dashboard/tranche/:id/stato', requireCoach, express.json(), async 
     // La data dell'incasso si scrive quando diventa incassata e si cancella se
     // si torna indietro: una data d'incasso su una rata non incassata sarebbe
     // una bugia che resta lì.
+    // 🔴 15/08 — ADESSO LA DATA ARRIVA DA CHI SEGNA, non è più «oggi» d'ufficio.
+    // Era `COALESCE(data_incasso, CURRENT_DATE)`: registrando un bonifico di tre
+    // settimane prima, l'Hub scriveva oggi. Non è un dettaglio — è l'incasso a
+    // far nascere la fattura (decisione 2 dell'11/08), quindi una data sbagliata
+    // manda la fattura nel mese sbagliato. Se non la mandano, si ripiega su oggi
+    // com'era: meglio una data che nessuna.
+    const grezza = String((req.body || {}).data_incasso || '').slice(0, 10);
+    const dataIncasso = /^\d{4}-\d{2}-\d{2}$/.test(grezza) ? grezza : null;
     const r = await db.query(
       `UPDATE tranche_progetto
           SET stato = $2,
-              data_incasso = CASE WHEN $2 = 'incassata' THEN COALESCE(data_incasso, CURRENT_DATE) ELSE NULL END,
+              data_incasso = CASE WHEN $2 = 'incassata'
+                                  THEN COALESCE($3::date, data_incasso, CURRENT_DATE)
+                                  ELSE NULL END,
               updated_at = NOW()
-        WHERE id = $1 RETURNING id`, [req.params.id, stato]);
+        WHERE id = $1 RETURNING id`, [req.params.id, stato, dataIncasso]);
     if (!r.rows.length) return res.status(404).json({ error: 'Tranche non trovata' });
     res.json({ ok: true });
   } catch (err) {
@@ -6098,10 +6108,13 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
           una colonna di questa. */ ''}
     <div class="card" id="amm" style="margin-bottom:18px">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;flex-wrap:wrap">
-        <h2 style="margin:0">Amministrazione</h2>
+        <h2 style="margin:0">Amministrazione
+          <span style="font-size:12px;font-weight:400;color:#aaa;margin-left:10px">
+            Valore del progetto: <strong style="color:var(--ink)">${qTot != null ? '€ ' + eur(qTot) : '—'}</strong>
+          </span>
+        </h2>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          <label style="margin:0;text-transform:none;letter-spacing:0;font-size:12px;color:var(--muted)">Valore del progetto €</label>
-          <input id="q-totale" type="number" step="0.01" min="0" value="${qTot != null ? qTot : ''}" placeholder="es. 10000" oninput="recalcQuota()" style="width:120px">
+          <button onclick="apriPiano()" class="btn btn-primary btn-sm">Modifica il piano</button>
           <button onclick="openAdd()" class="btn btn-neutral btn-sm">+ Aggiungi cliente</button>
         </div>
       </div>
@@ -6132,14 +6145,24 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
         ${!pianoSalvato.length ? `<div style="font-size:11.5px;color:var(--hint);margin-top:4px">Gli ultimi tre restano a zero finché non salvi.</div>` : ''}
       </div>
 
+      ${/* ⭐ 15/08 — LA SCHEDA NON SI SCRIVE PIÙ, SI LEGGE. Germano: «la trovo
+            caotica e poco immediata… %/Da chiedere/Incassata/+ rata si scrive
+            male e fa casino». La causa era meccanica: OGNI tasto rifaceva la
+            tabella con innerHTML, quindi il campo in cui stavi scrivendo veniva
+            distrutto e il cursore saltava fuori — 22 campi su 22. Provato:
+            digitando «4» su una percentuale da 30 restava «4», cioè 280 € invece
+            di 2.800.
+            Ora le due cose stanno in due posti: qui SI GUARDA (chi, quanto,
+            quando scade, a che punto), nella finestrella SI IMPOSTA. Il piano lo
+            tocchi una volta a progetto; lo stato lo guardi ogni settimana.
+            Le colonne «%», «Quando» e «Giorni» sono sparite di qui: la prima è
+            un'etichetta accanto all'importo, le altre due sono già riassunte da
+            «Scade il». */ ''}
       <div style="overflow-x:auto;margin:0 -4px">
-        <table style="min-width:760px">
+        <table style="min-width:560px">
           <thead><tr>
             <th style="text-align:left">Chi paga · rata</th>
-            <th style="text-align:left">%</th>
-            <th style="text-align:left">Importo €</th>
-            <th style="text-align:left">Quando</th>
-            <th style="text-align:left">Giorni</th>
+            <th style="text-align:left">Importo</th>
             <th style="text-align:left">Scade il</th>
             <th style="text-align:left">A che punto</th>
             <th></th>
@@ -6149,19 +6172,69 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
       </div>
 
       <div id="q-riepilogo" style="margin-top:8px;font-size:12.5px;color:#4a5568"></div>
+    </div>
 
-      <div style="display:flex;align-items:flex-end;gap:12px;margin-top:12px;flex-wrap:wrap">
-        <div class="form-group" style="margin:0"><label>Metà percorso</label>
-          <input id="pi-meta" type="date" value="${p.data_meta ? String(p.data_meta).slice(0,10) : ''}" style="width:150px"></div>
-        <div class="form-group" style="margin:0"><label>Fine prevista</label>
-          <input id="pi-fine" type="date" value="${p.data_fine ? String(p.data_fine).slice(0,10) : ''}" style="width:150px"></div>
-        <span style="font-size:11.5px;color:var(--hint);padding-bottom:8px">Servono a calcolare le scadenze.</span>
-        <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap">
+    ${/* ── LA FINESTRELLA DEL PIANO ────────────────────────────────────────
+          Un posto solo dove si imposta tutto: valore del progetto, quota di
+          ciascun pagatore, e le sue rate. Un solo «Salva».
+          ⚠️ Gli id `q-totale`, `q-comm` e la classe `.q-coachee` restano QUELLI
+          DI PRIMA anche se ora vivono qui dentro: li leggono `salvaAmmSilenzioso`
+          e `ricaricaConservando`, che tengono le modifiche non salvate quando la
+          pagina si ricarica per altri motivi (aggiungi partecipante, cartelle,
+          fasi). Cambiarli avrebbe rotto quella rete in silenzio. */ ''}
+    <div class="modal-overlay" id="modal-piano">
+      <div class="modal-box" style="max-width:720px">
+        <h3 style="margin-top:0">Il piano di pagamento</h3>
+        <p style="font-size:12.5px;color:var(--muted);margin-top:-6px">
+          Quanto vale il progetto, chi paga quanto, e in quante volte. Si scrivono gli euro:
+          la percentuale la calcola l'Hub.</p>
+
+        <div style="display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+          <div class="form-group" style="margin:0"><label>Valore del progetto €</label>
+            <input id="q-totale" type="number" step="1" min="0" value="${qTot != null ? qTot : ''}"
+                   placeholder="es. 10000" oninput="ricalcolaPiano()" style="width:130px"></div>
+          <div class="form-group" style="margin:0"><label>Metà percorso</label>
+            <input id="pi-meta" type="date" value="${p.data_meta ? String(p.data_meta).slice(0,10) : ''}"
+                   oninput="ricalcolaPiano()" style="width:150px"></div>
+          <div class="form-group" style="margin:0"><label>Fine prevista</label>
+            <input id="pi-fine" type="date" value="${p.data_fine ? String(p.data_fine).slice(0,10) : ''}"
+                   oninput="ricalcolaPiano()" style="width:150px"></div>
+        </div>
+
+        <div id="piano-pagatori"></div>
+
+        <div id="piano-verifica" style="margin-top:10px;font-size:12.5px"></div>
+        <div id="piano-error" style="display:none;margin-top:8px" class="flash-error"></div>
+
+        <div class="modal-actions" style="margin-top:16px">
           <button onclick="dividiEqui()" class="btn btn-neutral btn-sm">Dividi in parti uguali</button>
-          <button onclick="salvaTutto()" class="btn btn-primary btn-sm">Salva</button>
+          <span style="flex:1"></span>
+          <button onclick="chiudiPiano()" class="btn btn-neutral">Annulla</button>
+          <button onclick="salvaTutto()" class="btn btn-primary">Salva il piano</button>
         </div>
       </div>
-      <div id="piano-error" style="display:none;margin-top:8px" class="flash-error"></div>
+    </div>
+
+    ${/* ⚠️ PONTE FINO ALLA FETTA A2 — da togliere quando arriva.
+          Germano (15/08): «chiesta» si accenderà da sola quando parte la mail
+          della proforma, e l'incasso si confermerà da un promemoria. Finché
+          quella catena non c'è, senza questo comando non si potrebbe segnare
+          NIENTE e la scheda non sarebbe collaudabile. Sceglie la data, perché
+          scriverci «oggi» d'ufficio metterebbe la fattura nel mese sbagliato. */ ''}
+    <div class="modal-overlay" id="modal-incasso">
+      <div class="modal-box" style="max-width:420px">
+        <h3 style="margin-top:0">È arrivato il pagamento</h3>
+        <p id="incasso-che" style="font-size:13px;color:var(--muted);margin-top:-6px"></p>
+        <div class="form-group"><label>Quando è arrivato</label>
+          <input id="incasso-data" type="date" style="width:170px"></div>
+        <p style="font-size:11.5px;color:var(--hint)">
+          Non è il giorno in cui lo segni: è il giorno in cui i soldi sono arrivati davvero.
+          È da questa data che dipende in quale mese va la fattura.</p>
+        <div class="modal-actions">
+          <button onclick="chiudiIncasso()" class="btn btn-neutral">Annulla</button>
+          <button onclick="confermaIncasso()" class="btn btn-primary">Segna incassata</button>
+        </div>
+      </div>
     </div>
 
     <div class="card" style="margin-bottom:18px">
@@ -6302,101 +6375,210 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
       for (var i = 0; i < PIANI.length; i++) if (PIANI[i].key === key) return PIANI[i];
       return null;
     }
-    // ⭐ UNA TABELLA SOLA. Ogni pagatore e' una RIGA DI GRUPPO (nome + la sua
-    // quota + i suoi pulsanti); sotto stanno le sue rate. Le intestazioni si
-    // scrivono una volta per tutti: erano tre tabelle e 623 pixel per cinque
-    // righe di dati.
+    function esc2(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
+    function eur2(n) { return (Math.round(Number(n)||0)).toLocaleString('it-IT'); }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // LA TABELLA — SOLA LETTURA. Nessun campo da scrivere: quelli stanno tutti
+    // nella finestrella. Mostra ciò che è SALVATO, non le proposte: una rata
+    // proposta non è un impegno, e vederla qui faceva credere che ci fosse un
+    // piano dove non c'era.
+    // ═══════════════════════════════════════════════════════════════════════
     function disegnaPiano() {
       var body = document.getElementById('amm-righe');
       if (!body) return;
       var html = '';
       PIANI.forEach(function (pg) {
-        var somma = pg.righe.reduce(function (s, t) { return s + (Number(t.importo) || 0); }, 0);
-        var diff = pg.quota - somma;
-        var check = !pg.quota ? '<span style="color:var(--hint)">quota da scrivere</span>'
-          : (diff === 0 ? '<span style="color:#4F8B73">le rate tornano</span>'
-             : '<span style="color:#b45309">' + (diff > 0 ? 'mancano € ' + diff.toLocaleString('it-IT')
-                                                          : '€ ' + (-diff).toLocaleString('it-IT') + ' di troppo') + '</span>');
-        // La quota tiene le stesse id/classi di prima (q-comm, .q-coachee):
-        // le usano il salvataggio e la ricarica che conserva le modifiche.
-        var campoQuota = pg.tipo === 'committente'
-          ? '<input id="q-comm" type="number" step="1" min="0" value="' + (pg.quota || '') + '" oninput="cambiaQuota(\\'' + pg.key + '\\',this.value)" placeholder="€" style="width:100px">'
-          : '<input class="q-coachee" data-part="' + pg.pid + '" type="number" step="1" min="0" value="' + (pg.quota || '') + '" oninput="cambiaQuota(\\'' + pg.key + '\\',this.value)" placeholder="€" style="width:100px">';
+        var salvate = pg.righe.filter(function (t) { return t.id; });
         var azioni = pg.tipo === 'committente' ? ''
           : '<a href="/dashboard/clients/' + pg.client_id + '" class="btn btn-neutral btn-sm">Scheda</a>'
             + ' <button onclick="removeCoachee(\\'' + pg.pid + '\\')" class="btn btn-danger btn-sm" title="Togli dal progetto">🗑</button>';
         html += '<tr style="background:#f7f9fb">'
-          + '<td><strong>' + String(pg.nome || '—').replace(/</g, '&lt;') + '</strong>'
-          + ' <span style="font-size:11px;color:var(--hint)">' + pg.ruolo + '</span>'
-          + (pg.nuovo && pg.quota ? ' <span style="font-size:10px;color:#8a6d1e;background:#fdf6e3;border-radius:5px;padding:1px 6px">proposta</span>' : '')
+          + '<td><strong>' + esc2(pg.nome || '—') + '</strong>'
+          + ' <span style="font-size:11px;color:var(--hint)">' + pg.ruolo + '</span></td>'
+          + '<td><strong>' + (pg.quota ? '€ ' + eur2(pg.quota) : '<span style="color:var(--hint)">quota da scrivere</span>') + '</strong></td>'
+          + '<td colspan="2" style="font-size:12px;color:var(--hint)">'
+          + (salvate.length ? salvate.length + (salvate.length === 1 ? ' rata' : ' rate') : 'nessun piano salvato')
           + '</td>'
-          + '<td></td><td>' + campoQuota + '</td>'
-          + '<td colspan="3" style="font-size:12px">' + check + '</td>'
-          + '<td colspan="2" style="text-align:right;white-space:nowrap">'
-          + (pg.quota ? '<button onclick="aggiungiTranche(\\'' + pg.key + '\\')" class="btn btn-neutral btn-sm">+ rata</button> ' : '')
-          + azioni + '</td></tr>';
+          + '<td style="text-align:right;white-space:nowrap">' + azioni + '</td></tr>';
 
-        pg.righe.forEach(function (t, i) {
-          var perc = pg.quota ? (t.importo / pg.quota * 100) : 0;
+        if (!salvate.length && pg.quota) {
+          html += '<tr><td colspan="5" style="padding-left:26px;font-size:12.5px;color:var(--hint)">'
+            + 'Il piano non è ancora salvato — apri «Modifica il piano».</td></tr>';
+        }
+        salvate.forEach(function (t) {
+          var perc = pg.quota ? Math.round(t.importo / pg.quota * 100) : null;
           var scad = scadenzaTranche(t);
           var st = STATI[t.stato] || STATI.da_chiedere;
-          var cellaStato = t.id
-            ? '<span class="badge" style="background:' + st.bg + ';color:' + st.c + '">' + st.label + '</span>'
-              + ' <button onclick="segnaStato(\\'' + t.id + '\\',\\'' + (t.stato === 'incassata' ? 'da_chiedere' : 'incassata') + '\\')" class="btn btn-neutral btn-sm">'
-              + (t.stato === 'incassata' ? 'Annulla' : 'Incassata') + '</button>'
-            : '<span style="font-size:11.5px;color:var(--hint)">da salvare</span>';
+          // ⚠️ «Chiesta» non si mette a mano: la accende la mail della proforma
+          // (fetta A2). Qui la si sa già leggere. L'unico comando è il PONTE.
+          var comando = t.stato === 'incassata'
+            ? '<span style="font-size:11.5px;color:var(--hint)">' + (t.data_incasso ? 'il ' + itData(t.data_incasso) : '') + '</span>'
+              + ' <button onclick="segnaStato(\\'' + t.id + '\\',\\'da_chiedere\\')" class="btn btn-neutral btn-sm" title="Torna indietro">Annulla</button>'
+            : '<button onclick="apriIncasso(\\'' + t.id + '\\',\\'' + esc2(pg.nome) + ' — ' + esc2(t.etichetta) + ', € ' + eur2(t.importo) + '\\')" class="btn btn-neutral btn-sm">È arrivato</button>';
           html += '<tr>'
-            + '<td style="padding-left:26px"><input value="' + String(t.etichetta || '').replace(/"/g, '&quot;') + '" oninput="setTr(\\'' + pg.key + '\\',' + i + ',\\'etichetta\\',this.value)" style="width:130px"></td>'
-            + '<td><input type="number" step="1" min="0" value="' + (Math.round(perc * 10) / 10) + '" oninput="setPerc(\\'' + pg.key + '\\',' + i + ',this.value)" style="width:62px"></td>'
-            + '<td><input type="number" step="1" min="0" value="' + t.importo + '" oninput="setImp(\\'' + pg.key + '\\',' + i + ',this.value)" style="width:92px"></td>'
-            + '<td><select onchange="setTr(\\'' + pg.key + '\\',' + i + ',\\'innesco\\',this.value)" style="width:130px">' + INNESCHI_OPT + '</select></td>'
-            + '<td><input type="number" step="1" min="0" value="' + t.giorni + '" oninput="setTr(\\'' + pg.key + '\\',' + i + ',\\'giorni\\',Number(this.value))" style="width:58px"></td>'
+            + '<td style="padding-left:26px">' + esc2(t.etichetta)
+            + (perc !== null ? ' <span style="font-size:11px;color:var(--hint)">' + perc + '%</span>' : '') + '</td>'
+            + '<td style="white-space:nowrap">€ ' + eur2(t.importo) + '</td>'
             + '<td style="font-size:12px;white-space:nowrap;color:' + (scad ? 'var(--ink)' : 'var(--hint)') + '">'
             + (scad ? itData(scad) : '—') + '</td>'
-            + '<td style="white-space:nowrap">' + cellaStato + '</td>'
-            + '<td style="text-align:right"><button onclick="togliTranche(\\'' + pg.key + '\\',' + i + ')" class="btn btn-danger btn-sm" title="Togli la rata">🗑</button></td>'
+            + '<td style="white-space:nowrap"><span class="badge" style="background:' + st.bg + ';color:' + st.c + '">' + st.label + '</span></td>'
+            + '<td style="text-align:right;white-space:nowrap">' + comando + '</td>'
             + '</tr>';
         });
       });
-      if (!PIANI.length) html = '<tr><td colspan="8" class="empty">Nessun pagatore: scrivi il valore del progetto e aggiungi chi partecipa.</td></tr>';
+      if (!PIANI.length) html = '<tr><td colspan="5" class="empty">Nessun pagatore: apri «Modifica il piano» e scrivi il valore del progetto.</td></tr>';
       body.innerHTML = html;
-      // Le tendine si riempiono DOPO: il markup delle opzioni e' uguale per
-      // tutte, e il valore scelto si perderebbe nel ridisegno.
-      var sel = body.querySelectorAll('select'), n = 0;
-      PIANI.forEach(function (pg) {
-        pg.righe.forEach(function (t) { if (sel[n]) sel[n].value = t.innesco; n++; });
-      });
       recalcQuota();
     }
-    // Cambiare la quota di un pagatore ridisegna: le percentuali delle sue rate
-    // sono calcolate su quella cifra, e lasciarle ferme le farebbe mentire.
-    function cambiaQuota(key, val) {
-      pianoDi(key).quota = Math.round(Number(val) || 0);
-      disegnaPiano();
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // LA FINESTRELLA — qui si scrive, e QUI GLI INPUT NON SI RIDISEGNANO MAI
+    // mentre digiti. Era quello il difetto: ogni tasto rifaceva la tabella con
+    // innerHTML, il campo spariva sotto le dita e il cursore finiva sul body.
+    // Adesso il DOM è la verità finché la finestrella è aperta: si aggiornano
+    // solo i TESTI derivati (la percentuale, le somme, la verifica).
+    // Le righe si costruiscono una volta al caricamento — così esistono anche
+    // per salvaAmmSilenzioso, che le cerca quando la pagina si ricarica.
+    // (⚠️ niente apici inclinati nei commenti qui dentro: chiudono il blocco.)
+    // ═══════════════════════════════════════════════════════════════════════
+    function rigaPianoHtml(key, t) {
+      return '<tr data-key="' + key + '">'
+        + '<td><input class="pr-et" value="' + esc2(t.etichetta) + '" style="width:120px"></td>'
+        + '<td style="white-space:nowrap"><input class="pr-imp" type="number" step="1" min="0" value="' + (Math.round(Number(t.importo)||0)) + '" oninput="ricalcolaPiano()" style="width:96px">'
+        + ' <span class="pr-perc" style="font-size:11px;color:var(--hint)"></span></td>'
+        + '<td><select class="pr-inn" onchange="ricalcolaPiano()" style="width:140px">' + INNESCHI_OPT + '</select></td>'
+        + '<td><input class="pr-gg" type="number" step="1" min="0" value="' + (Number(t.giorni)||0) + '" oninput="ricalcolaPiano()" style="width:56px"></td>'
+        + '<td class="pr-scad" style="font-size:12px;white-space:nowrap;color:var(--hint)"></td>'
+        + '<td style="text-align:right"><button onclick="togliRiga(this)" class="btn btn-danger btn-sm" title="Togli la rata">🗑</button></td>'
+        + '</tr>';
     }
-    function setTr(key, i, campo, val) { pianoDi(key).righe[i][campo] = val; disegnaPiano(); }
-    function setImp(key, i, val) { pianoDi(key).righe[i].importo = Math.round(Number(val) || 0); disegnaPiano(); }
-    function setPerc(key, i, val) {
-      var pg = pianoDi(key);
-      pg.righe[i].importo = Math.round(pg.quota * (Number(val) || 0) / 100);
-      disegnaPiano();
+    function costruisciFinestrella() {
+      var box = document.getElementById('piano-pagatori');
+      if (!box) return;
+      var html = '';
+      PIANI.forEach(function (pg) {
+        var campoQuota = pg.tipo === 'committente'
+          ? '<input id="q-comm" type="number" step="1" min="0" value="' + (pg.quota || '') + '" oninput="ricalcolaPiano()" placeholder="€" style="width:110px">'
+          : '<input class="q-coachee" data-part="' + pg.pid + '" type="number" step="1" min="0" value="' + (pg.quota || '') + '" oninput="ricalcolaPiano()" placeholder="€" style="width:110px">';
+        html += '<div class="pg-box" data-key="' + pg.key + '" style="border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:12px">'
+          + '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">'
+          + '<strong>' + esc2(pg.nome || '—') + '</strong>'
+          + '<span style="font-size:11px;color:var(--hint)">' + pg.ruolo + '</span>'
+          + '<span style="margin-left:auto;display:flex;align-items:center;gap:8px">'
+          + '<label style="margin:0;text-transform:none;letter-spacing:0;font-size:12px;color:var(--muted)">Quota €</label>'
+          + campoQuota
+          + '<button onclick="aggiungiRiga(\\'' + pg.key + '\\')" class="btn btn-neutral btn-sm">+ rata</button>'
+          + '</span></div>'
+          + '<table style="width:100%"><thead><tr>'
+          + '<th style="text-align:left;font-size:11px;color:var(--muted)">Rata</th>'
+          + '<th style="text-align:left;font-size:11px;color:var(--muted)">Importo €</th>'
+          + '<th style="text-align:left;font-size:11px;color:var(--muted)">Quando</th>'
+          + '<th style="text-align:left;font-size:11px;color:var(--muted)">Giorni</th>'
+          + '<th style="text-align:left;font-size:11px;color:var(--muted)">Scade il</th>'
+          + '<th></th></tr></thead>'
+          + '<tbody class="pg-righe">' + pg.righe.map(function (t) { return rigaPianoHtml(pg.key, t); }).join('') + '</tbody></table>'
+          + '<div class="pg-check" style="font-size:12px;margin-top:6px"></div>'
+          + '</div>';
+      });
+      if (!PIANI.length) html = '<div class="empty">Nessun pagatore: aggiungi prima un cliente al progetto.</div>';
+      box.innerHTML = html;
+      // Le tendine si riempiono DOPO: il markup delle opzioni è uguale per tutte
+      // e il valore scelto si perderebbe.
+      PIANI.forEach(function (pg) {
+        var righe = box.querySelectorAll('.pg-box[data-key="' + pg.key + '"] .pg-righe tr');
+        pg.righe.forEach(function (t, i) {
+          var sel = righe[i] && righe[i].querySelector('.pr-inn');
+          if (sel) sel.value = t.innesco;
+        });
+      });
+      ricalcolaPiano();
     }
-    function aggiungiTranche(key) {
-      var pg = pianoDi(key);
-      pg.righe.push({ id: null, etichetta: 'Rata ' + (pg.righe.length + 1), importo: 0,
-        innesco: 'fine', giorni: 30, stato: 'da_chiedere', data_incasso: null });
-      disegnaPiano();
+    function leggiRiga(tr) {
+      return {
+        etichetta: tr.querySelector('.pr-et').value,
+        importo: Math.round(Number(tr.querySelector('.pr-imp').value) || 0),
+        innesco: tr.querySelector('.pr-inn').value,
+        giorni: Number(tr.querySelector('.pr-gg').value) || 0,
+      };
     }
-    function togliTranche(key, i) { pianoDi(key).righe.splice(i, 1); disegnaPiano(); }
-    async function segnaStato(id, stato) {
+    function quotaDi(box) {
+      var q = box.querySelector('#q-comm') || box.querySelector('.q-coachee');
+      return Math.round(Number(q ? q.value : 0) || 0);
+    }
+    // ⭐ NON tocca l'HTML degli input: aggiorna solo i testi che dipendono da
+    // quello che hai appena scritto. È la riga che rende la scheda scrivibile.
+    function ricalcolaPiano() {
+      var totale = Math.round(Number((document.getElementById('q-totale') || {}).value) || 0);
+      var somma = 0;
+      document.querySelectorAll('#piano-pagatori .pg-box').forEach(function (box) {
+        var quota = quotaDi(box);
+        somma += quota;
+        var sommaRate = 0;
+        box.querySelectorAll('.pg-righe tr').forEach(function (tr) {
+          var r = leggiRiga(tr);
+          sommaRate += r.importo;
+          tr.querySelector('.pr-perc').textContent = quota ? '= ' + Math.round(r.importo / quota * 100) + '%' : '';
+          var s = scadenzaTranche(r);
+          tr.querySelector('.pr-scad').textContent = s ? itData(s) : '—';
+        });
+        var diff = quota - sommaRate;
+        var c = box.querySelector('.pg-check');
+        c.innerHTML = !quota ? '<span style="color:var(--hint)">Scrivi la quota di chi paga.</span>'
+          : (diff === 0 ? '<span style="color:#4F8B73">Le rate tornano: € ' + eur2(quota) + '.</span>'
+             : '<span style="color:#b45309">' + (diff > 0 ? 'Mancano € ' + eur2(diff) : '€ ' + eur2(-diff) + ' di troppo')
+               + ' — le rate fanno € ' + eur2(sommaRate) + ' su € ' + eur2(quota) + '.</span>');
+      });
+      var v = document.getElementById('piano-verifica');
+      if (v) {
+        v.innerHTML = !totale ? '<span style="color:var(--hint)">Scrivi il valore del progetto.</span>'
+          : (somma === totale ? '<span style="color:#4F8B73">Le quote coprono € ' + eur2(totale) + ' — torna.</span>'
+             : '<span style="color:#b45309">Le quote sommano € ' + eur2(somma) + ' su € ' + eur2(totale)
+               + (totale - somma > 0 ? ': mancano € ' + eur2(totale - somma) : ': € ' + eur2(somma - totale) + ' di troppo') + '.</span>');
+      }
+    }
+    function apriPiano() { document.getElementById('modal-piano').style.display = 'flex'; ricalcolaPiano(); }
+    function chiudiPiano() { document.getElementById('modal-piano').style.display = 'none'; }
+    // ⭐ La rata nuova nasce con quello che MANCA, non con zero: prima nasceva a
+    // 0 € e faceva scattare subito due errori insieme («una rata a zero» e «le
+    // rate non tornano»), bloccando il salvataggio. Il pulsante creava un guasto.
+    function aggiungiRiga(key) {
+      var box = document.querySelector('#piano-pagatori .pg-box[data-key="' + key + '"]');
+      if (!box) return;
+      var quota = quotaDi(box), somma = 0;
+      box.querySelectorAll('.pg-righe tr').forEach(function (tr) { somma += leggiRiga(tr).importo; });
+      var manca = Math.max(quota - somma, 0);
+      var tb = box.querySelector('.pg-righe');
+      var n = tb.querySelectorAll('tr').length + 1;
+      tb.insertAdjacentHTML('beforeend', rigaPianoHtml(key,
+        { etichetta: 'Rata ' + n, importo: manca, innesco: 'fine', giorni: 30 }));
+      ricalcolaPiano();
+    }
+    function togliRiga(btn) { var tr = btn.closest('tr'); tr.parentNode.removeChild(tr); ricalcolaPiano(); }
+
+    async function segnaStato(id, stato, dataIncasso) {
       try {
         var r = await fetch('/dashboard/tranche/' + id + '/stato', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ stato: stato }) });
+          body: JSON.stringify({ stato: stato, data_incasso: dataIncasso || null }) });
         var j = await r.json().catch(function () { return {}; });
         if (!r.ok) { alert(j.error || ('Errore ' + r.status)); return; }
         location.reload();
       } catch (e) { alert('Errore di rete: ' + e.message); }
+    }
+    // ⚠️ PONTE fino alla fetta A2 (vedi la finestrella qui sopra).
+    var INCASSO_ID = null;
+    function apriIncasso(id, che) {
+      INCASSO_ID = id;
+      document.getElementById('incasso-che').textContent = che;
+      document.getElementById('incasso-data').value = new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Rome' });
+      document.getElementById('modal-incasso').style.display = 'flex';
+    }
+    function chiudiIncasso() { document.getElementById('modal-incasso').style.display = 'none'; }
+    function confermaIncasso() {
+      var d = document.getElementById('incasso-data').value;
+      if (!d) { alert('Scrivi quando è arrivato il pagamento.'); return; }
+      segnaStato(INCASSO_ID, 'incassata', d);
     }
 
     // Fetta B (Mattone 2) — sessioni collettive del percorso condiviso.
@@ -6572,27 +6754,41 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
     }
     function coacheeInputs() { return Array.prototype.slice.call(document.querySelectorAll('.q-coachee')); }
     // Divide il resto (valore del progetto meno la quota del committente) fra i
-    // partecipanti. Passa da PIANI e non dai campi: sono i PIANI la verita' in
-    // pagina, e i campi si ridisegnano da li'.
+    // partecipanti. ⚠️ Dal 15/08 scrive NEI CAMPI della finestrella, che sono la
+    // verita' finche' e' aperta — non piu' in PIANI, che ormai e' solo lo stato
+    // di partenza. Qui si puo' toccare il DOM: e' un clic esplicito, non una
+    // digitazione, quindi non c'e' nessun cursore da far saltare.
     function dividiEqui() {
       const resto = getResto();
       if (resto === null) { alert('Scrivi prima il valore del progetto.'); return; }
-      const parti = PIANI.filter(function (pg) { return pg.tipo === 'partecipante'; });
-      if (!parti.length) return;
+      const campi = coacheeInputs();
+      if (!campi.length) return;
       // Cifre INTERE (regola del 27/07) e il resto della divisione al
       // committente: 3.000 diviso 3 e' tondo, 100 diviso 3 no.
-      const base = Math.floor(resto / parti.length);
-      parti.forEach(function (pg) { pg.quota = base; });
-      const avanzo = resto - base * parti.length;
-      if (avanzo) {
-        const comm = PIANI.filter(function (pg) { return pg.tipo === 'committente'; })[0];
-        if (comm) comm.quota += avanzo;
-      }
-      // Le rate proposte vanno rifatte sulla quota nuova.
-      PIANI.forEach(function (pg) {
-        if (pg.nuovo) pg.righe = pg.quota > 0 ? proponiRate(pg) : [];
+      const base = Math.floor(resto / campi.length);
+      campi.forEach(function (i) { i.value = base; });
+      const avanzo = resto - base * campi.length;
+      const comm = document.getElementById('q-comm');
+      if (avanzo && comm) comm.value = (Math.round(Number(comm.value) || 0)) + avanzo;
+      // Chi non ha ancora nessuna rata riceve la proposta sulla quota nuova:
+      // un pagatore con la quota e senza piano resterebbe un buco da riempire
+      // a mano, ed e' proprio il lavoro che la proposta esiste per evitare.
+      document.querySelectorAll('#piano-pagatori .pg-box').forEach(function (box) {
+        const tb = box.querySelector('.pg-righe');
+        if (tb.querySelectorAll('tr').length) return;
+        const key = box.getAttribute('data-key');
+        const pg = pianoDi(key);
+        if (!pg) return;
+        const quota = quotaDi(box);
+        if (quota <= 0) return;
+        tb.innerHTML = proponiRate({ tipo: pg.tipo, quota: quota })
+          .map(function (t) { return rigaPianoHtml(key, t); }).join('');
+        tb.querySelectorAll('tr').forEach(function (tr, i) {
+          const s = tr.querySelector('.pr-inn');
+          if (s) s.value = proponiRate({ tipo: pg.tipo, quota: quota })[i].innesco;
+        });
       });
-      disegnaPiano();
+      ricalcolaPiano();
     }
     // La stessa proposta che fa il server, per quando la quota cambia in pagina:
     // 30/40/30 al committente, una rata anticipata al partecipante.
@@ -6614,13 +6810,30 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
       const err = document.getElementById('piano-error');
       err.style.display = 'none';
       try {
-        const comm = PIANI.filter(function (pg) { return pg.tipo === 'committente'; })[0];
-        const rq = await fetch('/dashboard/progetti/'+PID+'/quota', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ quota_totale: document.getElementById('q-totale').value, quota_committente: comm ? comm.quota : '' }) });
+        // ⚠️ Dal 15/08 si legge dai CAMPI della finestrella, non da PIANI: è il
+        // DOM la verità mentre si scrive, ed è l'unico modo di non ridisegnare
+        // gli input a ogni tasto (il difetto D1). PIANI serve solo a costruirla.
+        const perKey = {};
+        document.querySelectorAll('#piano-pagatori .pg-box').forEach(function (box) {
+          const key = box.getAttribute('data-key');
+          const righe = [];
+          box.querySelectorAll('.pg-righe tr').forEach(function (tr, i) {
+            const r = leggiRiga(tr);
+            r.ordine = i;
+            righe.push(r);
+          });
+          perKey[key] = { quota: quotaDi(box), righe: righe, pid: (pianoDi(key) || {}).pid || null,
+                          tipo: (pianoDi(key) || {}).tipo };
+        });
+        const chiavi = Object.keys(perKey);
+        const commKey = chiavi.filter(function (k) { return perKey[k].tipo === 'committente'; })[0];
+
+        const rq = await fetch('/dashboard/progetti/'+PID+'/quota', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ quota_totale: document.getElementById('q-totale').value, quota_committente: commKey ? perKey[commKey].quota : '' }) });
         const dq = await rq.json();
         if (!dq.ok) { err.textContent = dq.error || 'Errore nel salvataggio del valore del progetto'; err.style.display='block'; return; }
 
-        const quote = PIANI.filter(function (pg) { return pg.tipo === 'partecipante'; })
-          .map(function (pg) { return { part_id: pg.pid, quota: pg.quota }; });
+        const quote = chiavi.filter(function (k) { return perKey[k].tipo === 'partecipante'; })
+          .map(function (k) { return { part_id: perKey[k].pid, quota: perKey[k].quota }; });
         if (quote.length) {
           const rc = await fetch('/dashboard/progetti/'+PID+'/quote-coachee', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ quote }) });
           const dc = await rc.json();
@@ -6629,7 +6842,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
 
         const rp = await fetch('/dashboard/progetti/'+PID+'/piano', { method:'POST', headers:{'Content-Type':'application/json'},
           body: JSON.stringify({
-            piani: PIANI.map(function (pg) { return { partecipazione_id: pg.pid, righe: pg.righe }; }),
+            piani: chiavi.map(function (k) { return { partecipazione_id: perKey[k].pid, righe: perKey[k].righe }; }),
             data_meta: document.getElementById('pi-meta').value,
             data_fine: document.getElementById('pi-fine').value }) });
         const dp = await rp.json().catch(function () { return {}; });
@@ -6803,12 +7016,21 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
       navigator.clipboard.writeText(url).then(() => showToast('Link copiato!'));
     }
     document.getElementById('modal-coachee').addEventListener('click', e => { if (e.target === document.getElementById('modal-coachee')) closeAdd(); });
-    // Prima si disegna la tabella: e' lei a creare i campi delle quote, e
-    // recalcQuota() li legge (la chiama disegnaPiano alla fine).
+    ${/* ⚠️ ORDINE DI AVVIO — la finestrella PRIMA della tabella. È lei a creare
+          i campi delle quote (q-comm, .q-coachee), che recalcQuota() legge alla
+          fine di disegnaPiano(). Invertendo, la tabella nascerebbe vuota e senza
+          nessun messaggio: è il guasto muto del 12/08, quello che sembra
+          «non ci sono dati». */ ''}
+    costruisciFinestrella();
     disegnaPiano();
     ['pi-meta', 'pi-fine'].forEach(function (id) {
       var el = document.getElementById(id);
       if (el) el.addEventListener('change', disegnaPiano);
+    });
+    // Cliccare fuori chiude, come le altre finestrelle della pagina.
+    ['modal-piano', 'modal-incasso'].forEach(function (id) {
+      var m = document.getElementById(id);
+      if (m) m.addEventListener('click', function (e) { if (e.target === m) m.style.display = 'none'; });
     });
   </script>
   </body></html>`;
