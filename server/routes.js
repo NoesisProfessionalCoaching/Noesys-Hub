@@ -5916,7 +5916,10 @@ function anomaliePage(anomalie, conteggi, req) {
 // ═══════════════════════════════════════════════════════════════════════════
 function modalePdf() {
   return `
-    <div class="modal-overlay" id="modal-pdf">
+    ${/* z-index sopra le altre finestrelle (che stanno a 100): l'anteprima si
+          apre anche da DENTRO «Rivedi e manda», e deve starci sopra invece che
+          sotto — altrimenti si aprirebbe e non si vedrebbe. */ ''}
+    <div class="modal-overlay" id="modal-pdf" style="z-index:150">
       <div class="modal-box" style="max-width:900px;width:900px;padding:16px">
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
           <strong id="pdf-titolo" style="font-size:15px"></strong>
@@ -6260,7 +6263,16 @@ function proformaPage(daChiedere, proforme, req) {
         <textarea id="mi-body" style="min-height:240px;font-family:inherit"></textarea></div>
       <div style="background:#fbfcfd;border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:14px">
         <div style="font-size:12px;color:var(--muted);font-weight:600;margin-bottom:4px">Allegato</div>
-        <a id="mi-pdf" href="#" target="_blank" style="font-size:13px;font-weight:700;color:var(--blue);text-decoration:none"></a>
+        ${/* 🔴 18/08 — L'ULTIMO PUNTO CHE APRIVA UNA SCHEDA NUOVA, e il più
+              importante: è QUI che si arriva dopo aver creato una proforma, ed
+              è qui che Germano ha continuato a trovarsi la finestra fuori
+              dall'Hub («sinceramente non è cambiato niente»). L'avevo lasciato
+              apposta per non sovrapporre due finestrelle — un motivo mio, non
+              suo, e sbagliato: il vicolo cieco valeva anche qui.
+              ⭐ Adesso apre l'anteprima, che ha uno z-index più alto e sta
+              sopra questa; chiudendola si torna alla mail, che è rimasta lì
+              con tutto quello che avevi scritto. */ ''}
+        <a id="mi-pdf" href="#" style="font-size:13px;font-weight:700;color:var(--blue);text-decoration:none"></a>
         <div style="font-size:12px;color:var(--hint);margin-top:4px">Aprilo e rileggilo <strong>prima</strong> di mandarlo: dopo non si torna indietro.</div>
       </div>
       <div id="mi-error" style="display:none" class="flash-error"></div>
@@ -6282,7 +6294,11 @@ function proformaPage(daChiedere, proforme, req) {
       document.getElementById('mi-subject').value = d.subject;
       document.getElementById('mi-body').value = d.body;
       var a = document.getElementById('mi-pdf');
-      a.href = '/dashboard/proforma/' + id + '/pdf';
+      // L'allegato apre l'ANTEPRIMA dentro l'Hub, non una scheda nuova. La
+      // finestrella della mail resta aperta sotto: chiusa l'anteprima, il testo
+      // che stavi scrivendo e' ancora li'.
+      a.href = '#';
+      a.onclick = function () { apriPdf(id, 'Proforma n. ' + d.numero); return false; };
       a.textContent = d.allegato;
       document.getElementById('mi-error').style.display = 'none';
       document.getElementById('modal-invio').style.display = 'flex';
