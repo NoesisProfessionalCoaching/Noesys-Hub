@@ -5603,7 +5603,10 @@ Germano`;
         var r = await fetch('/dashboard/clients/'+CID+'/proforma', { method:'POST' });
         var d = await r.json();
         if(!r.ok) throw new Error(d.error || 'Errore nella creazione della proforma');
-        window.open('/dashboard/proforma/'+d.id+'/pdf','_blank');
+        // 18/08 — niente scheda nuova: l'id viaggia e la finestrella si apre da
+        // sola dopo la ricarica (vedi jsModalePdf).
+        try { sessionStorage.setItem('pdf-appena-nata',
+          JSON.stringify({ id: d.id, titolo: 'Proforma n. ' + d.numero })); } catch(e) {}
         location.reload();
       } catch(ex) {
         err.textContent = ex.message; err.style.display = 'block';
@@ -5954,6 +5957,19 @@ function jsModalePdf() {
       document.getElementById('pdf-telaio').src = 'about:blank';
       document.getElementById('modal-pdf').style.display = 'none';
     }
+    // ⭐ 18/08 — UNA PROFORMA APPENA NATA SI FA VEDERE DA SOLA.
+    // Chi la crea sta su un'altra pagina (la scheda del cliente, quella del
+    // progetto) e poi viene portato qui: l'id viaggia nel sessionStorage, e qui
+    // la finestrella si apre da sé. Prima al suo posto c'era una scheda nuova
+    // del browser — cioè il vicolo cieco che stiamo togliendo.
+    try {
+      var appenaNata = sessionStorage.getItem('pdf-appena-nata');
+      if (appenaNata) {
+        sessionStorage.removeItem('pdf-appena-nata');
+        var q = JSON.parse(appenaNata);
+        if (q && q.id) apriPdf(q.id, q.titolo);
+      }
+    } catch (e) {}
     // Il tasto Esc chiude, come ci si aspetta da una finestrella.
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape' && document.getElementById('modal-pdf')
@@ -6311,7 +6327,10 @@ function proformaPage(daChiedere, proforme, req) {
         const r = await fetch('/dashboard/clients/' + id + '/proforma', { method: 'POST' });
         const d = await r.json().catch(() => ({}));
         if (!r.ok) { alert(d.error || ('Errore ' + r.status)); btn.disabled = false; btn.textContent = 'Riprova'; return; }
-        window.open('/dashboard/proforma/' + d.id + '/pdf', '_blank');
+        // 18/08 — niente scheda nuova: la finestrella si apre da sola dopo la
+        // ricarica, e da li si chiude.
+        try { sessionStorage.setItem('pdf-appena-nata',
+          JSON.stringify({ id: d.id, titolo: 'Proforma n. ' + d.numero })); } catch (e) {}
         location.reload();
       } catch (e) { alert('Errore di rete: ' + e.message); btn.disabled = false; btn.textContent = 'Riprova'; }
     }

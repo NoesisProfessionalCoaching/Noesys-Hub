@@ -438,10 +438,19 @@ function js(o) {
         // ⭐ 17/08 — il documento e CREATO, non mandato. Germano, provando:
         // «non c e stato nessun passaggio di verifica e invio mail… non ho
         // ricevuto la mail». Il passaggio esiste, ma nessuno lo portava li.
-        // Adesso il PDF si apre in una scheda a parte e la pagina VA dove si
-        // rilegge e si manda: una riga che chiede di fare una cosa deve portare
-        // dove la si fa.
-        window.open('/dashboard/proforma/' + d.id + '/pdf', '_blank');
+        // La pagina VA dove si rilegge e si manda: una riga che chiede di fare
+        // una cosa deve portare dove la si fa.
+        // 🔴 18/08 — QUI C ERA ANCORA window.open(...pdf, '_blank'), cioe la
+        // scheda nuova senza via d uscita. La correzione del PDF aveva coperto
+        // i punti dove si APRE un documento gia esistente, non il momento in
+        // cui NASCE — e Germano l ha trovato in un minuto sulla seconda rata di
+        // Flamingo. ➜ Lezione: quando si cambia il modo di aprire una cosa,
+        // cercare TUTTI i modi in cui quella cosa si apre, compresi quelli che
+        // scattano da soli dopo un altra azione.
+        // Adesso l id viaggia fino alla pagina di destinazione, che apre la
+        // finestrella da sola: si rilegge subito, e si chiude.
+        try { sessionStorage.setItem('pdf-appena-nata',
+          JSON.stringify({ id: d.id, titolo: 'Proforma n. ' + d.numero })); } catch (e) {}
         alert('Creata la proforma n. ' + d.numero + '.\\n\\nNon e ancora partita: adesso va riletta e mandata.');
         window.location = '/dashboard/amministrazione/proforma';
       } catch (ex) { alert('Errore di rete: ' + ex.message); }
