@@ -79,6 +79,34 @@ console.log('\n— LA FATTURA CHE NE NASCE —');
   prova('senza incassi non c’è nessuna data', null, inc.dataChiudeIlConto([]));
 }
 
+console.log('\n— LA SCADENZA DEL DOCUMENTO (il difetto trovato da Germano il 18/08) —');
+{
+  // Il caso vero: la 2026/002 di Flamingo. Rata «Acconto» alla firma + 30 giorni,
+  // progetto cominciato il 23/07 → scade il 22/08. La proforma è nata prima di
+  // C4a, quindi la casella congelata è vuota: ripiegando sul giorno dell'invio
+  // (17/08) sembrava a rimessa diretta, e Germano se n'è accorto.
+  const flamingo = { scadenza: null, data_emissione: '2026-08-17' };
+  const acconto = { innesco: 'firma', giorni: 30 };
+  const progetto = { data_inizio: '2026-07-23', data_meta: '2026-09-01', data_fine: '2026-09-28' };
+  prova('una rata a 30 giorni scade 30 giorni dopo la firma, non il giorno dell’invio',
+    '2026-08-22', inc.scadenzaDocumento(flamingo, acconto, progetto));
+
+  // Quella congelata dentro il documento vince sempre: al cliente hai detto
+  // quella, e cambiare le date del progetto non riscrive un documento spedito.
+  prova('la scadenza congelata vince su tutto', '2026-07-31',
+    inc.scadenzaDocumento({ scadenza: '2026-07-31', data_emissione: '2026-08-17' }, acconto, progetto));
+
+  // Un mese di sessioni si paga a rimessa diretta: lì il giorno di emissione è
+  // la scadenza vera, non un ripiego.
+  prova('un documento di sole sessioni scade il giorno stesso', '2026-08-17',
+    inc.scadenzaDocumento(flamingo, null, null));
+
+  // ⚠️ Se il giorno non si sa, non si inventa: un promemoria per un ritardo che
+  // non esiste è peggio di nessun promemoria.
+  prova('rata a «metà percorso» senza data: non si sa, e non si inventa', null,
+    inc.scadenzaDocumento(flamingo, { innesco: 'meta', giorni: 30 }, { data_inizio: '2026-07-23' }));
+}
+
 console.log('\n— LA RATA DENTRO IL DOCUMENTO —');
 {
   const rata = { id: 'r1', stato: 'da_chiedere' };

@@ -25,6 +25,10 @@
 // Modulo puro: niente database, niente rete. Si prova con dei numeri.
 // ═══════════════════════════════════════════════════════════════════════════
 
+// Serve solo per la scadenza di una rata: la regola «innesco + giorni» sta lì e
+// non si riscrive qui.
+const tranche = require('./tranche');
+
 // I soldi si confrontano in centesimi interi, mai in euro con la virgola.
 // ⚠️ Gli importi arrivano da PostgreSQL come STRINGHE ('2550.00'): Number() le
 // legge, ma un `+` le concatenerebbe. Passare sempre di qui.
@@ -92,6 +96,32 @@ function dataChiudeIlConto(righe) {
 }
 
 /**
+ * ⭐ 18/08 — LA SCADENZA DI UN DOCUMENTO, quando dentro non c'è congelata.
+ * Segnalato da Germano guardando la 2026/002 di Flamingo: «non dovrebbe essere a
+ * 30 giorni? perché è segnata come fosse a rimessa diretta?». Aveva ragione — i
+ * documenti nati prima di C4a hanno la casella vuota, e ripiegare sul giorno
+ * dell'invio fa sembrare a rimessa diretta una rata concordata a 30 giorni.
+ *
+ * L'ordine è: quella congelata · quella della RATA (innesco + giorni, con la
+ * regola che sta in `tranche.scadenza` e in nessun altro posto) · il giorno di
+ * emissione, ma **solo per un documento di sole sessioni**, che si paga davvero
+ * a rimessa diretta.
+ * ⚠️ Se il documento contiene una rata e il suo giorno non si sa ancora — è il
+ * caso di «metà percorso» senza data — torna **null**, e chi mostra la riga deve
+ * dire che non si sa. Inventare una data qui vorrebbe dire far scattare un
+ * promemoria per un ritardo che non esiste.
+ * @param {object} pf   la proforma (con `scadenza` e `data_emissione`)
+ * @param {object} [rata] la rata che contiene, se ne contiene una
+ * @param {object} [riferimento] le date da cui si conta: {data_inizio, data_meta, data_fine}
+ */
+function scadenzaDocumento(pf, rata, riferimento) {
+  if (pf && pf.scadenza) return String(pf.scadenza).slice(0, 10);
+  if (rata) return tranche.scadenza(rata, riferimento || {});
+  if (pf && pf.data_emissione) return String(pf.data_emissione).slice(0, 10);
+  return null;
+}
+
+/**
  * Cosa non torna in un incasso che si sta per registrare. Vuoto = si può salvare.
  * @param {object} o { importo, data, residuo }
  * ⚠️ NON si può registrare più di quanto manca. Non è pignoleria: un errore di
@@ -152,5 +182,5 @@ function mappaRate(rows) {
 
 module.exports = {
   cent, euro, sommaIncassi, statoPagamento, residuo, saldata,
-  daFatturare, dataChiudeIlConto, problemi, mappaRate, SQL_COLONNE,
+  daFatturare, dataChiudeIlConto, scadenzaDocumento, problemi, mappaRate, SQL_COLONNE,
 };

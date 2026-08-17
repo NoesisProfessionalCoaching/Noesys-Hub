@@ -2192,6 +2192,27 @@ router.get('/dashboard/amministrazione/proforma', requireCoach, async (req, res)
     }
     for (const p of pfr.rows) p.incassi = incPerProforma.get(p.id) || [];
 
+    // ⭐ 18/08 — LA RATA CHE IL DOCUMENTO CONTIENE, con le date da cui si conta
+    // la sua scadenza. Serve ai documenti nati PRIMA di C4a, che la casella
+    // `scadenza` ce l'hanno vuota: senza questo, una rata a 30 giorni sembrava
+    // scaduta il giorno dell'invio (segnalato da Germano sulla 2026/002).
+    const rate = await db.query(`
+      SELECT r.proforma_id, t.innesco, t.giorni,
+             COALESCE(prj.data_inizio, pc.data_inizio) AS data_inizio,
+             COALESCE(prj.data_meta,   pc.data_meta)   AS data_meta,
+             COALESCE(prj.data_fine,   pc.data_fine)   AS data_fine
+        FROM proforma_righe r
+        JOIN tranche_progetto t ON t.id = r.tranche_id
+        LEFT JOIN partecipazioni pa ON pa.id = t.partecipazione_id
+        LEFT JOIN progetti prj ON prj.id = COALESCE(t.progetto_id, pa.progetto_id)
+        LEFT JOIN percorsi pc  ON pc.id = t.percorso_id
+       WHERE r.tranche_id IS NOT NULL`);
+    const ratePerProforma = new Map(rate.rows.map(r => [r.proforma_id, r]));
+    for (const p of pfr.rows) {
+      const r = ratePerProforma.get(p.id);
+      p.scadenzaVera = incassi.scadenzaDocumento(p, r ? { innesco: r.innesco, giorni: r.giorni } : null, r);
+    }
+
     // ⭐ C3b — le righe servono al TESTO della mail: una proforma che chiede una
     // rata non parla di «sessioni», e il testo deve nominare la rata. Si caricano
     // solo per i documenti ancora da mandare, che sono gli unici con una
@@ -5945,7 +5966,11 @@ function proformaPage(daChiedere, proforme, req) {
   const attesaHtml = inAttesa.map(p => {
     const manca = incassi.residuo(p);
     const preso = incassi.sommaIncassi(p.incassi);
-    const scad = p.scadenza || (p.inviata_data ? String(p.inviata_data).slice(0, 10) : null);
+    // ⚠️ Quando la scadenza non si sa (rata legata a «metà percorso» senza data)
+    // NON si mette il giorno dell'invio al suo posto: si dice che non si sa.
+    // Una data inventata qui farebbe scattare un promemoria per un ritardo che
+    // non esiste, ed è esattamente il difetto che Germano ha trovato il 18/08.
+    const scad = p.scadenzaVera;
     // Le righe già registrate: un acconto si vede, e si può togliere se la data
     // o la cifra erano sbagliate. Non si «corregge» un fatto: si toglie.
     const righeInc = (p.incassi || []).map(i => `
@@ -5960,7 +5985,8 @@ function proformaPage(daChiedere, proforme, req) {
           <a href="/dashboard/proforma/${p.id}/pdf" target="_blank" style="font-size:16px;font-weight:700;color:var(--blue);text-decoration:none">n. ${esc(p.numero)}</a>
           <div style="font-size:13px;color:var(--muted)">
             ${esc(p.cliente_nome || '(destinatario cancellato)')}
-            ${scad ? ' · scadenza ' + itDate(scad) : ''}
+            ${scad ? ' · scadenza ' + itDate(scad)
+                   : ' · <span style="color:var(--hint)">scadenza non ancora nota</span>'}
             ${preso > 0 ? ` · <strong>acconto di ${eur(preso)} ricevuto</strong>` : ''}
           </div>
         </div>
