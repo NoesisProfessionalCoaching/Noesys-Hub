@@ -14,6 +14,9 @@ const proforma = require('./proforma');
 const maturato = require('./maturato');
 const appuntamenti = require('./appuntamenti');
 const tranche = require('./tranche');
+// L'incasso (fetta C4): una riga appesa alla proforma, e da lì lo stato si
+// ricava invece di spuntarlo. Vedi incassi.js.
+const incassi = require('./incassi');
 // La finestrella del piano di pagamento: una sola, usata dalla scheda del
 // progetto E da quella del cliente (fetta C, 15/08). Vedi piano-ui.js.
 const pianoUi = require('./piano-ui');
@@ -476,7 +479,10 @@ router.get('/dashboard/clients/:id', requireCoach, async (req, res) => {
       // ⭐ C3 — quali rate di questa persona sono GIÀ STATE CHIESTE. Non è una
       // colonna: è il fatto di stare dentro una proforma viva. Da qui esce sia
       // l'etichetta «Chiesta» sia il motivo per cui il pulsante sparisce.
-      db.query(`SELECT r.tranche_id, pf.stato
+      // ⭐ C4 — le colonne le detta `incassi.SQL_COLONNE`: la stessa domanda la
+      // fanno anche la pagina del progetto e la home, e scriverla tre volte
+      // vorrebbe dire tre occasioni di divergere.
+      db.query(`SELECT ${incassi.SQL_COLONNE}
                   FROM proforma_righe r
                   JOIN proforme pf ON pf.id = r.proforma_id
                   JOIN tranche_progetto t ON t.id = r.tranche_id
@@ -495,7 +501,7 @@ router.get('/dashboard/clients/:id', requireCoach, async (req, res) => {
       // ⭐ 17/08 — non un elenco di «chieste» ma una MAPPA rata → stato del suo
       // documento: fra «creata» e «mandata» c'e un momento vero, e chiamarli
       // tutti e due «chiesta» era la bugia che Germano ha visto subito.
-      rateChieste: new Map(trc.rows.map(r => [r.tranche_id, r.stato])),
+      rateChieste: incassi.mappaRate(trc.rows),
     }));
   } catch (err) {
     console.error(err);
@@ -1678,13 +1684,17 @@ router.post('/dashboard/clients/:id/proforma', requireCoach, async (req, res) =>
       const ins = await q(`
         INSERT INTO proforme (id, numero, anno, progressivo, client_id, data_emissione,
           periodo_da, periodo_a, categoria_fiscale, emittente_dati, destinatario_dati,
-          imponibile, iva, ritenuta, bollo, totale_documento, da_pagare)
+          imponibile, iva, ritenuta, bollo, totale_documento, da_pagare, scadenza)
         SELECT $1, $2::text || '/' || lpad(x.n::text, 3, '0'), $2::int, x.n, $3, $4::date,
                $5::date, $6::date, $7, $8::jsonb, $9::jsonb,
-               $10, $11, $12, $13, $14, $15
+               $10, $11, $12, $13, $14, $15, $4::date
           FROM (SELECT COALESCE(MAX(progressivo), 0) + 1 AS n
                   FROM proforme WHERE anno = $2::int) x
         RETURNING id, numero`,
+        // ⭐ C4 — la scadenza di un mese di sessioni è il giorno stesso: chi paga
+        // per sé lo fa a RIMESSA DIRETTA (modello dei soldi, 10/08). Il promemoria
+        // parte quindi da subito, ed è giusto così — non c'è nessun termine da
+        // aspettare.
         [uuidv4(), anno, cliente.id, oggi, d.periodoDa, d.periodoA, d.categoria,
          JSON.stringify(d.emittenteDati), JSON.stringify(d.destinatarioDati),
          d.conti.imponibile, d.conti.iva, d.conti.ritenuta, d.conti.bollo,
@@ -1722,9 +1732,11 @@ router.post('/dashboard/tranche/:id/proforma', requireCoach, async (req, res) =>
              prj.id            AS prj_id,   prj.titolo AS prj_titolo,
              prj.quota_committente, prj.committente_id,
              prj.data_inizio   AS prj_inizio, prj.data_fine AS prj_fine,
+             prj.data_meta     AS prj_meta,
              pc.id             AS perc_id,  pc.client_id AS perc_client_id,
              pc.prezzo         AS perc_prezzo,
-             pc.data_inizio    AS perc_inizio, pc.data_fine AS perc_fine
+             pc.data_inizio    AS perc_inizio, pc.data_fine AS perc_fine,
+             pc.data_meta      AS perc_meta
         FROM tranche_progetto t
         LEFT JOIN partecipazioni pa ON pa.id = t.partecipazione_id
         LEFT JOIN progetti      prj ON prj.id = COALESCE(t.progetto_id, pa.progetto_id)
@@ -1752,22 +1764,28 @@ router.post('/dashboard/tranche/:id/proforma', requireCoach, async (req, res) =>
     // Chi paga, quanto ha concordato, e di che cosa si parla.
     let clientId = null, committenteId = null, progettoId = t.prj_id || null;
     let quota = 0, titolo = '', periodo = {};
+    // Le tre date da cui si conta la scadenza della rata (C4): sono quelle del
+    // percorso per un pacchetto, quelle del progetto negli altri casi.
+    let riferimento = {};
     if (t.perc_id) {
       clientId = t.perc_client_id;
       quota    = Math.round(Number(t.perc_prezzo) || 0);
       titolo   = 'Pacchetto di coaching';
       periodo  = { da: t.perc_inizio, a: t.perc_fine };
+      riferimento = { data_inizio: t.perc_inizio, data_meta: t.perc_meta, data_fine: t.perc_fine };
       progettoId = null;
     } else if (t.part_client_id) {
       clientId = t.part_client_id;
       quota    = Math.round(Number(t.quota_coachee) || 0);
       titolo   = nomeProgetto(t.prj_titolo);
       periodo  = { da: t.prj_inizio, a: t.prj_fine };
+      riferimento = { data_inizio: t.prj_inizio, data_meta: t.prj_meta, data_fine: t.prj_fine };
     } else {
       committenteId = t.committente_id;
       quota    = Math.round(Number(t.quota_committente) || 0);
       titolo   = nomeProgetto(t.prj_titolo);
       periodo  = { da: t.prj_inizio, a: t.prj_fine };
+      riferimento = { data_inizio: t.prj_inizio, data_meta: t.prj_meta, data_fine: t.prj_fine };
     }
 
     const [dest, em] = await Promise.all([
@@ -1793,16 +1811,22 @@ router.post('/dashboard/tranche/:id/proforma', requireCoach, async (req, res) =>
       return res.status(400).json({ error: 'Non si riesce a stabilire la categoria fiscale di chi deve pagare.' });
     }
     const anno = Number(oggi.slice(0, 4));
+    // ⭐ C4 — la scadenza si congela nel documento: è il giorno da cui il
+    // promemoria «verifica se è arrivato» comincia a chiedere. Per una rata è la
+    // sua (innesco + giorni concordati); se quel giorno non si sa ancora — è il
+    // caso di «metà percorso» senza data — resta vuota e si ripiegherà sul
+    // giorno dell'invio, che è comunque un momento vero.
+    const scadenza = tranche.scadenza(t, riferimento);
 
     const creata = await db.transazione(async (q) => {
       const ins = await q(`
         INSERT INTO proforme (id, numero, anno, progressivo, client_id, committente_id,
           progetto_id, data_emissione, periodo_da, periodo_a, categoria_fiscale,
           emittente_dati, destinatario_dati,
-          imponibile, iva, ritenuta, bollo, totale_documento, da_pagare)
+          imponibile, iva, ritenuta, bollo, totale_documento, da_pagare, scadenza)
         SELECT $1, $2::text || '/' || lpad(x.n::text, 3, '0'), $2::int, x.n, $3, $4, $5,
                $6::date, $7::date, $8::date, $9, $10::jsonb, $11::jsonb,
-               $12, $13, $14, $15, $16, $17
+               $12, $13, $14, $15, $16, $17, $18::date
           FROM (SELECT COALESCE(MAX(progressivo), 0) + 1 AS n
                   FROM proforme WHERE anno = $2::int) x
         RETURNING id, numero`,
@@ -1810,7 +1834,7 @@ router.post('/dashboard/tranche/:id/proforma', requireCoach, async (req, res) =>
          d.periodoDa, d.periodoA, d.categoria,
          JSON.stringify(d.emittenteDati), JSON.stringify(d.destinatarioDati),
          d.conti.imponibile, d.conti.iva, d.conti.ritenuta, d.conti.bollo,
-         d.conti.totaleDocumento, d.conti.daPagare]);
+         d.conti.totaleDocumento, d.conti.daPagare, scadenza]);
       const pf = ins.rows[0];
       for (const r of d.righe) {
         await q(`INSERT INTO proforma_righe
@@ -2144,13 +2168,29 @@ router.get('/dashboard/amministrazione/proforma', requireCoach, async (req, res)
       db.query(`SELECT pf.*,
                        COALESCE(pf.destinatario_dati->>'denominazione',
                                 c.name, k.denominazione) AS cliente_nome,
-                       COALESCE(c.email, k.email) AS cliente_email
+                       COALESCE(c.email, k.email) AS cliente_email,
+                       -- ⭐ C4 — quanto è stato incassato su ogni documento. Da
+                       -- qui si ricava «saldata», che nessuno spunta a mano.
+                       COALESCE((SELECT SUM(i.importo) FROM incassi i
+                                  WHERE i.proforma_id = pf.id), 0) AS incassato
                   FROM proforme pf
                   LEFT JOIN clients c ON c.id = pf.client_id
                   LEFT JOIN committenti k ON k.id = pf.committente_id
                  ORDER BY pf.anno DESC, pf.progressivo DESC`),
     ]);
     const emittente = emr.rows[0] || {};
+
+    // Le singole righe d'incasso servono ai due passaggi nuovi: si vede QUANDO
+    // è arrivato ogni soldo e si può togliere quello sbagliato. Un acconto e il
+    // saldo sono due righe, e devono restare due righe distinte.
+    const inc = await db.query(
+      'SELECT * FROM incassi ORDER BY data_incasso, created_at');
+    const incPerProforma = new Map();
+    for (const r of inc.rows) {
+      if (!incPerProforma.has(r.proforma_id)) incPerProforma.set(r.proforma_id, []);
+      incPerProforma.get(r.proforma_id).push(r);
+    }
+    for (const p of pfr.rows) p.incassi = incPerProforma.get(p.id) || [];
 
     // ⭐ C3b — le righe servono al TESTO della mail: una proforma che chiede una
     // rata non parla di «sessioni», e il testo deve nominare la rata. Si caricano
@@ -2282,6 +2322,100 @@ router.post('/dashboard/proforma/:id/annulla', requireCoach, async (req, res) =>
   } catch (err) {
     console.error('[proforma/annulla]', err);
     res.status(500).json({ error: "Errore nell'annullamento" });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// ⭐ FETTA C4 (18/08/2026) — L'INCASSO
+// L'unico gesto che resta a un umano in tutta la catena: dire che i soldi sono
+// arrivati. L'Hub non vede la banca. Tutto il resto — «chiesta», «incassata» —
+// si ricava dai fatti e non si spunta.
+// ══════════════════════════════════════════════════════════════════════════
+
+// Quello che serve per decidere se un documento è saldato: quanto c'era da
+// pagare e quanto è già stato registrato sopra.
+async function documentoConIncassi(id) {
+  const r = await db.query(`
+    SELECT pf.*,
+           COALESCE((SELECT SUM(i.importo) FROM incassi i WHERE i.proforma_id = pf.id), 0) AS incassato
+      FROM proforme pf WHERE pf.id = $1`, [id]);
+  return r.rows[0] || null;
+}
+
+router.post('/dashboard/proforma/:id/incasso', requireCoach, express.json(), async (req, res) => {
+  try {
+    const pf = await documentoConIncassi(req.params.id);
+    if (!pf) return res.status(404).json({ error: 'Proforma non trovata' });
+    if (pf.stato === 'annullata') {
+      return res.status(400).json({ error: 'Questa proforma è annullata: non ci si registrano incassi.' });
+    }
+    // ⚠️ Un documento mai spedito non può essere stato pagato: se è arrivato un
+    // soldo su una proforma ferma, è la proforma a essere in errore, non
+    // l'incasso. Dirlo qui evita di scoprirlo fra due mesi guardando i conti.
+    if (pf.stato !== 'inviata') {
+      return res.status(400).json({ error: 'Questa proforma non è ancora stata mandata: prima si manda, poi si incassa.' });
+    }
+    const b = req.body || {};
+    const importo = Math.round((Number(b.importo) || 0) * 100) / 100;
+    const data = String(b.data_incasso || '').slice(0, 10);
+    const manca = incassi.residuo(pf);
+    const problemi = incassi.problemi({ importo, data, residuo: manca });
+    if (problemi.length) return res.status(400).json({ error: problemi.join(' ') });
+
+    await db.query(
+      `INSERT INTO incassi (id, proforma_id, importo, data_incasso) VALUES ($1,$2,$3,$4::date)`,
+      [uuidv4(), pf.id, importo, data]);
+
+    // Si risponde con com'è messo ADESSO il documento: la pagina non deve
+    // rifare il conto per conto suo, o prima o poi lo farebbe in modo diverso.
+    const dopo = await documentoConIncassi(pf.id);
+    res.json({
+      ok: true,
+      saldata: incassi.saldata(dopo),
+      residuo: incassi.residuo(dopo),
+      numero: pf.numero,
+    });
+  } catch (err) {
+    console.error('[proforma/incasso]', err);
+    res.status(500).json({ error: "Errore nella registrazione dell'incasso" });
+  }
+});
+
+// Togliere un incasso sbagliato (data o importo). Non si «corregge»: si toglie e
+// si rimette. Un incasso è un fatto, e un fatto o c'è o non c'è.
+// ⭐ Tolto l'ultimo, il documento torna da sé fra quelli in attesa e la rata
+// dentro torna «Chiesta»: nessuno stato da rimettere a posto a mano.
+router.post('/dashboard/incassi/:id/togli', requireCoach, async (req, res) => {
+  try {
+    const r = await db.query('DELETE FROM incassi WHERE id = $1 RETURNING proforma_id', [req.params.id]);
+    if (!r.rows.length) return res.status(404).json({ error: 'Incasso non trovato' });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[incassi/togli]', err);
+    res.status(500).json({ error: "Errore nel togliere l'incasso" });
+  }
+});
+
+// Il numero della fattura emessa a mano in SuperBill. Finché non c'è, il
+// documento saldato resta nella fila «da fatturare» — è quello che impedisce a
+// un incasso di finire in un vicolo cieco.
+// ⚠️ Si può anche CANCELLARE (campo vuoto): se lo scrivi sbagliato devi poterlo
+// disfare, altrimenti la riga esce dalla fila con un numero che non esiste.
+router.post('/dashboard/proforma/:id/fattura', requireCoach, express.json(), async (req, res) => {
+  try {
+    const numero = String((req.body || {}).numero || '').trim();
+    const r = await db.query(
+      `UPDATE proforme
+          SET fattura_numero = $2,
+              fattura_data = CASE WHEN $2::text IS NULL THEN NULL
+                                  ELSE COALESCE(fattura_data, CURRENT_DATE) END
+        WHERE id = $1 RETURNING numero`,
+      [req.params.id, numero || null]);
+    if (!r.rows.length) return res.status(404).json({ error: 'Proforma non trovata' });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[proforma/fattura]', err);
+    res.status(500).json({ error: 'Errore nel salvataggio del numero di fattura' });
   }
 });
 
@@ -2536,14 +2670,14 @@ router.get('/dashboard/progetti/:id', requireCoach, async (req, res) => {
     // ⭐ C3 — quali rate di questo progetto sono già dentro una proforma viva.
     // È da qui che esce «Chiesta», e non da una colonna scritta a mano.
     const chieste = await db.query(`
-      SELECT r.tranche_id, pf.stato FROM proforma_righe r
+      SELECT ${incassi.SQL_COLONNE} FROM proforma_righe r
         JOIN proforme pf ON pf.id = r.proforma_id
         JOIN tranche_progetto t ON t.id = r.tranche_id
         LEFT JOIN partecipazioni pa ON pa.id = t.partecipazione_id
        WHERE pf.stato <> 'annullata'
          AND COALESCE(t.progetto_id, pa.progetto_id) = $1`, [req.params.id]);
     res.send(progettoDettaglioPage(pr.rows[0], coachee.rows, req, disponibili.rows, percorsi.rows, fasi.rows, seduteColl.rows, piano.rows,
-      new Map(chieste.rows.map(r => [r.tranche_id, r.stato]))));
+      incassi.mappaRate(chieste.rows)));
   } catch (err) {
     console.error(err);
     res.status(500).send('Errore');
@@ -3090,6 +3224,12 @@ function baseStyle() {
            alto e in basso (lo fa il foglio di stile delle finestrelle, che i
            controlli verificano). Qui si toglie solo il superfluo, per accorciare
            quanto si deve scorrere. */
+        /* ⚠️ 18/08 — «width: auto» qui SEMBRA sbagliato e non lo è. Misurando la
+           finestrella dell'incasso l'avevo vista larga 52px e stavo per
+           cambiarla: erano i 26+26 di padding attorno a un contenuto largo zero,
+           perché il pannello del browser di prova era collassato. A finestra
+           vera (900px) «auto» e «100%» danno lo stesso identico risultato: 440px,
+           cioè il limite scritto sulla finestrella. Non si tocca. */
         .modal-box { width: auto !important; max-width: 100%; }
         .modal-box textarea { min-height: 110px !important; }
         /* I link di NAVIGAZIONE (i tre mondi, il menu, le briciole) sono
@@ -3354,8 +3494,12 @@ function homePage(d, req) {
 
   ${/* La finestrella dell'appuntamento: tre righe e due pulsanti. Deve restare
         piccola — si apre per spostare un incontro, non per compilare una scheda. */ ''}
+  ${/* 🔴 18/08 — era class="modal", che NEL CSS NON ESISTE: niente sfondo bianco,
+        niente cornice, niente ombra — restavano i campi nudi sopra la pagina. È
+        il difetto che Germano aveva segnalato il 17/08 sulla finestrella
+        «Rivedi e manda», e la causa era la stessa qui. La classe giusta è «.modal-box». */ ''}
   <div id="modal-app" class="modal-overlay">
-    <div class="modal" style="max-width:420px">
+    <div class="modal-box" style="max-width:420px">
       <h2 style="margin-bottom:4px">Sposta l'appuntamento</h2>
       <p style="color:var(--muted);font-size:13px;margin-bottom:16px"><span id="ap-chi"></span></p>
       <div style="display:grid;grid-template-columns:1.4fr 1fr;gap:12px">
@@ -4044,16 +4188,23 @@ Germano`;
       const imp  = Math.round(Number(t.importo));
       const perc = quota ? Math.round(imp / quota * 100) : null;
       const scad = scadenze[i];
-      // ⚠️ PONTE fino alla fetta C3, come sulla scheda del progetto: «chiesta»
-      // si accenderà da sola quando partirà la proforma della rata.
+      // ⭐ C4 — l'incasso si registra sul DOCUMENTO che contiene la rata, non
+      // sulla rata. Stessa scelta e stesse parole della tabella condivisa in
+      // piano-ui.js: le due tabelle mostrano la stessa cosa.
+      const doc = rateChieste.get(t.id) || {};
+      const dataInc = doc.ultimoIncasso || t.data_incasso;
       const comando = (stato === 'da_chiedere')
         ? `<button onclick="chiediRata('${t.id}','${esc(t.etichetta)}, \u20ac ${fiscale.euroIntero(imp)}')" class="btn btn-primary btn-sm">Chiedi il pagamento</button>`
         : (stato === 'da_mandare')
         ? `<a href="/dashboard/amministrazione/proforma" class="btn btn-primary btn-sm">Rileggi e manda</a>`
         : (stato === 'incassata')
-        ? `<span style="font-size:11.5px;color:var(--hint)">${t.data_incasso ? 'il ' + itDate(t.data_incasso) : ''}</span>
-           <button onclick="segnaStato('${t.id}','da_chiedere')" class="btn btn-neutral btn-sm" title="Torna indietro">Annulla</button>`
-        : `<button onclick="apriIncasso('${t.id}','${esc(t.etichetta)}, € ${fiscale.euroIntero(imp)}')" class="btn btn-neutral btn-sm">È arrivato</button>`;
+        ? `<span style="font-size:11.5px;color:var(--hint)">${dataInc ? 'il ' + itDate(dataInc) : ''}</span>
+           ${doc.proformaId
+             ? `<a href="/dashboard/amministrazione/proforma" style="font-size:11.5px;color:var(--muted)">n. ${esc(doc.numero)}</a>`
+             : `<button onclick="segnaStato('${t.id}','da_chiedere')" class="btn btn-neutral btn-sm" title="Torna indietro">Annulla</button>`}`
+        : doc.proformaId
+        ? `<button onclick="apriIncasso('${doc.proformaId}','${esc(t.etichetta)}',${Number(doc.residuo) || 0})" class="btn btn-neutral btn-sm">È arrivato</button>`
+        : '';
       return `<tr>
           <td>${esc(t.etichetta)}${perc !== null ? ` <span style="font-size:11px;color:var(--hint)">${perc}%</span>` : ''}</td>
           <td style="white-space:nowrap">€ ${fiscale.euroIntero(imp)}</td>
@@ -5783,12 +5934,90 @@ function proformaPage(daChiedere, proforme, req) {
       </div>
     </div>`).join('');
 
-  // ── 3. Già fatte ──────────────────────────────────────────────────────────
+  // ── 3. Mandate, in attesa di incasso ──────────────────────────────────────
+  // ⭐ C4 — prima questa fila non esisteva: una proforma spedita finiva fra le
+  // «Già fatte», che è una ricevuta e non chiede mai niente. Ma una proforma
+  // mandata e non pagata è il momento in cui si vive per settimane, e senza una
+  // riga che lo dica quei soldi si perdono di vista. Qui ogni riga porta il
+  // gesto che le tocca: dire che sono arrivati.
+  const inAttesa = proforme.filter(p =>
+    p.stato === 'inviata' && !incassi.saldata(p));
+  const attesaHtml = inAttesa.map(p => {
+    const manca = incassi.residuo(p);
+    const preso = incassi.sommaIncassi(p.incassi);
+    const scad = p.scadenza || (p.inviata_data ? String(p.inviata_data).slice(0, 10) : null);
+    // Le righe già registrate: un acconto si vede, e si può togliere se la data
+    // o la cifra erano sbagliate. Non si «corregge» un fatto: si toglie.
+    const righeInc = (p.incassi || []).map(i => `
+      <div style="font-size:12px;color:var(--muted);margin-top:4px">
+        arrivati ${eur(i.importo)} il ${itDate(i.data_incasso)}
+        <button onclick="togliIncasso('${i.id}')" class="btn btn-neutral btn-sm" style="margin-left:6px">Togli</button>
+      </div>`).join('');
+    return `
+    <div class="card" style="margin-bottom:12px">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <div>
+          <a href="/dashboard/proforma/${p.id}/pdf" target="_blank" style="font-size:16px;font-weight:700;color:var(--blue);text-decoration:none">n. ${esc(p.numero)}</a>
+          <div style="font-size:13px;color:var(--muted)">
+            ${esc(p.cliente_nome || '(destinatario cancellato)')}
+            ${scad ? ' · scadenza ' + itDate(scad) : ''}
+            ${preso > 0 ? ` · <strong>acconto di ${eur(preso)} ricevuto</strong>` : ''}
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-left:auto">
+          <strong style="font-size:15px">${eur(manca)}</strong>
+          <button onclick="apriIncasso('${p.id}','n. ${esc(p.numero)} — ${esc(p.cliente_nome || '')}',${manca})" class="btn btn-gold btn-sm">È arrivato</button>
+        </div>
+      </div>
+      ${righeInc}
+    </div>`;
+  }).join('');
+
+  // ── 4. Incassate, da fatturare ────────────────────────────────────────────
+  // ⭐ È il passaggio che impedisce a tutta la catena di finire in un vicolo
+  // cieco: i soldi sono arrivati, e adesso la fattura elettronica va emessa a
+  // mano in SuperBill. Il documento resta qui finché non se ne scrive il numero.
+  // ⚠️ Il mese della fattura è quello dell'INCASSO, non quello del documento
+  // (decisione 2 dell'11/08) — per questo la data la scrive Germano.
+  const MESI = ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno',
+    'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre'];
+  const daFatturare = proforme.filter(incassi.daFatturare);
+  const fatturareHtml = daFatturare.map(p => {
+    const quando = incassi.dataChiudeIlConto(p.incassi);
+    const mese = quando ? MESI[Number(quando.slice(5, 7)) - 1] + ' ' + quando.slice(0, 4) : '';
+    return `
+    <div class="card" style="margin-bottom:12px;border-left:3px solid #4F8B73">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <div>
+          <a href="/dashboard/proforma/${p.id}/pdf" target="_blank" style="font-size:16px;font-weight:700;color:var(--blue);text-decoration:none">n. ${esc(p.numero)}</a>
+          <div style="font-size:13px;color:var(--muted)">
+            ${esc(p.cliente_nome || '(destinatario cancellato)')}
+            ${quando ? ' · incassata il ' + itDate(quando) : ''}
+            ${mese ? ` · <strong>fattura di ${mese}</strong>` : ''}
+          </div>
+          <div style="font-size:12px;color:var(--hint);margin-top:3px">
+            Imponibile ${eur(p.imponibile)} · IVA ${eur(p.iva)}${Number(p.ritenuta) > 0 ? ` · ritenuta ${eur(p.ritenuta)}` : ''}
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-left:auto">
+          <label style="margin:0;text-transform:none;letter-spacing:0;font-size:12px;color:var(--muted)">N. fattura</label>
+          <input id="fatt-${p.id}" value="${esc(p.fattura_numero || '')}" placeholder="es. 12/2026" style="width:120px">
+          <button onclick="salvaFattura('${p.id}')" class="btn btn-primary btn-sm">Fatta</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  // ── 5. Già fatte ──────────────────────────────────────────────────────────
   // Non è un passaggio da fare: è la ricevuta, e serve a non chiedere due volte.
   // ⚠️ `inviata_data` è un MOMENTO, non una data: con itDate() usciva «Wed Aug
   // 12», perché quella funzione taglia una stringa ISO e qui arriva un timestamp.
   // itDateTime() lo scrive in ora italiana — e su una cosa spedita l'ora serve.
-  const fatte = proforme.filter(p => !proforma.daMandare(p));
+  // ⭐ C4 — qui restano solo i documenti che non chiedono più niente: annullati,
+  // o incassati E fatturati. Gli altri stanno nei due passaggi qui sopra, dove
+  // c'è scritto cosa fare.
+  const fatte = proforme.filter(p =>
+    !proforma.daMandare(p) && !inAttesa.includes(p) && !incassi.daFatturare(p));
   const fatteHtml = !fatte.length ? '' : `
     <section style="margin-top:34px">
       <h2 style="margin-bottom:4px;font-size:16px;color:var(--muted)">Già fatte</h2>
@@ -5846,14 +6075,33 @@ function proformaPage(daChiedere, proforme, req) {
           </p>`
         : `<div class="card" style="color:var(--muted);font-size:13px">Niente da mandare.</div>`)}
 
+      ${passo(3, 'Mandate, in attesa di incasso', 'Proforma partite e non ancora pagate. Quando i soldi arrivano, dillo qui: la data che scrivi decide il mese della fattura.',
+        inAttesa.length ? attesaHtml
+        : `<div class="card" style="color:var(--muted);font-size:13px">Niente in attesa: tutto quello che è stato chiesto è stato pagato.</div>`)}
+
+      ${passo(4, 'Incassate, da fatturare', 'I soldi sono arrivati: adesso la fattura elettronica va emessa in SuperBill. Scrivi qui il numero che le hai dato, e la riga sparisce.',
+        daFatturare.length ? fatturareHtml
+        : `<div class="card" style="color:var(--muted);font-size:13px">Nessuna fattura da preparare.</div>`)}
+
       ${fatteHtml}`}
   </div>
+
+  ${/* ⭐ C4 — la finestrella dell'incasso è la STESSA delle schede col piano di
+        pagamento (piano-ui.js): stesso markup, stesse funzioni, stesse parole.
+        Registrare un incasso in due modi diversi sarebbe l'errore che questa
+        fetta sta togliendo. */ ''}
+  ${pianoUi.modaleIncasso()}
 
   ${/* La finestrella è UNA sola per tutte le proforma: quello che cambia lo
         porta dentro `INVIO`, preparato qui dal server. Lo stesso schema di
         Mail 1 e Mail 2, che Germano conosce già. */ ''}
   <div id="modal-invio" class="modal-overlay">
-    <div class="modal" style="max-width:640px">
+    ${/* 🔴 18/08 — QUI ERA IL DIFETTO CHE GERMANO AVEVA VISTO: «compaiono tutti i
+          campi di testo, ma nessuna cornice». La classe scritta era `.modal`, che
+          nel foglio di stile non esiste — quindi nessuno sfondo, nessun bordo,
+          nessuna ombra. Non era il contenitore che «perdeva» lo stile: non l'ha
+          mai avuto. La classe vera è «.modal-box». */ ''}
+    <div class="modal-box" style="max-width:640px">
       <h2 style="margin-bottom:4px">Rivedi e manda — <span id="mi-numero"></span></h2>
       <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
         Il testo si può cambiare: parte quello che vedi qui sotto.
@@ -5945,6 +6193,37 @@ function proformaPage(daChiedere, proforme, req) {
         const r = await fetch('/dashboard/proforma/' + id + '/annulla', { method: 'POST' });
         const d = await r.json().catch(() => ({}));
         if (!r.ok) { alert(d.error || ('Errore ' + r.status)); return; }
+        location.reload();
+      } catch (e) { alert('Errore di rete: ' + e.message); }
+    }
+
+    ${/* ⭐ C4 — apriIncasso / confermaIncasso / chiudiIncasso arrivano da
+          piano-ui.js: sono le stesse delle schede col piano. */ ''}
+    ${pianoUi.jsIncasso()}
+
+    // Un incasso non si corregge: si toglie e si rimette. Un fatto o c'e o non
+    // c'e — e togliendolo il documento torna da se fra quelli in attesa.
+    async function togliIncasso(id) {
+      if (!confirm('Tolgo questo incasso?\\n\\nIl documento torna fra quelli in attesa di pagamento.')) return;
+      try {
+        var r = await fetch('/dashboard/incassi/' + id + '/togli', { method: 'POST' });
+        var j = await r.json().catch(function () { return {}; });
+        if (!r.ok) { alert(j.error || ('Errore ' + r.status)); return; }
+        location.reload();
+      } catch (e) { alert('Errore di rete: ' + e.message); }
+    }
+    // Il numero della fattura emessa a mano in SuperBill. Si puo anche
+    // cancellare: scritto sbagliato, la riga uscirebbe dalla fila con un numero
+    // che non esiste.
+    async function salvaFattura(id) {
+      var n = document.getElementById('fatt-' + id).value.trim();
+      if (!n && !confirm('Il numero e vuoto: la proforma torna fra quelle da fatturare. Confermi?')) return;
+      try {
+        var r = await fetch('/dashboard/proforma/' + id + '/fattura', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ numero: n }) });
+        var j = await r.json().catch(function () { return {}; });
+        if (!r.ok) { alert(j.error || ('Errore ' + r.status)); return; }
         location.reload();
       } catch (e) { alert('Errore di rete: ' + e.message); }
     }

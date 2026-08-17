@@ -88,29 +88,36 @@ function modale(o) {
 }
 
 /**
- * La finestrella «È arrivato il pagamento».
- * ⚠️ PONTE FINO ALLA FETTA C3 — da togliere quando la proforma di una rata e il
- * promemoria dell'incasso saranno in piedi. Germano (15/08): «chiesta» si
- * accende da sola quando parte la mail, e l'incasso si conferma smarcando un
- * promemoria. Finché quella catena non c'è, senza questo comando non si
- * potrebbe segnare niente e la scheda non sarebbe collaudabile.
+ * La finestrella «È arrivato il pagamento» — FETTA C4.
+ * ⭐ Non era un ponte da buttare: è il posto dove si fa l'unico gesto che
+ * l'Hub non può fare da solo, cioè dire che i soldi sono arrivati (la banca non
+ * la vede). Quello che è cambiato è dove finisce il fatto: prima spuntava una
+ * casella sulla rata, adesso registra un incasso sul DOCUMENTO — e da lì lo
+ * stato si ricava, per le rate come per le sessioni.
+ * ⭐ Propone l'intero residuo e lascia scrivere di meno: è così che si registra
+ * un acconto (Fase 4), e più incassi possono stare sullo stesso documento.
  * La data si CHIEDE: scriverci «oggi» d'ufficio metterebbe la fattura nel mese
  * sbagliato, ed è il difetto D3 corretto il 15/08.
  */
 function modaleIncasso() {
   return `
     <div class="modal-overlay" id="modal-incasso">
-      <div class="modal-box" style="max-width:420px">
+      <div class="modal-box" style="max-width:440px">
         <h3 style="margin-top:0">È arrivato il pagamento</h3>
         <p id="incasso-che" style="font-size:13px;color:var(--muted);margin-top:-6px"></p>
-        <div class="form-group"><label>Quando è arrivato</label>
-          <input id="incasso-data" type="date" style="width:170px"></div>
+        <div style="display:flex;gap:14px;flex-wrap:wrap">
+          <div class="form-group"><label>Quanto è arrivato €</label>
+            <input id="incasso-importo" type="number" step="0.01" min="0" style="width:150px"></div>
+          <div class="form-group"><label>Quando è arrivato</label>
+            <input id="incasso-data" type="date" style="width:170px"></div>
+        </div>
+        <p id="incasso-manca" style="font-size:11.5px;color:var(--hint);margin-top:-4px"></p>
         <p style="font-size:11.5px;color:var(--hint)">
           Non è il giorno in cui lo segni: è il giorno in cui i soldi sono arrivati davvero.
           È da questa data che dipende in quale mese va la fattura.</p>
         <div class="modal-actions">
           <button onclick="chiudiIncasso()" class="btn btn-neutral">Annulla</button>
-          <button onclick="confermaIncasso()" class="btn btn-primary">Segna incassata</button>
+          <button onclick="confermaIncasso()" class="btn btn-primary">Registra l’incasso</button>
         </div>
       </div>
     </div>`;
@@ -199,14 +206,27 @@ function js(o) {
           var st = STATI[t.stato] || STATI.da_chiedere;
           // C3b — da qui si chiede il pagamento della singola rata. Lo stato
           // arriva gia RICAVATO dal server: chiesta = sta in una proforma viva.
+          // ⭐ C4 — «È arrivato» ha cambiato mestiere: non spunta più una casella
+          // sulla rata, registra un incasso SUL DOCUMENTO che la contiene. Il
+          // gesto per chi lo preme è identico; cambia dove finisce il fatto, e
+          // da lì lo stato della rata si ricava invece di essere scritto.
+          var d = t.doc || {};
           var comando = t.stato === 'da_chiedere'
             ? '<button onclick="chiediRata(\\'' + t.id + '\\',\\'' + esc2(t.etichetta) + ', € ' + eur2(t.importo) + '\\')" class="btn btn-primary btn-sm">Chiedi il pagamento</button>'
             : t.stato === 'da_mandare'
             ? '<a href="/dashboard/amministrazione/proforma" class="btn btn-primary btn-sm">Rileggi e manda</a>'
             : t.stato === 'incassata'
             ? '<span style="font-size:11.5px;color:var(--hint)">' + (t.data_incasso ? 'il ' + itData(t.data_incasso) : '') + '</span>'
-              + ' <button onclick="segnaStato(\\'' + t.id + '\\',\\'da_chiedere\\')" class="btn btn-neutral btn-sm" title="Torna indietro">Annulla</button>'
-            : '<button onclick="apriIncasso(\\'' + t.id + '\\',\\'' + esc2(pg.nome) + ' — ' + esc2(t.etichetta) + ', € ' + eur2(t.importo) + '\\')" class="btn btn-neutral btn-sm">È arrivato</button>';
+              // Un incasso si disfa da dove è stato registrato — dal documento.
+              // Il pulsante «Annulla» resta solo dove non c'è nessun documento:
+              // le rate segnate a mano prima di C4, che altrimenti resterebbero
+              // prigioniere di una colonna che non scrive più nessuno.
+              + (d.proformaId
+                 ? ' <a href="/dashboard/amministrazione/proforma" style="font-size:11.5px;color:var(--muted)">n. ' + esc2(d.numero) + '</a>'
+                 : ' <button onclick="segnaStato(\\'' + t.id + '\\',\\'da_chiedere\\')" class="btn btn-neutral btn-sm" title="Torna indietro">Annulla</button>')
+            : d.proformaId
+            ? '<button onclick="apriIncasso(\\'' + d.proformaId + '\\',\\'' + esc2(pg.nome) + ' — ' + esc2(t.etichetta) + '\\',' + (Number(d.residuo) || 0) + ')" class="btn btn-neutral btn-sm">È arrivato</button>'
+            : '';
           html += '<tr>'
             + '<td style="padding-left:26px">' + esc2(t.etichetta)
             + (perc !== null ? ' <span style="font-size:11px;color:var(--hint)">' + perc + '%</span>' : '') + '</td>'
@@ -407,14 +427,6 @@ function js(o) {
         location.reload();
       } catch (e) { alert('Errore di rete: ' + e.message); }
     }
-    // ⚠️ PONTE fino alla fetta C3.
-    var INCASSO_ID = null;
-    function apriIncasso(id, che) {
-      INCASSO_ID = id;
-      document.getElementById('incasso-che').textContent = che;
-      document.getElementById('incasso-data').value = new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Rome' });
-      document.getElementById('modal-incasso').style.display = 'flex';
-    }
     // C3b — la proforma di UNA rata. Il numero che nasce non si riusa, quindi
     // si conferma nominando la rata e non con un generico sei sicuro.
     async function chiediRata(id, che) {
@@ -434,11 +446,59 @@ function js(o) {
         window.location = '/dashboard/amministrazione/proforma';
       } catch (ex) { alert('Errore di rete: ' + ex.message); }
     }
+    ${jsIncasso()}`;
+}
+
+/**
+ * ⭐ C4 — IL JS DELLA FINESTRELLA DELL'INCASSO, in un posto solo.
+ * Lo usano due pagine diverse: le schede col piano di pagamento (di qui) e la
+ * pagina Proforma, dove sta la fila dei documenti in attesa. Scriverlo due volte
+ * vorrebbe dire due modi di registrare la stessa cosa — ed è esattamente
+ * l'errore che questa fetta sta togliendo.
+ * ⚠️ Va insieme a `modaleIncasso()`: uno è il markup, l'altro lo fa vivere.
+ */
+function jsIncasso() {
+  return `
+    // L'incasso si appende al DOCUMENTO, non alla rata: è la mossa che fa
+    // valere lo stesso giro per le sessioni, le rate di progetto e i pacchetti.
+    var INCASSO_PF = null;
+    function apriIncasso(proformaId, che, residuo) {
+      INCASSO_PF = proformaId;
+      document.getElementById('incasso-che').textContent = che;
+      // Proposto l'intero residuo, correggibile: scrivendo meno si registra un
+      // acconto e il documento resta aperto per quello che manca.
+      document.getElementById('incasso-importo').value = (Number(residuo) || 0).toFixed(2);
+      document.getElementById('incasso-manca').textContent =
+        'Su questo documento mancano € ' + eur2Cent(residuo) + '. Se ne è arrivata solo una parte, scrivi quella.';
+      document.getElementById('incasso-data').value = new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Rome' });
+      document.getElementById('modal-incasso').style.display = 'flex';
+    }
     function chiudiIncasso() { document.getElementById('modal-incasso').style.display = 'none'; }
-    function confermaIncasso() {
+    // Gli incassi hanno i CENTESIMI (è l'IVA a produrli), le rate no: per questo
+    // non basta la eur2() delle rate. Stesse opzioni di fiscale.euro() sul
+    // server, così lo stesso importo si scrive uguale di qua e di là.
+    function eur2Cent(n) {
+      return (Number(n) || 0).toLocaleString('it-IT',
+        { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: 'always' });
+    }
+    async function confermaIncasso() {
       var d = document.getElementById('incasso-data').value;
+      var imp = document.getElementById('incasso-importo').value;
       if (!d) { alert('Scrivi quando è arrivato il pagamento.'); return; }
-      segnaStato(INCASSO_ID, 'incassata', d);
+      if (!(Number(imp) > 0)) { alert('Scrivi quanto è arrivato.'); return; }
+      try {
+        var r = await fetch('/dashboard/proforma/' + INCASSO_PF + '/incasso', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ importo: Number(imp), data_incasso: d }) });
+        var j = await r.json().catch(function () { return {}; });
+        if (!r.ok) { alert(j.error || ('Errore ' + r.status)); return; }
+        // Se manca ancora qualcosa lo si dice subito: il documento resta aperto
+        // e il promemoria continuerà a chiederlo.
+        if (!j.saldata) {
+          alert('Registrato. Sul documento n. ' + j.numero + ' mancano ancora € ' + eur2Cent(j.residuo) + '.');
+        }
+        location.reload();
+      } catch (e) { alert('Errore di rete: ' + e.message); }
     }`;
 }
 
@@ -480,7 +540,13 @@ function righeDi(salvate, quota, tipo, chieste) {
       // dire «sta in una proforma viva», e lo decide `tranche.statoDi()` in un
       // posto solo. La pagina non deve saperne niente.
       stato: tranche.statoDi(t, chieste),
-      data_incasso: t.data_incasso ? String(t.data_incasso).slice(0, 10) : null,
+      // ⭐ C4 — la rata si porta dietro il DOCUMENTO che la contiene: senza, il
+      // pulsante «È arrivato» non saprebbe su cosa appendere l'incasso.
+      doc: (chieste && chieste.get ? chieste.get(t.id) : null) || null,
+      // La data dell'incasso viene dal documento; quella sulla colonna vale solo
+      // all'indietro, per chi era stato segnato col pulsante-ponte prima di C4.
+      data_incasso: (chieste && chieste.get && (chieste.get(t.id) || {}).ultimoIncasso)
+        || (t.data_incasso ? String(t.data_incasso).slice(0, 10) : null),
     }));
   }
   return quota > 0
@@ -488,4 +554,4 @@ function righeDi(salvate, quota, tipo, chieste) {
     : [];
 }
 
-module.exports = { modale, modaleIncasso, js, quattroNumeri, righeDi };
+module.exports = { modale, modaleIncasso, js, jsIncasso, quattroNumeri, righeDi };

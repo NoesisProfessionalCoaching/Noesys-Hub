@@ -181,11 +181,24 @@ function totali(tranche, quotaTotale, documenti) {
  */
 function statoDi(t, documenti) {
   const salvato = (t && t.stato) || 'da_chiedere';
+  // `documenti`: mappa id della rata → il documento che la contiene. Le annullate
+  // non ci sono. Il valore può avere due forme, e le accetta tutte e due:
+  //   · una STRINGA con lo stato del documento ('emessa' = creata e ferma ·
+  //     'inviata' = partita) — com'era fino alla fetta C3;
+  //   · un OGGETTO {stato, saldata, ...} — dalla fetta C4, che porta anche
+  //     l'incasso. Così le pagine si sono spostate una per volta, senza che una
+  //     rimasta indietro smettesse di funzionare.
+  const grezzo = documenti && t && documenti.get ? documenti.get(t.id) : null;
+  const doc = typeof grezzo === 'string' ? { stato: grezzo } : grezzo;
+  // ⭐ C4 — «INCASSATA» SI RICAVA, come «chiesta»: la rata è incassata perché il
+  // documento che la contiene è stato saldato. Nessuna casella da spuntare, e
+  // togliendo un incasso sbagliato la rata torna indietro da sé.
+  if (doc && doc.saldata) return 'incassata';
+  // ⚠️ La colonna `stato` scritta a mano resta valida solo all'indietro: fino a
+  // C3 l'incasso si segnava lì col pulsante-ponte. Non la scrive più nessuno,
+  // ma chi ci si era già segnato incassato non deve tornare indietro.
   if (salvato === 'incassata') return 'incassata';
-  // `documenti`: mappa id della rata → stato del documento che la contiene
-  // ('emessa' = creata e ferma · 'inviata' = partita). Le annullate non ci sono.
-  const doc = documenti && t && documenti.get ? documenti.get(t.id) : null;
-  if (doc === 'inviata') return 'chiesta';
+  if (doc && doc.stato === 'inviata') return 'chiesta';
   if (doc) return 'da_mandare';
   return salvato === 'chiesta' ? 'da_chiedere' : salvato;
 }

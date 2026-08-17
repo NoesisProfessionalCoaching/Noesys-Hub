@@ -767,6 +767,43 @@ async function init() {
   await query(`ALTER TABLE proforma_righe ADD COLUMN IF NOT EXISTS tranche_id TEXT
                  REFERENCES tranche_progetto(id) ON DELETE SET NULL`);
   await query(`CREATE INDEX IF NOT EXISTS proforma_righe_tranche ON proforma_righe (tranche_id)`);
+
+  // ─── ⭐ FETTA C4 (18/08/2026) — L'INCASSO, E LA FATTURA CHE NE NASCE ───────
+  // Una riga per ogni soldo arrivato, appesa al DOCUMENTO e non alla rata: sotto
+  // una proforma ci stanno le sessioni di un mese, la rata di un progetto o
+  // quella di un pacchetto, ma i soldi arrivano sempre per un documento. Così il
+  // giro si costruisce una volta e vale per tutti e tre i casi.
+  // ⭐ PIÙ RIGHE SULLO STESSO DOCUMENTO: è quello che rende possibile l'acconto
+  // (Fase 4). Da qui si ricava se è saldato, invece di spuntarlo a mano.
+  // ⚠️ Qui gli importi hanno i CENTESIMI (regola del 27/07: sono gli incassi a
+  // portarli, perché è l'IVA a produrli). Le rate invece sono cifre intere.
+  // ⚠️ Niente ON DELETE: una proforma non si cancella (si annulla), e se un
+  // giorno qualcuno provasse, PostgreSQL lo fermerebbe perché ci sono dei soldi
+  // registrati sopra. È la protezione giusta, non un intralcio.
+  await query(`
+    CREATE TABLE IF NOT EXISTS incassi (
+      id           TEXT PRIMARY KEY,
+      proforma_id  TEXT NOT NULL REFERENCES proforme(id),
+      importo      NUMERIC(10,2) NOT NULL,
+      data_incasso DATE NOT NULL,
+      note         TEXT,
+      created_at   TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  await query(`CREATE INDEX IF NOT EXISTS incassi_proforma ON incassi (proforma_id)`);
+  // Il numero della fattura emessa a mano in SuperBill. Finché è vuoto su un
+  // documento saldato, quella fattura è ancora da fare — ed è l'unica cosa che
+  // impedisce a un incasso di finire in un vicolo cieco (decisione 12).
+  await query(`ALTER TABLE proforme ADD COLUMN IF NOT EXISTS fattura_numero TEXT`);
+  await query(`ALTER TABLE proforme ADD COLUMN IF NOT EXISTS fattura_data DATE`);
+  // ⭐ La scadenza si CONGELA nel documento quando nasce, come già l'indirizzo di
+  // chi riceve: da una rata prende la sua scadenza, da un mese di sessioni il
+  // giorno di emissione (rimessa diretta). Serve al promemoria «verifica se è
+  // arrivato», che parte dal giorno della scadenza (decisione di Germano, 18/08).
+  // Sui documenti nati prima resta vuota, e lì si ripiega sul giorno dell'invio.
+  await query(`ALTER TABLE proforme ADD COLUMN IF NOT EXISTS scadenza DATE`);
+  // ─────────────────────────────────────────────────────────────────────────
+
   // «Metà percorso» per i percorsi, come già per i progetti: l'Hub non può
   // dedurre quando un percorso sarà a metà, lo scrive il coach. Finché è vuota,
   // la rata legata a quel momento non ha una scadenza — e la pagina lo dice.

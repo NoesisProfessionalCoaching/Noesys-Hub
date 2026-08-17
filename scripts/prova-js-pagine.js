@@ -59,6 +59,28 @@ while ((m = re.exec(src)) !== null) {
   blocchi.push({ riga, codice: sciogliEscape(togliInterpolazioni(m[1])) });
 }
 
+// ⭐ 18/08 (C4) — IL JS CHE ARRIVA DA UN MODULO NON PASSAVA DA NESSUNA PROVA.
+// I blocchi qui sopra si estraggono da routes.js come TESTO: dove la pagina
+// scrive `${pianoUi.js(...)}` il controllo vede «null» e non guarda dentro. Ma
+// lì ci sono centinaia di righe di JavaScript vero — la finestrella del piano,
+// quella dell'incasso — e un errore di sintassi sarebbe arrivato nel browser
+// passando tutte le prove. È lo stesso buco che nel 15/08 aveva reso necessario
+// `prova-file`: una regola che non sta nella rete di sicurezza prima o poi salta.
+// ⚠️ Si chiamano con dei dati finti: qui si guarda la SINTASSI, non il risultato.
+const pianoUi = require('../server/piano-ui');
+const daiModuli = [
+  { nome: 'piano-ui.js — la finestrella del piano',
+    codice: () => pianoUi.js({ piani: [], dataFirma: '2026-01-01', quotaPerPagatore: true }) },
+  { nome: 'piano-ui.js — la finestrella dell’incasso', codice: () => pianoUi.jsIncasso() },
+];
+// ⚠️ Qui il codice arriva GIÀ come lo vedrà il browser: le interpolazioni sono
+// state risolte da JavaScript e gli escape sono già sciolti. Passarci sopra i
+// due traduttori di sopra — che servono a leggere il SORGENTE — lo rovinerebbe
+// e darebbe errori inventati (ci sono cascato scrivendolo).
+for (const d of daiModuli) {
+  blocchi.push({ riga: d.nome, codice: d.codice() });
+}
+
 let errori = 0;
 for (const b of blocchi) {
   n++;
@@ -66,10 +88,10 @@ for (const b of blocchi) {
   fs.writeFileSync(f, b.codice);
   try {
     execFileSync('node', ['--check', f], { stdio: 'pipe' });
-    console.log(`✓ blocco ${n} (pagina che comincia a riga ${b.riga}): ok`);
+    console.log(`✓ blocco ${n} (${typeof b.riga === "number" ? "pagina che comincia a riga " + b.riga : b.riga}): ok`);
   } catch (e) {
     errori++;
-    console.log(`✗ blocco ${n} (pagina che comincia a riga ${b.riga}) NON VALIDO:`);
+    console.log(`✗ blocco ${n} (${typeof b.riga === "number" ? "pagina che comincia a riga " + b.riga : b.riga}) NON VALIDO:`);
     console.log(String(e.stderr).split('\n').slice(0, 6).join('\n'));
   }
 }
