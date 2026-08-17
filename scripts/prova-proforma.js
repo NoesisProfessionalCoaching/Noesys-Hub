@@ -197,9 +197,9 @@ console.log('\n— LA MAIL A UN’AZIENDA NON DÀ DEL TU —');
   prova('⭐ non parla di «sessioni»: nomina la RATA, come la riga del documento',
     true, m.body.includes('per acconto (30%) — Progetto Flamingo Revolution.')
        && !m.body.includes('sessioni di coaching'));
-  // ⚠️ «2142,00» senza il punto: è la regola italiana (niente separatore sotto
-  // le 5 cifre), non un difetto di formattazione. Già annotata il 12/08.
-  prova('l’importo è quello da bonificare, ritenuta già tolta', true, m.body.includes('€ 2142,00'));
+  // 🔴 Dal 17/08 il punto delle migliaia c'è anche sotto le 5 cifre: decisione di
+  // Germano contro il default italiano. Ieri questa prova diceva «2142,00».
+  prova('l’importo è quello da bonificare, ritenuta già tolta', true, m.body.includes('€ 2.142,00'));
   prova('la norma resta, perché è la ragione per cui il documento esiste',
     true, m.body.includes('art. 6, comma 3, del DPR 633/1972'));
 }

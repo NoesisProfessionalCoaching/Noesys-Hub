@@ -47,12 +47,13 @@ console.log('\n— QUANDO UN PIANO NON SI PUÒ SALVARE —');
 {
   const buono = tr.pianoProposto(7000);
   prova('un piano che torna non ha problemi', [], tr.problemi(buono, 7000));
-  // ⚠️ Niente confronto sul testo formattato: in italiano un numero di 4 cifre
-  // NON prende il punto delle migliaia (7000, non 7.000), e una prova che si
-  // appoggia alla formattazione fallisce per il motivo sbagliato.
-  prova('se le tranche non sommano la quota, lo dice con tutti e due i numeri', true,
-    (m => m.includes('1000') && m.includes('7000'))(
-      tr.problemi([{ importo: 1000, innesco: 'firma', giorni: 30 }], 7000)[0]));
+  // 🔴 Dal 17/08 anche un numero di 4 cifre prende il punto: «7.000», non «7000»
+  // (decisione di Germano contro il default italiano). Prima questa prova
+  // evitava apposta di guardare la formattazione; adesso la guarda, perche e
+  // proprio quella la regola da proteggere.
+  prova('se le tranche non sommano la quota, lo dice con tutti e due i numeri, col punto',
+    'Le tranche sommano € 1.000 invece di € 7.000.',
+    tr.problemi([{ importo: 1000, innesco: 'firma', giorni: 30 }], 7000)[0]);
   prova('una tranche a zero si segnala', true,
     tr.problemi([{ importo: 7000, innesco: 'firma', giorni: 30 },
                  { importo: 0, innesco: 'fine', giorni: 30 }], 7000)

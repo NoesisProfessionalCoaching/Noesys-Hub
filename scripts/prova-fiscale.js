@@ -162,13 +162,26 @@ prova('un committente incompleto finisce nell’elenco come committente, non com
 prova('progetto che quadra e con partecipanti → nessuna anomalia',
   [], f.anomalie({ progetti: [{ id: 'p1', titolo: 'Flamingo', quota_totale: 10000,
     quota_committente: 7000, somma_coachee: 3000, n_partecipanti: 2 }] }));
-prova('progetto che non quadra → lo dice con le cifre in chiaro, scritte all’italiana',
-  // Nota: in italiano il separatore delle migliaia parte da cinque cifre, quindi
-  // «10.000,00» ma «9500,00». È la regola della lingua, non una dimenticanza, ed è
-  // la stessa che usa già il resto dell'Hub.
-  'Totale € 10.000,00, ma committente + coachee fanno € 9500,00 (mancano € 500,00)',
+prova('progetto che non quadra → lo dice con le cifre in chiaro, col punto delle migliaia',
+  // 🔴 CAMBIATA IL 17/08. Prima qui c'era scritto «9500,00» perché in italiano il
+  // separatore delle migliaia parte da cinque cifre — regola della lingua, non
+  // una dimenticanza. Germano ha deciso il contrario: «il punto deve esserci
+  // anche per le migliaia, su tutti i numeri sopra 1.000». Adesso lo mette
+  // `fiscale.euro()`, e passano tutti di lì.
+  'Totale € 10.000,00, ma committente + coachee fanno € 9.500,00 (mancano € 500,00)',
   f.anomalie({ progetti: [{ id: 'p1', titolo: 'Flamingo', quota_totale: 10000,
     quota_committente: 7000, somma_coachee: 2500, n_partecipanti: 2 }] })[0].messaggio);
+// ── COME SI SCRIVONO I NUMERI (17/08) ──────────────────────────────────────
+prova('⭐ il punto delle migliaia c’è anche sotto le cinque cifre',
+  ['€ 1.500,00', '€ 2.142,00', '€ 10.000,00'],
+  [1500, 2142, 10000].map(n => '€ ' + f.euro(n)));
+prova('sotto i mille non si inventa niente', '999,00', f.euro(999));
+prova('gli importi INTERI non prendono i centesimi ma prendono il punto',
+  ['2.500', '600', '10.000'], [2500, 600, 10000].map(f.euroIntero));
+prova('un importo intero si arrotonda, non si tronca', '1.001', f.euroIntero(1000.6));
+prova('niente e zero si scrivono come zero',
+  ['0,00', '0'], [f.euro(null), f.euroIntero(undefined)]);
+
 prova('progetto con una quota ma senza partecipanti → segnalato',
   'senza_partecipanti',
   f.anomalie({ progetti: [{ id: 'p1', titolo: 'X', quota_totale: 1000,

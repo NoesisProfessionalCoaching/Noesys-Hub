@@ -21,6 +21,10 @@
 // Modulo puro: niente database, niente rete. Si prova con dei numeri.
 // ═══════════════════════════════════════════════════════════════════════════
 
+// Anche `fiscale` è un modulo puro: si chiama solo per SCRIVERE i numeri allo
+// stesso modo dappertutto (il punto delle migliaia, 17/08).
+const fiscale = require('./fiscale');
+
 // I tre momenti che fanno scattare una tranche. `data` dice da dove si prende
 // il giorno di riferimento: sono tutti dati che stanno già sul progetto, tranne
 // «metà percorso», che l'Hub non ha modo di dedurre e che scrive il coach.
@@ -105,8 +109,8 @@ function problemi(righe, totale) {
   if (!righe || !righe.length) return ['Il piano non ha nessuna tranche.'];
   const somma = righe.reduce((s, r) => s + Math.round(Number(r.importo) || 0), 0);
   if (somma !== t) {
-    out.push('Le tranche sommano € ' + somma.toLocaleString('it-IT')
-      + ' invece di € ' + t.toLocaleString('it-IT') + '.');
+    out.push('Le tranche sommano € ' + fiscale.euroIntero(somma)
+      + ' invece di € ' + fiscale.euroIntero(t) + '.');
   }
   if (righe.some(r => Math.round(Number(r.importo) || 0) <= 0)) {
     out.push('C’è una tranche a zero: toglila, o dalle un importo.');

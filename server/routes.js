@@ -3294,7 +3294,7 @@ function homePage(d, req) {
       ? `<span style="color:#8a6d1e"> · ${c.nBozze === 1 ? '1 sessione ancora in bozza' : c.nBozze + ' sessioni ancora in bozza'}</span>`
       : '';
     const coda = c.n
-      ? `<strong style="color:var(--ink)">€ ${c.importo.toLocaleString('it-IT', { minimumFractionDigits: 2 })}</strong>`
+      ? `<strong style="color:var(--ink)">€ ${fiscale.euro(c.importo)}</strong>`
       : 'da approvare';
     return voce(`/dashboard/clients/${c.id}`,
       `${esc(c.name)} <span style="color:var(--hint);text-transform:capitalize">${mesi}</span>${bozze}`,
@@ -3314,7 +3314,7 @@ function homePage(d, req) {
     return voce('/dashboard/amministrazione/proforma',
       `${esc(p.cliente || 'Destinatario cancellato')} <span style="color:var(--hint)">· ${esc(p.numero)}</span>`,
       `<span style="color:${insiste ? '#a4342a' : 'var(--hint)'};${insiste ? 'font-weight:700' : ''}">${quanto}</span>
-       <strong style="color:var(--ink);margin-left:10px">€ ${Number(p.da_pagare || 0).toLocaleString('it-IT', { minimumFractionDigits: 2 })}</strong>`);
+       <strong style="color:var(--ink);margin-left:10px">€ ${fiscale.euro(p.da_pagare)}</strong>`);
   }));
 
   // Documentazione che manca, SOLO sui percorsi attivi (scelta di Germano 08/08).
@@ -3946,7 +3946,7 @@ Germano`;
         </div>` : `
         <div style="margin-top:10px">
           <button onclick="chiediPagamento()" id="pf-btn" class="btn btn-primary btn-sm">
-            Chiedi il pagamento — € ${maturatoTot.toLocaleString('it-IT', { minimumFractionDigits: 2 })}
+            Chiedi il pagamento — € ${fiscale.euro(maturatoTot)}
           </button>
           <div id="pf-error" style="display:none;margin-top:10px" class="flash-error"></div>
         </div>`);
@@ -3976,7 +3976,7 @@ Germano`;
     `${meseEsteso(m.mese)} · ${m.n} ${m.n === 1 ? 'sessione' : 'sessioni'}`).join(' — ');
 
   const rigaDaChiedere = rigaDue('Da chiedere', mat.nSessioni ? `
-      <strong style="font-size:16px">€ ${maturatoTot.toLocaleString('it-IT', { minimumFractionDigits: 2 })}</strong>
+      <strong style="font-size:16px">€ ${fiscale.euro(maturatoTot)}</strong>
       <div style="font-size:12px;color:var(--hint);text-transform:capitalize">${mesiTxt}</div>`
     : `<span style="font-size:13px;color:var(--hint)">niente in sospeso</span>`);
 
@@ -3985,7 +3985,7 @@ Germano`;
   const rigaUltima = !ultima ? '' : rigaDue('Ultima proforma', `
       <a href="/dashboard/proforma/${ultima.id}/pdf" target="_blank" style="font-weight:700;color:var(--blue);text-decoration:none">n. ${esc(ultima.numero)}</a>
       <span style="font-size:13px;color:var(--muted);margin-left:8px">${ultima.data_emissione ? itDate(ultima.data_emissione) : ''}</span>
-      <span style="font-size:13px;margin-left:8px">€ ${Number(ultima.da_pagare).toLocaleString('it-IT', { minimumFractionDigits: 2 })}</span>
+      <span style="font-size:13px;margin-left:8px">€ ${fiscale.euro(ultima.da_pagare)}</span>
       <span class="badge" style="background:${stU.bg};color:${stU.c};margin-left:8px">${stU.label}</span>
       ${proforme.length > 1 ? `<div style="font-size:12px;color:var(--hint)">altre ${proforme.length - 1} ${proforme.length - 1 === 1 ? 'proforma' : 'proforma'} prima di questa</div>` : ''}`);
 
@@ -4047,16 +4047,16 @@ Germano`;
       // ⚠️ PONTE fino alla fetta C3, come sulla scheda del progetto: «chiesta»
       // si accenderà da sola quando partirà la proforma della rata.
       const comando = (stato === 'da_chiedere')
-        ? `<button onclick="chiediRata('${t.id}','${esc(t.etichetta)}, \u20ac ${imp.toLocaleString('it-IT')}')" class="btn btn-primary btn-sm">Chiedi il pagamento</button>`
+        ? `<button onclick="chiediRata('${t.id}','${esc(t.etichetta)}, \u20ac ${fiscale.euroIntero(imp)}')" class="btn btn-primary btn-sm">Chiedi il pagamento</button>`
         : (stato === 'da_mandare')
         ? `<a href="/dashboard/amministrazione/proforma" class="btn btn-primary btn-sm">Rileggi e manda</a>`
         : (stato === 'incassata')
         ? `<span style="font-size:11.5px;color:var(--hint)">${t.data_incasso ? 'il ' + itDate(t.data_incasso) : ''}</span>
            <button onclick="segnaStato('${t.id}','da_chiedere')" class="btn btn-neutral btn-sm" title="Torna indietro">Annulla</button>`
-        : `<button onclick="apriIncasso('${t.id}','${esc(t.etichetta)}, € ${imp.toLocaleString('it-IT')}')" class="btn btn-neutral btn-sm">È arrivato</button>`;
+        : `<button onclick="apriIncasso('${t.id}','${esc(t.etichetta)}, € ${fiscale.euroIntero(imp)}')" class="btn btn-neutral btn-sm">È arrivato</button>`;
       return `<tr>
           <td>${esc(t.etichetta)}${perc !== null ? ` <span style="font-size:11px;color:var(--hint)">${perc}%</span>` : ''}</td>
-          <td style="white-space:nowrap">€ ${imp.toLocaleString('it-IT')}</td>
+          <td style="white-space:nowrap">€ ${fiscale.euroIntero(imp)}</td>
           <td style="font-size:12px;white-space:nowrap;color:${scad ? 'var(--ink)' : 'var(--hint)'}">${scad ? itDate(scad) : '—'}</td>
           <td style="white-space:nowrap"><span class="badge" style="background:${st.bg};color:${st.c}">${st.label}</span></td>
           <td style="text-align:right;white-space:nowrap">${comando}</td>
@@ -4164,7 +4164,7 @@ Germano`;
         <thead><tr><th>Importo</th><th>Tipo</th><th>Data</th><th>Stato</th><th>Note</th></tr></thead>
         <tbody>
           ${payments.map(p => `<tr>
-            <td><strong>€ ${Number(p.importo).toLocaleString('it-IT',{minimumFractionDigits:2})}</strong></td>
+            <td><strong>€ ${fiscale.euro(p.importo)}</strong></td>
             <td style="font-size:12px">${esc(p.tipo)}</td>
             <td style="font-size:12px;color:#aaa">${p.data_pagamento ? itDate(p.data_pagamento) : '—'}</td>
             <td>${p.stato==='ricevuto' ? `<span class="badge badge-active">Incassato</span>` : `<span class="badge badge-inactive">Da incassare</span>`}</td>
@@ -4205,11 +4205,11 @@ Germano`;
   const totChiesto    = sommaStato('chiesto');
   const totIncassato  = sommaStato('incassato');
   const numeroTitolo = (etichetta, valore, colore) => valore <= 0 ? '' :
-    ` · ${etichetta}: <strong style="color:${colore}">€ ${valore.toLocaleString('it-IT',{minimumFractionDigits:2})}</strong>`;
+    ` · ${etichetta}: <strong style="color:${colore}">€ ${fiscale.euro(valore)}</strong>`;
   const paymentsHtml = sezione(
     `<h2 style="margin:0">Amministrazione
       <span style="font-size:12px;font-weight:400;color:#aaa;margin-left:10px">
-        Da chiedere: <strong style="color:#1A5280">€ ${totDaChiedere.toLocaleString('it-IT',{minimumFractionDigits:2})}</strong>
+        Da chiedere: <strong style="color:#1A5280">€ ${fiscale.euro(totDaChiedere)}</strong>
         ${numeroTitolo('Chiesto', totChiesto, '#D8AE2E')}
         ${numeroTitolo('Incassato', totIncassato, '#4F8B73')}
       </span>
@@ -5688,7 +5688,7 @@ function anomaliePage(anomalie, conteggi, req) {
 // proprio niente: in quel caso lo dice, invece di lasciare la pagina bianca.
 // ═══════════════════════════════════════════════════════════════════════════
 function proformaPage(daChiedere, proforme, req) {
-  const eur = n => '€ ' + Number(n).toLocaleString('it-IT', { minimumFractionDigits: 2 });
+  const eur = n => '€ ' + fiscale.euro(n);
 
   const passo = (n, titolo, sottotitolo, corpo) => `
     <section style="margin-bottom:26px">
@@ -6591,7 +6591,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
   // Senza il valore del progetto non c'è niente da riepilogare: i quattro numeri
   // restano nascosti e la scheda lo dice.
   const ammQuoteSet = qTot != null && qTot > 0;
-  const eur = n => Number(n || 0).toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const eur = fiscale.euro;
 
   // ── IL PIANO DI PAGAMENTO DEL COMMITTENTE (12/08) ───────────────────────
   // Un committente non paga il totale in una volta. Finché non c'è un piano,
@@ -7060,7 +7060,10 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
     }
 
     // ── Fase 3B: quota del progetto ──
-    function euro(n) { return n.toLocaleString('it-IT', { minimumFractionDigits:2, maximumFractionDigits:2 }); }
+    // Gemella di fiscale.euro() per il BROWSER (il modulo del server non si puo
+    // chiamare qui). useGrouping always = il punto delle migliaia anche sotto le
+    // 5 cifre, scelta di Germano del 17/08.
+    function euro(n) { return Number(n||0).toLocaleString('it-IT', { minimumFractionDigits:2, maximumFractionDigits:2, useGrouping:'always' }); }
 
     // ── I quattro numeri in cima ──
     // ⚠️ Qui si aggiorna SOLO «Concordato», che è la quota totale scritta nel
@@ -7570,7 +7573,7 @@ function meseEsteso(aaaaMm) {
 // cifra che finirà nel contratto si legge senza doverla interpretare.
 function prezzoPercorso(p) {
   if (!p.prezzo) return '<span style="color:#aaa">—</span>';
-  const cifra = `€ ${Number(p.prezzo).toLocaleString('it-IT', { minimumFractionDigits: 2 })}`;
+  const cifra = `€ ${fiscale.euro(p.prezzo)}`;
   if (p.modalita === 'Pacchetto') {
     const n = Number(p.n_sessioni_previste) || 0;
     return `${cifra}<br><span style="font-size:11px;color:#aaa">pacchetto${n ? ` di ${n} sessioni` : ''}</span>`;

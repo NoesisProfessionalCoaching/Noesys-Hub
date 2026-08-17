@@ -26,6 +26,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 const tranche = require('./tranche');
+const fiscale = require('./fiscale');
 
 /**
  * Il disegno della finestrella.
@@ -160,7 +161,12 @@ function js(o) {
       return null;
     }
     function esc2(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
-    function eur2(n) { return (Math.round(Number(n)||0)).toLocaleString('it-IT'); }
+    // ⚠️ Gemella di fiscale.euroIntero(), ma per il BROWSER: qui il modulo del
+    // server non si puo chiamare. Stesse opzioni, cosi lo stesso importo si
+    // scrive uguale in pagina e nei messaggi che arrivano dal server.
+    // useGrouping always = il punto delle migliaia anche sotto le 5 cifre
+    // (scelta di Germano del 17/08, contro il default italiano).
+    function eur2(n) { return (Math.round(Number(n)||0)).toLocaleString('it-IT', { useGrouping: 'always' }); }
 
     // ═══════════════════════════════════════════════════════════════════════
     // LA TABELLA — SOLA LETTURA. Nessun campo da scrivere: quelli stanno tutti
@@ -444,7 +450,7 @@ function js(o) {
  * @param {boolean} conPiano  se esiste già un piano salvato
  */
 function quattroNumeri(t4, conPiano) {
-  const eur = n => Number(n || 0).toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const eur = fiscale.euro;
   const n = (label, id, valore, bg, cLab, cVal) => `
           <div class="amm-num" style="background:${bg};border-radius:8px;padding:9px 11px">
             <div style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:${cLab}">${label}</div>

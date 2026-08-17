@@ -374,8 +374,38 @@ function centesimi(v) {
 // Gli importi si scrivono all'italiana — 10.000,00 e non 10000.00 — anche dentro
 // i messaggi. Chi legge sta confrontando cifre, e un punto al posto della virgola
 // nelle migliaia è il genere di cosa che fa sbagliare un numero a colpo d'occhio.
+// ═══════════════════════════════════════════════════════════════════════════
+// COME SI SCRIVONO I NUMERI — in un posto solo (17/08/2026)
+//
+// 🔴 Germano: «il punto deve essere inserito anche per le migliaia, su tutti i
+// numeri superiori a 1.000». Non era un guasto: `toLocaleString('it-IT')` segue
+// la regola CLDR italiana, che sotto le 5 cifre il separatore NON lo mette —
+// quindi usciva «€ 2142,00». È una scelta di prodotto contro il default, e si
+// ottiene con `useGrouping: 'always'`.
+//
+// ⭐ Erano VENTI i punti che formattavano numeri per conto loro. Correggerli uno
+// per uno voleva dire lasciarne indietro qualcuno e ritrovarsi lo stesso importo
+// scritto in due modi in due pagine — esattamente il difetto che abbiamo passato
+// giorni a togliere. Quindi: due funzioni, e tutti passano di qui.
+// ⚠️ Le pagine hanno anche del JS che gira nel BROWSER e non può chiamare questo
+// modulo: là le stesse due funzioni sono in `piano-ui.js`, con lo stesso nome e
+// le stesse opzioni. Se un giorno cambia la regola, cambia in due punti soli.
+// ═══════════════════════════════════════════════════════════════════════════
+const GRUPPI = { useGrouping: 'always' };
+
+/** Un importo con i centesimi: «€ 2.142,00». */
 function euro(v) {
-  return Number(v || 0).toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return Number(v || 0).toLocaleString('it-IT',
+    { minimumFractionDigits: 2, maximumFractionDigits: 2, ...GRUPPI });
+}
+
+/**
+ * Un importo INTERO, senza centesimi: «2.500».
+ * Serve alle rate, che per decisione del 27/07 sono cifre intere: scriverci
+ * «,00» dietro darebbe una precisione che quel numero non ha.
+ */
+function euroIntero(v) {
+  return Math.round(Number(v) || 0).toLocaleString('it-IT', GRUPPI);
 }
 
 /**
@@ -466,5 +496,5 @@ module.exports = {
   daCliente, daCommittente,
   PARAMETRI, TRATTAMENTI, arrotonda, calcolaDocumento, passaggiDocumento,
   datiMancantiEmittente,
-  TIPI_ANOMALIA, quoteProgetto, anomalie, anomaliePerSoggetto, euro,
+  TIPI_ANOMALIA, quoteProgetto, anomalie, anomaliePerSoggetto, euro, euroIntero,
 };
