@@ -107,6 +107,41 @@ console.log('\n— LA SCADENZA DEL DOCUMENTO (il difetto trovato da Germano il 1
     inc.scadenzaDocumento(flamingo, { innesco: 'meta', giorni: 30 }, { data_inizio: '2026-07-23' }));
 }
 
+console.log('\n— IL PROMEMORIA «VERIFICA SE È ARRIVATO» (C4b) —');
+{
+  const OGGI = '2026-08-25';
+  const partita = { stato: 'inviata', da_pagare: 2550, incassato: 0 };
+
+  prova('scaduta il 22, oggi è il 25: si verifica', true,
+    inc.daVerificare(partita, '2026-08-22', OGGI));
+  prova('scade oggi: si verifica (chi paga a rimessa diretta compare subito)', true,
+    inc.daVerificare(partita, OGGI, OGGI));
+  // ⭐ La decisione di Germano: PRIMA della scadenza non c'è niente da chiedere.
+  prova('scade fra una settimana: NON si verifica', false,
+    inc.daVerificare(partita, '2026-09-01', OGGI));
+  prova('mai mandata: non si verifica (lo dice già «Proforma da mandare»)', false,
+    inc.daVerificare({ ...partita, stato: 'emessa' }, '2026-08-22', OGGI));
+  prova('annullata: non si verifica', false,
+    inc.daVerificare({ ...partita, stato: 'annullata' }, '2026-08-22', OGGI));
+  prova('già saldata: sparisce da sola', false,
+    inc.daVerificare({ ...partita, incassato: 2550 }, '2026-08-22', OGGI));
+  // Un acconto NON fa sparire la riga: manca ancora qualcosa.
+  prova('acconto parziale: resta da verificare', true,
+    inc.daVerificare({ ...partita, incassato: 1000 }, '2026-08-22', OGGI));
+  // ⚠️ Scadenza sconosciuta = nessun promemoria: non si può dire in ritardo una
+  // cosa che un termine non ce l'ha ancora.
+  prova('scadenza non ancora nota: nessun promemoria', false,
+    inc.daVerificare(partita, null, OGGI));
+
+  prova('i giorni di ritardo', 3, inc.giorniDiRitardo('2026-08-22', OGGI));
+  prova('quanti giorni prima della scadenza', -7, inc.giorniDiRitardo('2026-09-01', OGGI));
+  prova('senza scadenza non c’è ritardo', null, inc.giorniDiRitardo(null, OGGI));
+
+  prova('le parole: scade oggi', 'scade oggi', inc.daQuantoScaduta(0));
+  prova('le parole: ieri', 'scaduta ieri', inc.daQuantoScaduta(1));
+  prova('le parole: da N giorni', 'scaduta da 12 giorni', inc.daQuantoScaduta(12));
+}
+
 console.log('\n— LA RATA DENTRO IL DOCUMENTO —');
 {
   const rata = { id: 'r1', stato: 'da_chiedere' };

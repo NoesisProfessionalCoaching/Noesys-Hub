@@ -121,6 +121,57 @@ function scadenzaDocumento(pf, rata, riferimento) {
   return null;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐ FETTA C4b — IL PROMEMORIA «VERIFICA SE È ARRIVATO»
+//
+// ✅ DECISIONE DI GERMANO, 18/08: **il promemoria parte DALLA SCADENZA**, non
+// dall'invio. Su una rata a 30 giorni partire subito vorrebbe dire trenta giorni
+// di promemoria quotidiano per una cosa che in ritardo non è — e un avviso che
+// non chiede niente insegna a ignorare gli avvisi.
+// ⚠️ Chi paga a rimessa diretta (le sessioni, la quota di un partecipante) ha la
+// scadenza il giorno stesso: per loro compare subito, ed è giusto così.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const GIORNI_INSISTE = 7;   // da qui in su la riga alza la voce, come le proforma ferme
+
+/**
+ * Da quanti giorni un documento è scaduto. Negativo non esiste: prima della
+ * scadenza non c'è nessun ritardo, e infatti la riga non compare proprio.
+ * @param {string} scadenza 'AAAA-MM-GG'
+ * @param {string} oggiIso  il giorno ITALIANO (mai quello UTC del server: a
+ *   mezzanotte e mezza a Roma in UTC è ancora ieri).
+ * @returns {number|null} null se la scadenza non si sa.
+ */
+function giorniDiRitardo(scadenza, oggiIso) {
+  const s = String(scadenza || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s) || !/^\d{4}-\d{2}-\d{2}$/.test(oggiIso || '')) return null;
+  return Math.round((Date.parse(oggiIso) - Date.parse(s)) / 86400000);
+}
+
+/**
+ * Questo documento va messo in home fra le cose da verificare?
+ * Tre condizioni, tutte necessarie: è **partito** (un documento fermo lo dice
+ * già un altro gruppo, e chiederne l'incasso sarebbe assurdo) · **non è
+ * saldato** · **la scadenza è arrivata**.
+ * ⚠️ Scadenza sconosciuta = niente promemoria. È il caso di una rata legata a
+ * «metà percorso» prima che quella data esista: non si può dire che è in ritardo
+ * qualcosa che non ha ancora un termine.
+ */
+function daVerificare(pf, scadenza, oggiIso) {
+  if (!pf || pf.stato !== 'inviata') return false;
+  if (saldata(pf)) return false;
+  const g = giorniDiRitardo(scadenza, oggiIso);
+  return g !== null && g >= 0;
+}
+
+/** Come si scrive quel ritardo, in parole. Qui, così è identico ovunque. */
+function daQuantoScaduta(giorni) {
+  if (giorni === null || giorni === undefined) return '';
+  if (giorni <= 0) return 'scade oggi';
+  if (giorni === 1) return 'scaduta ieri';
+  return `scaduta da ${giorni} giorni`;
+}
+
 /**
  * Cosa non torna in un incasso che si sta per registrare. Vuoto = si può salvare.
  * @param {object} o { importo, data, residuo }
@@ -161,6 +212,37 @@ const SQL_COLONNE = `r.tranche_id, pf.id AS proforma_id, pf.numero, pf.stato,
        COALESCE((SELECT SUM(i.importo) FROM incassi i WHERE i.proforma_id = pf.id), 0) AS incassato,
        (SELECT MAX(i.data_incasso) FROM incassi i WHERE i.proforma_id = pf.id) AS ultimo_incasso`;
 
+/**
+ * ⭐ La RATA che un documento contiene, con le date da cui si conta la sua
+ * scadenza. La chiedono in due — la pagina Proforma e la home (il promemoria) —
+ * e scritta due volte sarebbero due occasioni di divergere.
+ * Le date sono quelle del progetto o, per un pacchetto, quelle del percorso.
+ */
+const SQL_RATA_DEL_DOCUMENTO = `
+  SELECT r.proforma_id, t.innesco, t.giorni,
+         COALESCE(prj.data_inizio, pc.data_inizio) AS data_inizio,
+         COALESCE(prj.data_meta,   pc.data_meta)   AS data_meta,
+         COALESCE(prj.data_fine,   pc.data_fine)   AS data_fine
+    FROM proforma_righe r
+    JOIN tranche_progetto t ON t.id = r.tranche_id
+    LEFT JOIN partecipazioni pa ON pa.id = t.partecipazione_id
+    LEFT JOIN progetti prj ON prj.id = COALESCE(t.progetto_id, pa.progetto_id)
+    LEFT JOIN percorsi pc  ON pc.id = t.percorso_id
+   WHERE r.tranche_id IS NOT NULL`;
+
+/**
+ * Scrive `scadenzaVera` su ogni documento, con la regola di
+ * `scadenzaDocumento()`. `righeRate` sono le righe di SQL_RATA_DEL_DOCUMENTO.
+ */
+function conScadenza(proforme, righeRate) {
+  const perProforma = new Map((righeRate || []).map(r => [r.proforma_id, r]));
+  (proforme || []).forEach(p => {
+    const r = perProforma.get(p.id);
+    p.scadenzaVera = scadenzaDocumento(p, r ? { innesco: r.innesco, giorni: r.giorni } : null, r);
+  });
+  return proforme;
+}
+
 function mappaRate(rows) {
   const m = new Map();
   (rows || []).forEach(r => {
@@ -183,4 +265,6 @@ function mappaRate(rows) {
 module.exports = {
   cent, euro, sommaIncassi, statoPagamento, residuo, saldata,
   daFatturare, dataChiudeIlConto, scadenzaDocumento, problemi, mappaRate, SQL_COLONNE,
+  GIORNI_INSISTE, giorniDiRitardo, daVerificare, daQuantoScaduta,
+  SQL_RATA_DEL_DOCUMENTO, conScadenza,
 };

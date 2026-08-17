@@ -253,6 +253,32 @@ async function mostraHome(req, res) {
       ...pf, giorni: proforma.giorniFerma(pf, oggiIt),
     }));
 
+    // ── ⭐ FETTA C4b — «Verifica se è arrivato» (18/08) ────────────────────────
+    // Le proforma PARTITE e non ancora saldate, dal giorno della loro scadenza
+    // (decisione di Germano). Chiude il giro cominciato con la Fase 3: chiedi →
+    // mandi → **verifichi** → fatturi. Senza questa riga una proforma spedita e
+    // mai pagata non la nominava più nessuno.
+    // ⚠️ Il documento porta con sé quanto è già stato incassato: un acconto non
+    // fa sparire la riga, la fa dire quanto manca ancora.
+    const attesaRows = await db.query(
+      `SELECT pf.id, pf.numero, pf.stato, pf.scadenza, pf.data_emissione, pf.da_pagare,
+              COALESCE(pf.destinatario_dati->>'denominazione', c.name, k.denominazione) AS cliente,
+              COALESCE((SELECT SUM(i.importo) FROM incassi i
+                         WHERE i.proforma_id = pf.id), 0) AS incassato
+         FROM proforme pf LEFT JOIN clients c ON c.id = pf.client_id
+         LEFT JOIN committenti k ON k.id = pf.committente_id
+        WHERE pf.stato = 'inviata'`);
+    const rateAttesa = await db.query(incassi.SQL_RATA_DEL_DOCUMENTO);
+    const daVerificare = incassi.conScadenza(attesaRows.rows, rateAttesa.rows)
+      .filter(pf => incassi.daVerificare(pf, pf.scadenzaVera, oggiIt))
+      .map(pf => ({
+        ...pf,
+        giorni: incassi.giorniDiRitardo(pf.scadenzaVera, oggiIt),
+        manca: incassi.residuo(pf),
+        acconto: incassi.sommaIncassi([{ importo: pf.incassato }]),
+      }))
+      .sort((a, b) => b.giorni - a.giorni);   // i più vecchi in cima
+
     // ── Pagamenti da chiedere (Fase 3, Tappa 3) ───────────────────────────────
     // Il promemoria della chiusura del mese. Non è una mail e non è un lavoro
     // notturno: è una riga in più qui, che compare dal primo lunedì del mese e
@@ -283,6 +309,7 @@ async function mostraHome(req, res) {
       // distinguono per una lettera sono un errore in attesa di succedere.
       pagamentiDaChiedere: daChiedereRighe,
       proformeFerme,
+      incassiDaVerificare: daVerificare,
       nIndividuali: ind.rows[0].n,
       nProgetti: prog.rows[0].n, nProgettiAttivi: prog.rows[0].attivi,
       nCommittenti: comm.rows[0].n,
@@ -2196,22 +2223,8 @@ router.get('/dashboard/amministrazione/proforma', requireCoach, async (req, res)
     // la sua scadenza. Serve ai documenti nati PRIMA di C4a, che la casella
     // `scadenza` ce l'hanno vuota: senza questo, una rata a 30 giorni sembrava
     // scaduta il giorno dell'invio (segnalato da Germano sulla 2026/002).
-    const rate = await db.query(`
-      SELECT r.proforma_id, t.innesco, t.giorni,
-             COALESCE(prj.data_inizio, pc.data_inizio) AS data_inizio,
-             COALESCE(prj.data_meta,   pc.data_meta)   AS data_meta,
-             COALESCE(prj.data_fine,   pc.data_fine)   AS data_fine
-        FROM proforma_righe r
-        JOIN tranche_progetto t ON t.id = r.tranche_id
-        LEFT JOIN partecipazioni pa ON pa.id = t.partecipazione_id
-        LEFT JOIN progetti prj ON prj.id = COALESCE(t.progetto_id, pa.progetto_id)
-        LEFT JOIN percorsi pc  ON pc.id = t.percorso_id
-       WHERE r.tranche_id IS NOT NULL`);
-    const ratePerProforma = new Map(rate.rows.map(r => [r.proforma_id, r]));
-    for (const p of pfr.rows) {
-      const r = ratePerProforma.get(p.id);
-      p.scadenzaVera = incassi.scadenzaDocumento(p, r ? { innesco: r.innesco, giorni: r.giorni } : null, r);
-    }
+    const rate = await db.query(incassi.SQL_RATA_DEL_DOCUMENTO);
+    incassi.conScadenza(pfr.rows, rate.rows);
 
     // ⭐ C3b — le righe servono al TESTO della mail: una proforma che chiede una
     // rata non parla di «sessioni», e il testo deve nominare la rata. Si caricano
@@ -3478,6 +3491,26 @@ function homePage(d, req) {
        <strong style="color:var(--ink);margin-left:10px">€ ${fiscale.euro(p.da_pagare)}</strong>`);
   }));
 
+  // ⭐ C4b — «Verifica se è arrivato» (18/08). Sta SOPRA le proforma da mandare
+  // perché è ancora più avanti nella catena: quel documento è già partito, i
+  // soldi dovevano già esserci, e l'unica cosa che l'Hub non può sapere da solo
+  // è se sono arrivati davvero — la banca non la vede.
+  // La riga porta ad Amministrazione → Proforma, dove sta il pulsante «È
+  // arrivato» col suo contesto (quanto manca, gli acconti già registrati): una
+  // riga che chiede di fare una cosa porta dove la si fa, come le altre qui.
+  // Da GIORNI_INSISTE in su alza la voce, come le proforma ferme.
+  const gVerificare = gruppo('Verifica se è arrivato', (d.incassiDaVerificare || []).map(p => {
+    const insiste = p.giorni !== null && p.giorni >= incassi.GIORNI_INSISTE;
+    const quanto  = incassi.daQuantoScaduta(p.giorni);
+    // Un acconto non fa sparire la riga: la fa dire quanto manca ancora.
+    const parziale = p.acconto > 0
+      ? `<span style="color:var(--hint)"> · acconto di € ${fiscale.euro(p.acconto)} ricevuto</span>` : '';
+    return voce('/dashboard/amministrazione/proforma',
+      `${esc(p.cliente || 'Destinatario cancellato')} <span style="color:var(--hint)">· ${esc(p.numero)}</span>${parziale}`,
+      `<span style="color:${insiste ? '#a4342a' : 'var(--hint)'};${insiste ? 'font-weight:700' : ''}">${quanto}</span>
+       <strong style="color:var(--ink);margin-left:10px">€ ${fiscale.euro(p.manca)}</strong>`);
+  }));
+
   // Documentazione che manca, SOLO sui percorsi attivi (scelta di Germano 08/08).
   // I due casi restano distinti perché l'azione è diversa: «non arrivata» aspetta
   // il cliente, «ancora in bianco» aspetta il coach — è il caso di chi compila su
@@ -3485,7 +3518,7 @@ function homePage(d, req) {
   const gDocumenti = gruppo('Documentazione da completare', d.documenti.map(x => voce(
     `/dashboard/clients/${x.id}`, esc(x.name), x.stato)));
 
-  const attenzione = [gAppuntamenti, gFerme, gDaChiedere, gBozze, gAnagrafiche, gChiudere, gDocumenti, gAzioni, gLead].filter(Boolean).join('');
+  const attenzione = [gAppuntamenti, gVerificare, gFerme, gDaChiedere, gBozze, gAnagrafiche, gChiudere, gDocumenti, gAzioni, gLead].filter(Boolean).join('');
 
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub</title>${baseStyle()}</head><body>
   ${headerNoesys({})}
