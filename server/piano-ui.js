@@ -195,6 +195,8 @@ function js(o) {
           // arriva gia RICAVATO dal server: chiesta = sta in una proforma viva.
           var comando = t.stato === 'da_chiedere'
             ? '<button onclick="chiediRata(\\'' + t.id + '\\',\\'' + esc2(t.etichetta) + ', € ' + eur2(t.importo) + '\\')" class="btn btn-primary btn-sm">Chiedi il pagamento</button>'
+            : t.stato === 'da_mandare'
+            ? '<a href="/dashboard/amministrazione/proforma" class="btn btn-primary btn-sm">Rileggi e manda</a>'
             : t.stato === 'incassata'
             ? '<span style="font-size:11.5px;color:var(--hint)">' + (t.data_incasso ? 'il ' + itData(t.data_incasso) : '') + '</span>'
               + ' <button onclick="segnaStato(\\'' + t.id + '\\',\\'da_chiedere\\')" class="btn btn-neutral btn-sm" title="Torna indietro">Annulla</button>'
@@ -415,8 +417,15 @@ function js(o) {
         var r = await fetch('/dashboard/tranche/' + id + '/proforma', { method: 'POST' });
         var d = await r.json().catch(function () { return {}; });
         if (!r.ok) { alert(d.error || ('Errore ' + r.status)); return; }
+        // ⭐ 17/08 — il documento e CREATO, non mandato. Germano, provando:
+        // «non c e stato nessun passaggio di verifica e invio mail… non ho
+        // ricevuto la mail». Il passaggio esiste, ma nessuno lo portava li.
+        // Adesso il PDF si apre in una scheda a parte e la pagina VA dove si
+        // rilegge e si manda: una riga che chiede di fare una cosa deve portare
+        // dove la si fa.
         window.open('/dashboard/proforma/' + d.id + '/pdf', '_blank');
-        location.reload();
+        alert('Creata la proforma n. ' + d.numero + '.\\n\\nNon e ancora partita: adesso va riletta e mandata.');
+        window.location = '/dashboard/amministrazione/proforma';
       } catch (ex) { alert('Errore di rete: ' + ex.message); }
     }
     function chiudiIncasso() { document.getElementById('modal-incasso').style.display = 'none'; }

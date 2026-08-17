@@ -83,21 +83,29 @@ console.log('\n— A CHE PUNTO È UNA RATA —');
     { id: 'b', importo: 2000, stato: 'da_chiedere' },
     { id: 'c', importo: 3000, stato: 'incassata' },
   ];
-  const chieste = new Set(['b', 'c']);
-  prova('senza l’elenco delle proforma si ripiega sulla colonna salvata',
+  // La mappa dice, per ogni rata, in che stato e il documento che la contiene.
+  const doc = new Map([['b', 'inviata'], ['c', 'inviata']]);
+  prova('senza la mappa si ripiega sulla colonna salvata',
     'da_chiedere', tr.statoDi(rate[1]));
-  prova('una rata dentro una proforma viva è CHIESTA, anche se il salvato dice altro',
-    'chiesta', tr.statoDi(rate[1], chieste));
-  prova('⭐ incassata VINCE su chiesta: una rata incassata sta ancora nella sua proforma',
-    'incassata', tr.statoDi(rate[2], chieste));
+  prova('una rata dentro una proforma MANDATA è chiesta',
+    'chiesta', tr.statoDi(rate[1], doc));
+  prova('🔴 una rata dentro una proforma solo CREATA è «da mandare», NON chiesta',
+    'da_mandare', tr.statoDi(rate[1], new Map([['b', 'emessa']])));
+  prova('⭐ incassata VINCE su tutto: sta ancora dentro la sua proforma',
+    'incassata', tr.statoDi(rate[2], doc));
   prova('una rata che non sta in nessuna proforma resta da chiedere',
-    'da_chiedere', tr.statoDi(rate[0], chieste));
+    'da_chiedere', tr.statoDi(rate[0], doc));
+  prova('una «chiesta» salvata senza documento non regge: comanda il documento',
+    'da_chiedere', tr.statoDi({ id: 'z', stato: 'chiesta' }, new Map()));
   prova('i quattro numeri seguono la stessa regola',
     { concordato: 6000, daChiedere: 1000, chiesto: 2000, incassato: 3000 },
-    tr.totali(rate, 6000, chieste));
-  prova('⭐ annullata la proforma (l’id esce dall’elenco), la rata torna da chiedere DA SOLA',
+    tr.totali(rate, 6000, doc));
+  prova('⭐ «da mandare» sta dentro DA CHIEDERE: a chi paga non li ha chiesti nessuno',
     { concordato: 6000, daChiedere: 3000, chiesto: 0, incassato: 3000 },
-    tr.totali(rate, 6000, new Set(['c'])));
+    tr.totali(rate, 6000, new Map([['b', 'emessa'], ['c', 'inviata']])));
+  prova('⭐ annullata la proforma (la rata esce dalla mappa), torna da chiedere DA SOLA',
+    { concordato: 6000, daChiedere: 3000, chiesto: 0, incassato: 3000 },
+    tr.totali(rate, 6000, new Map([['c', 'inviata']])));
 }
 
 console.log(`\n${falliti ? '✗' : '✓'} ${falliti} prove fallite.`);

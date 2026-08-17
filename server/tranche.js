@@ -55,7 +55,14 @@ const PROPOSTE = {
 // quando arriverà non ci sarà niente da cambiare in questa parte.
 const STATI = {
   da_chiedere: { label: 'Da chiedere', bg: '#f4f7fa', c: '#6B7280' },
-  chiesta:     { label: 'Chiesta',     bg: '#fff8dc', c: '#7a5c00' },
+  // 🔴 17/08 — STATO NUOVO, e non è un dettaglio. Germano, provando: «l'acconto
+  // era segnato come richiesto, ma non c'è stato nessun passaggio di verifica e
+  // invio mail… io non ho ricevuto la mail». Aveva ragione: fra «non chiesto» e
+  // «chiesto» c'è un momento vero, in cui il documento esiste e non è partito.
+  // Chiamarlo «chiesta» è una bugia — e la sua decisione del 15/08 era chiara:
+  // «chiesta» si accende QUANDO PARTE LA MAIL.
+  da_mandare:  { label: 'Da mandare',  bg: '#fff8dc', c: '#7a5c00' },
+  chiesta:     { label: 'Chiesta',     bg: '#fdf6ec', c: '#b7791f' },
   incassata:   { label: 'Incassata',   bg: '#d1fae5', c: '#065f46' },
 };
 
@@ -139,13 +146,17 @@ function scadenza(tr, progetto) {
  * Se le tranche non arrivano a coprirla, è un'informazione — vuol dire che un
  * pagatore non ha ancora un piano — e va vista, non nascosta.
  */
-function totali(tranche, quotaTotale, chieste) {
+function totali(tranche, quotaTotale, documenti) {
   const somma = st => (tranche || [])
-    .filter(t => statoDi(t, chieste) === st)
+    .filter(t => statoDi(t, documenti) === st)
     .reduce((s, t) => s + (Number(t.importo) || 0), 0);
   return {
     concordato: Math.round(Number(quotaTotale) || 0),
-    daChiedere: somma('da_chiedere'),
+    // ⚠️ «Da mandare» sta dentro DA CHIEDERE, e non è una scorciatoia: quei soldi
+    // a chi paga non li ha ancora chiesti nessuno. Metterli sotto «Chiesto»
+    // sarebbe la stessa bugia dell'etichetta. I quattro numeri restano quattro
+    // (scelta di Germano del 12/08): è la RIGA a dire che manca un invio.
+    daChiedere: somma('da_chiedere') + somma('da_mandare'),
     chiesto:    somma('chiesta'),
     incassato:  somma('incassata'),
   };
@@ -164,11 +175,15 @@ function totali(tranche, quotaTotale, chieste) {
  * ⭐ Il regalo: annullare una proforma rimette la rata fra quelle da chiedere
  * **da sé**, senza una riga di codice in più — esattamente come per le sessioni.
  */
-function statoDi(t, chieste) {
+function statoDi(t, documenti) {
   const salvato = (t && t.stato) || 'da_chiedere';
   if (salvato === 'incassata') return 'incassata';
-  if (chieste && t && chieste.has && chieste.has(t.id)) return 'chiesta';
-  return salvato;
+  // `documenti`: mappa id della rata → stato del documento che la contiene
+  // ('emessa' = creata e ferma · 'inviata' = partita). Le annullate non ci sono.
+  const doc = documenti && t && documenti.get ? documenti.get(t.id) : null;
+  if (doc === 'inviata') return 'chiesta';
+  if (doc) return 'da_mandare';
+  return salvato === 'chiesta' ? 'da_chiedere' : salvato;
 }
 
 module.exports = { INNESCHI, STATI, pianoProposto, percentuale, problemi, scadenza, totali, statoDi };

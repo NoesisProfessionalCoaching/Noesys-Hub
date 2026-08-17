@@ -237,8 +237,12 @@ async function mostraHome(req, res) {
     // tre settimane. Chi decide cos'è «ferma» è `proforma.daMandare`.
     const fermeRows = await db.query(
       `SELECT pf.id, pf.numero, pf.data_emissione, pf.da_pagare, pf.drive_url, pf.stato,
-              c.id AS client_id, c.name AS cliente
+              c.id AS client_id,
+              -- ⚠️ 17/08: chi riceve puo essere un COMMITTENTE. Il nome si legge
+              -- dalla fotografia congelata nel documento, sempre giusta.
+              COALESCE(pf.destinatario_dati->>'denominazione', c.name, k.denominazione) AS cliente
          FROM proforme pf LEFT JOIN clients c ON c.id = pf.client_id
+         LEFT JOIN committenti k ON k.id = pf.committente_id
         WHERE pf.stato = 'emessa'
         ORDER BY pf.data_emissione, pf.anno, pf.progressivo`);
     const oggiIt = maturato.oggiRoma();
@@ -472,7 +476,7 @@ router.get('/dashboard/clients/:id', requireCoach, async (req, res) => {
       // ⭐ C3 — quali rate di questa persona sono GIÀ STATE CHIESTE. Non è una
       // colonna: è il fatto di stare dentro una proforma viva. Da qui esce sia
       // l'etichetta «Chiesta» sia il motivo per cui il pulsante sparisce.
-      db.query(`SELECT r.tranche_id
+      db.query(`SELECT r.tranche_id, pf.stato
                   FROM proforma_righe r
                   JOIN proforme pf ON pf.id = r.proforma_id
                   JOIN tranche_progetto t ON t.id = r.tranche_id
@@ -488,7 +492,10 @@ router.get('/dashboard/clients/:id', requireCoach, async (req, res) => {
       appuntamenti: app,
       tranchePercorsi: trr.rows,
       tranchePartecipazioni: trp.rows,
-      rateChieste: new Set(trc.rows.map(r => r.tranche_id)),
+      // ⭐ 17/08 — non un elenco di «chieste» ma una MAPPA rata → stato del suo
+      // documento: fra «creata» e «mandata» c'e un momento vero, e chiamarli
+      // tutti e due «chiesta» era la bugia che Germano ha visto subito.
+      rateChieste: new Map(trc.rows.map(r => [r.tranche_id, r.stato])),
     }));
   } catch (err) {
     console.error(err);
@@ -2529,14 +2536,14 @@ router.get('/dashboard/progetti/:id', requireCoach, async (req, res) => {
     // ⭐ C3 — quali rate di questo progetto sono già dentro una proforma viva.
     // È da qui che esce «Chiesta», e non da una colonna scritta a mano.
     const chieste = await db.query(`
-      SELECT r.tranche_id FROM proforma_righe r
+      SELECT r.tranche_id, pf.stato FROM proforma_righe r
         JOIN proforme pf ON pf.id = r.proforma_id
         JOIN tranche_progetto t ON t.id = r.tranche_id
         LEFT JOIN partecipazioni pa ON pa.id = t.partecipazione_id
        WHERE pf.stato <> 'annullata'
          AND COALESCE(t.progetto_id, pa.progetto_id) = $1`, [req.params.id]);
     res.send(progettoDettaglioPage(pr.rows[0], coachee.rows, req, disponibili.rows, percorsi.rows, fasi.rows, seduteColl.rows, piano.rows,
-      new Set(chieste.rows.map(r => r.tranche_id))));
+      new Map(chieste.rows.map(r => [r.tranche_id, r.stato]))));
   } catch (err) {
     console.error(err);
     res.status(500).send('Errore');
@@ -4004,7 +4011,7 @@ Germano`;
   const trPerc = fatt.tranchePercorsi || [];
   // ⭐ C3 — l'insieme delle rate gia dentro una proforma viva. Da qui esce lo
   // stato «Chiesta» e la sparizione del pulsante: nessuna casella da spuntare.
-  const rateChieste = fatt.rateChieste || new Set();
+  const rateChieste = fatt.rateChieste || new Map();
   const pacchetti = percorsi
     .filter(pc => pc.modalita === 'Pacchetto' && pc.client_id === client.id)
     .map(pc => {
@@ -4041,6 +4048,8 @@ Germano`;
       // si accenderà da sola quando partirà la proforma della rata.
       const comando = (stato === 'da_chiedere')
         ? `<button onclick="chiediRata('${t.id}','${esc(t.etichetta)}, \u20ac ${imp.toLocaleString('it-IT')}')" class="btn btn-primary btn-sm">Chiedi il pagamento</button>`
+        : (stato === 'da_mandare')
+        ? `<a href="/dashboard/amministrazione/proforma" class="btn btn-primary btn-sm">Rileggi e manda</a>`
         : (stato === 'incassata')
         ? `<span style="font-size:11.5px;color:var(--hint)">${t.data_incasso ? 'il ' + itDate(t.data_incasso) : ''}</span>
            <button onclick="segnaStato('${t.id}','da_chiedere')" class="btn btn-neutral btn-sm" title="Torna indietro">Annulla</button>`
@@ -6390,7 +6399,7 @@ function progettiPage(progetti, committenti, req) {
 function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, seduteColl, piano, rateChieste) {
   // ⭐ C3 — l'insieme delle rate gia dentro una proforma viva: da qui esce lo
   // stato «Chiesta». Se non arriva, `statoDi` ripiega sulla colonna salvata.
-  rateChieste = rateChieste || new Set();
+  rateChieste = rateChieste || new Map();
   // Fetta B (Mattone 2) — il percorso CONDIVISO (team/group) e le sue sessioni collettive.
   seduteColl = seduteColl || [];
   const percCond = (percorsi || []).find(x => !x.client_id) || null;

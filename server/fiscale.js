@@ -296,8 +296,11 @@ function passaggiDocumento(d) {
   }
   p.push({ etichetta: 'Totale del documento', importo: d.totaleDocumento, segno: '=', forte: true });
   if (d.ritenuta) {
+    // ⛔ 17/08 — TOLTA la nota «la trattieni tu e la versi allo Stato».
+    // Germano: «chi riceve la proforma sa cos'è una ritenuta d'acconto». Era una
+    // spiegazione scritta per noi, su un documento che va a un'azienda: spiegare
+    // a un cliente una cosa che conosce lo tratta da incompetente.
     p.push({ etichetta: `Ritenuta d’acconto ${PARAMETRI.ritenuta.aliquota}%`,
-             nota: 'la trattieni tu e la versi allo Stato',
              importo: d.ritenuta, segno: '−' });
   }
   p.push({ etichetta: 'Importo da bonificare', importo: d.daPagare, segno: '=', forte: true });
