@@ -191,9 +191,11 @@ function js(o) {
           var perc = pg.quota ? Math.round(t.importo / pg.quota * 100) : null;
           var scad = scadenzaTranche(t);
           var st = STATI[t.stato] || STATI.da_chiedere;
-          // Chiesta non si mette a mano: la accendera la proforma (fetta C3).
-          // Qui la si sa gia leggere. L unico comando e il PONTE.
-          var comando = t.stato === 'incassata'
+          // C3b — da qui si chiede il pagamento della singola rata. Lo stato
+          // arriva gia RICAVATO dal server: chiesta = sta in una proforma viva.
+          var comando = t.stato === 'da_chiedere'
+            ? '<button onclick="chiediRata(\\'' + t.id + '\\',\\'' + esc2(t.etichetta) + ', € ' + eur2(t.importo) + '\\')" class="btn btn-primary btn-sm">Chiedi il pagamento</button>'
+            : t.stato === 'incassata'
             ? '<span style="font-size:11.5px;color:var(--hint)">' + (t.data_incasso ? 'il ' + itData(t.data_incasso) : '') + '</span>'
               + ' <button onclick="segnaStato(\\'' + t.id + '\\',\\'da_chiedere\\')" class="btn btn-neutral btn-sm" title="Torna indietro">Annulla</button>'
             : '<button onclick="apriIncasso(\\'' + t.id + '\\',\\'' + esc2(pg.nome) + ' — ' + esc2(t.etichetta) + ', € ' + eur2(t.importo) + '\\')" class="btn btn-neutral btn-sm">È arrivato</button>';
@@ -405,6 +407,18 @@ function js(o) {
       document.getElementById('incasso-data').value = new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Rome' });
       document.getElementById('modal-incasso').style.display = 'flex';
     }
+    // C3b — la proforma di UNA rata. Il numero che nasce non si riusa, quindi
+    // si conferma nominando la rata e non con un generico sei sicuro.
+    async function chiediRata(id, che) {
+      if (!confirm('Creo la proforma per ' + che + '?\\n\\nIl numero che le viene assegnato non potra essere riusato.')) return;
+      try {
+        var r = await fetch('/dashboard/tranche/' + id + '/proforma', { method: 'POST' });
+        var d = await r.json().catch(function () { return {}; });
+        if (!r.ok) { alert(d.error || ('Errore ' + r.status)); return; }
+        window.open('/dashboard/proforma/' + d.id + '/pdf', '_blank');
+        location.reload();
+      } catch (ex) { alert('Errore di rete: ' + ex.message); }
+    }
     function chiudiIncasso() { document.getElementById('modal-incasso').style.display = 'none'; }
     function confermaIncasso() {
       var d = document.getElementById('incasso-data').value;
@@ -442,12 +456,15 @@ function quattroNumeri(t4, conPiano) {
  * sono, altrimenti la proposta dell'Hub. La proposta non si salva da sola —
  * finché non premi Salva non è un impegno con nessuno.
  */
-function righeDi(salvate, quota, tipo) {
+function righeDi(salvate, quota, tipo, chieste) {
   if (salvate && salvate.length) {
     return salvate.map(t => ({
       id: t.id, etichetta: t.etichetta, importo: Math.round(Number(t.importo)),
       innesco: t.innesco, giorni: Number(t.giorni),
-      stato: t.stato || 'da_chiedere',
+      // ⭐ C3 — lo stato che arriva alla pagina è quello RICAVATO: «chiesta» vuol
+      // dire «sta in una proforma viva», e lo decide `tranche.statoDi()` in un
+      // posto solo. La pagina non deve saperne niente.
+      stato: tranche.statoDi(t, chieste),
       data_incasso: t.data_incasso ? String(t.data_incasso).slice(0, 10) : null,
     }));
   }

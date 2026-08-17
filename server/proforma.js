@@ -445,11 +445,20 @@ async function generaPdf(p, cartaBytes) {
  * pagamento del corrispettivo — ed è il motivo per cui la fattura viene DOPO.
  * Da far confermare al commercialista prima del primo cliente vero.
  */
-function testoMail(p) {
+function testoMail(p, righe) {
   const de = p.destinatario_dati || {};
   const nome = String(de.denominazione || '').trim().split(/\s+/)[0] || '';
   const numero = p.numero || '';
   const importo = '€ ' + fiscale.euro(p.da_pagare);
+  // 🔴 C3b (17/08) — a un'AZIENDA non si scrive «Ciao Flamingo». Il registro
+  // confidenziale l'ha scelto Germano per le Mail 1 e 2, che vanno a persone;
+  // preso e applicato a un committente diventa una figuraccia, e il primo caso
+  // vero è saltato fuori appena la proforma ha imparato a chiedere una rata.
+  const aUnAzienda = !!p.committente_id;
+  // E non si parla di «sessioni» quando si sta chiedendo una RATA: la riga del
+  // documento lo dice già per esteso («Acconto (30%) — Progetto X»).
+  const primaRiga = (righe && righe.length && righe[0].descrizione) || '';
+  const perUnaRata = !!(righe && righe.length && righe[0].tranche_id);
 
   // «di luglio 2026» quando le sessioni stanno tutte nello stesso mese, il
   // periodo per esteso quando sono a cavallo: dirlo sbagliato è peggio che non
@@ -463,18 +472,34 @@ function testoMail(p) {
       : ' dal ' + dataBreve(p.periodo_da) + ' al ' + dataBreve(p.periodo_a);
   }
 
-  return {
-    subject: 'Proforma n. ' + numero + ' — Noesys Professional Coaching',
-    body:
-`Ciao ${nome},
+  // Che cosa si sta chiedendo: una rata si nomina, le sessioni si datano.
+  const oggetto = perUnaRata && primaRiga
+    ? primaRiga.charAt(0).toLowerCase() + primaRiga.slice(1)
+    : 'le sessioni di coaching' + periodo;
 
-in allegato la proforma n. ${numero} per le sessioni di coaching${periodo}.
+  const body = aUnAzienda
+    ? `Buongiorno,
+
+in allegato la proforma n. ${numero} per ${oggetto}.
+L'importo da bonificare è di ${importo}; l'IBAN è indicato nel documento.
+
+A pagamento ricevuto sarà emessa la fattura: per le prestazioni di servizi la fattura si emette al momento in cui viene pagato il corrispettivo (art. 6, comma 3, del DPR 633/1972). La proforma serve a questo, e non ha valore fiscale.
+
+Vi ringrazio e vi saluto cordialmente,
+Germano Guerriero — Noesys Professional Coaching`
+    : `Ciao ${nome},
+
+in allegato la proforma n. ${numero} per ${oggetto}.
 L'importo da bonificare è di ${importo}; l'IBAN è indicato nel documento.
 
 A pagamento ricevuto ti invierò la fattura: per le prestazioni di servizi la fattura si emette al momento in cui viene pagato il corrispettivo (art. 6, comma 3, del DPR 633/1972). La proforma serve a questo, e non ha valore fiscale.
 
 Ti ringrazio e ti saluto cordialmente,
-Germano Guerriero — Noesys Professional Coaching`,
+Germano Guerriero — Noesys Professional Coaching`;
+
+  return {
+    subject: 'Proforma n. ' + numero + ' — Noesys Professional Coaching',
+    body,
   };
 }
 

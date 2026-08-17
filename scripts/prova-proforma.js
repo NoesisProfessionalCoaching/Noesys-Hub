@@ -181,6 +181,41 @@ console.log('\n— IL BLOCCO PARLA DI CHI RICEVE, NON SEMPRE DEL «CLIENTE» —
       nienteDaChiedere: 'Questa rata è già stata chiesta.' })[0]);
 }
 
+console.log('\n— LA MAIL A UN’AZIENDA NON DÀ DEL TU —');
+{
+  const base = {
+    numero: '2026/002', da_pagare: 2142, anno: 2026, committente_id: 'k1',
+    destinatario_dati: { denominazione: 'Flamingo Beauty S.r.l.', email: 'amm@flamingo.it' },
+    periodo_da: '2026-09-01', periodo_a: '2026-12-15',
+  };
+  const righe = [{ tranche_id: 't1', descrizione: 'Acconto (30%) — Progetto Flamingo Revolution' }];
+  const m = pf.testoMail(base, righe);
+  prova('🔴 non si scrive «Ciao Flamingo» a una società', false, /Ciao/.test(m.body));
+  prova('si apre con un saluto neutro', true, m.body.startsWith('Buongiorno,'));
+  prova('e si dà del VOI fino in fondo',
+    true, /sarà emessa la fattura/.test(m.body) && /Vi ringrazio e vi saluto/.test(m.body));
+  prova('⭐ non parla di «sessioni»: nomina la RATA, come la riga del documento',
+    true, m.body.includes('per acconto (30%) — Progetto Flamingo Revolution.')
+       && !m.body.includes('sessioni di coaching'));
+  // ⚠️ «2142,00» senza il punto: è la regola italiana (niente separatore sotto
+  // le 5 cifre), non un difetto di formattazione. Già annotata il 12/08.
+  prova('l’importo è quello da bonificare, ritenuta già tolta', true, m.body.includes('€ 2142,00'));
+  prova('la norma resta, perché è la ragione per cui il documento esiste',
+    true, m.body.includes('art. 6, comma 3, del DPR 633/1972'));
+}
+
+console.log('\n— LA RATA DI UN PACCHETTO VA A UNA PERSONA: TU, MA NON «sessioni» —');
+{
+  const base = {
+    numero: '2026/004', da_pagare: 439.2, anno: 2026,
+    destinatario_dati: { denominazione: 'Marco Bianchi', email: 'marco@esempio.it' },
+  };
+  const m = pf.testoMail(base, [{ tranche_id: 't9', descrizione: 'Acconto (30%) — Pacchetto di coaching' }]);
+  prova('a una persona il registro confidenziale resta', true, m.body.startsWith('Ciao Marco,'));
+  prova('ma l’oggetto è la rata, non le sessioni',
+    true, m.body.includes('per acconto (30%) — Pacchetto di coaching.'));
+}
+
 // ── IL PROMEMORIA: DAL PRIMO LUNEDÌ ────────────────────────────────────────
 // Germano ha scelto «sempre il primo lunedì» conoscendo il rischio (3 volte su
 // 12 cade a ridosso della fine del mese prima). Il calcolo va provato: sbagliato

@@ -139,9 +139,9 @@ function scadenza(tr, progetto) {
  * Se le tranche non arrivano a coprirla, è un'informazione — vuol dire che un
  * pagatore non ha ancora un piano — e va vista, non nascosta.
  */
-function totali(tranche, quotaTotale) {
+function totali(tranche, quotaTotale, chieste) {
   const somma = st => (tranche || [])
-    .filter(t => (t.stato || 'da_chiedere') === st)
+    .filter(t => statoDi(t, chieste) === st)
     .reduce((s, t) => s + (Number(t.importo) || 0), 0);
   return {
     concordato: Math.round(Number(quotaTotale) || 0),
@@ -151,4 +151,24 @@ function totali(tranche, quotaTotale) {
   };
 }
 
-module.exports = { INNESCHI, STATI, pianoProposto, percentuale, problemi, scadenza, totali };
+/**
+ * ⭐ FETTA C3 (17/08/2026) — «CHIESTA» NON SI SPUNTA, SI RICAVA.
+ * Una rata è chiesta perché **sta dentro una proforma viva**, non perché
+ * qualcuno ha premuto un pulsante. `chieste` è l'insieme degli id che ci stanno
+ * dentro; se non arriva, si ripiega sulla colonna `stato` (è così che si
+ * comporta finché una pagina non ha ancora imparato a chiederlo).
+ *
+ * ⚠️ L'ordine conta: **incassata vince su chiesta.** Una rata incassata sta
+ * ancora dentro la sua proforma, e senza questa precedenza tornerebbe indietro
+ * di uno stato appena registrato l'incasso.
+ * ⭐ Il regalo: annullare una proforma rimette la rata fra quelle da chiedere
+ * **da sé**, senza una riga di codice in più — esattamente come per le sessioni.
+ */
+function statoDi(t, chieste) {
+  const salvato = (t && t.stato) || 'da_chiedere';
+  if (salvato === 'incassata') return 'incassata';
+  if (chieste && t && chieste.has && chieste.has(t.id)) return 'chiesta';
+  return salvato;
+}
+
+module.exports = { INNESCHI, STATI, pianoProposto, percentuale, problemi, scadenza, totali, statoDi };

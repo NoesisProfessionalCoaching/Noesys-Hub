@@ -444,7 +444,7 @@ router.get('/dashboard/clients/:id', requireCoach, async (req, res) => {
     // emettere, invece di mostrare un pulsante che poi non funziona).
     // ⭐ Il «da chiedere» arriva da `maturato.js`, lo stesso modulo che risponde
     // alla home e alla pagina Proforma: la regola è scritta una volta sola.
-    const [pfr, mat, emr, app, trr, trp] = await Promise.all([
+    const [pfr, mat, emr, app, trr, trp, trc] = await Promise.all([
       db.query(`SELECT * FROM proforme WHERE client_id=$1
                  ORDER BY anno DESC, progressivo DESC`, [req.params.id]),
       maturato.daChiedere(req.params.id),
@@ -469,6 +469,17 @@ router.get('/dashboard/clients/:id', requireCoach, async (req, res) => {
                   JOIN partecipazioni pa ON pa.id = t.partecipazione_id
                  WHERE pa.client_id=$1
                  ORDER BY t.partecipazione_id, t.ordine`, [req.params.id]),
+      // ⭐ C3 — quali rate di questa persona sono GIÀ STATE CHIESTE. Non è una
+      // colonna: è il fatto di stare dentro una proforma viva. Da qui esce sia
+      // l'etichetta «Chiesta» sia il motivo per cui il pulsante sparisce.
+      db.query(`SELECT r.tranche_id
+                  FROM proforma_righe r
+                  JOIN proforme pf ON pf.id = r.proforma_id
+                  JOIN tranche_progetto t ON t.id = r.tranche_id
+                  LEFT JOIN percorsi pc ON pc.id = t.percorso_id
+                  LEFT JOIN partecipazioni pa ON pa.id = t.partecipazione_id
+                 WHERE pf.stato <> 'annullata'
+                   AND (pc.client_id = $1 OR pa.client_id = $1)`, [req.params.id]),
     ]);
     res.send(clientDetailPage(client, sr.rows, pr.rows, payr.rows, sedr.rows, prjr.rows, permr.rows, req, {
       proforme: pfr.rows,
@@ -477,6 +488,7 @@ router.get('/dashboard/clients/:id', requireCoach, async (req, res) => {
       appuntamenti: app,
       tranchePercorsi: trr.rows,
       tranchePartecipazioni: trp.rows,
+      rateChieste: new Set(trc.rows.map(r => r.tranche_id)),
     }));
   } catch (err) {
     console.error(err);
@@ -1687,6 +1699,136 @@ router.post('/dashboard/clients/:id/proforma', requireCoach, async (req, res) =>
   }
 });
 
+// ── «CHIEDI QUESTA RATA» — fetta C3b (17/08/2026) ────────────────────────
+// La stessa strada di sopra, ma il documento contiene UNA RATA invece delle
+// sessioni di un mese. Chi la riceve dipende da chi paga, e sono tre casi:
+//   · rata di un PACCHETTO        → la paga il cliente del percorso
+//   · rata di una PARTECIPAZIONE  → la paga quel coachee
+//   · rata senza partecipazione   → è del COMMITTENTE del progetto
+// ⚠️ La cifra concordata cambia con il caso, e serve: è il denominatore della
+// percentuale scritta sulla riga.
+router.post('/dashboard/tranche/:id/proforma', requireCoach, async (req, res) => {
+  try {
+    const tr = await db.query(`
+      SELECT t.*,
+             pa.client_id      AS part_client_id, pa.quota_coachee,
+             prj.id            AS prj_id,   prj.titolo AS prj_titolo,
+             prj.quota_committente, prj.committente_id,
+             prj.data_inizio   AS prj_inizio, prj.data_fine AS prj_fine,
+             pc.id             AS perc_id,  pc.client_id AS perc_client_id,
+             pc.prezzo         AS perc_prezzo,
+             pc.data_inizio    AS perc_inizio, pc.data_fine AS perc_fine
+        FROM tranche_progetto t
+        LEFT JOIN partecipazioni pa ON pa.id = t.partecipazione_id
+        LEFT JOIN progetti      prj ON prj.id = COALESCE(t.progetto_id, pa.progetto_id)
+        LEFT JOIN percorsi      pc  ON pc.id = t.percorso_id
+       WHERE t.id = $1`, [req.params.id]);
+    const t = tr.rows[0];
+    if (!t) return res.status(404).json({ error: 'Rata non trovata' });
+
+    // ⭐ Una rata si chiede UNA volta sola, e non per una casella spuntata: si
+    // guarda se sta già dentro una proforma viva. È la stessa regola delle
+    // sessioni, e regala l'annullamento — annullata la proforma, la rata torna
+    // da sola fra quelle da chiedere.
+    const gia = await db.query(`
+      SELECT pf.numero FROM proforma_righe r JOIN proforme pf ON pf.id = r.proforma_id
+       WHERE r.tranche_id = $1 AND pf.stato <> 'annullata'`, [req.params.id]);
+    if (gia.rows.length) {
+      return res.status(400).json({
+        error: 'Questa rata è già stata chiesta con la proforma n. ' + gia.rows[0].numero
+             + '. Per rifarla, annulla quel documento.' });
+    }
+    if ((t.stato || 'da_chiedere') === 'incassata') {
+      return res.status(400).json({ error: 'Questa rata risulta già incassata.' });
+    }
+
+    // Chi paga, quanto ha concordato, e di che cosa si parla.
+    let clientId = null, committenteId = null, progettoId = t.prj_id || null;
+    let quota = 0, titolo = '', periodo = {};
+    if (t.perc_id) {
+      clientId = t.perc_client_id;
+      quota    = Math.round(Number(t.perc_prezzo) || 0);
+      titolo   = 'Pacchetto di coaching';
+      periodo  = { da: t.perc_inizio, a: t.perc_fine };
+      progettoId = null;
+    } else if (t.part_client_id) {
+      clientId = t.part_client_id;
+      quota    = Math.round(Number(t.quota_coachee) || 0);
+      titolo   = nomeProgetto(t.prj_titolo);
+      periodo  = { da: t.prj_inizio, a: t.prj_fine };
+    } else {
+      committenteId = t.committente_id;
+      quota    = Math.round(Number(t.quota_committente) || 0);
+      titolo   = nomeProgetto(t.prj_titolo);
+      periodo  = { da: t.prj_inizio, a: t.prj_fine };
+    }
+
+    const [dest, em] = await Promise.all([
+      clientId
+        ? db.query('SELECT * FROM clients WHERE id = $1', [clientId])
+        : db.query('SELECT * FROM committenti WHERE id = $1', [committenteId]),
+      db.query('SELECT * FROM emittente WHERE id = 1'),
+    ]);
+    const chiRiceve = dest.rows[0];
+    if (!chiRiceve) return res.status(400).json({ error: 'Non si capisce a chi vada chiesta questa rata.' });
+    const emittente = em.rows[0] || {};
+    const soggetto = clientId ? fiscale.daCliente(chiRiceve) : fiscale.daCommittente(chiRiceve);
+
+    const righe = proforma.righeDaTranche([t], { titolo, quota });
+    const motivi = proforma.motiviCheImpediscono({ emittente, soggetto, righe,
+      nienteDaChiedere: 'Questa rata non ha un importo.' });
+    if (motivi.length) return res.status(400).json({ error: motivi.join(' ') });
+
+    const oggi = new Date().toISOString().slice(0, 10);
+    const d = proforma.componiProforma({ righe, soggetto, email: chiRiceve.email,
+      emittente, dataEmissione: oggi, periodo });
+    if (!d.conti) {
+      return res.status(400).json({ error: 'Non si riesce a stabilire la categoria fiscale di chi deve pagare.' });
+    }
+    const anno = Number(oggi.slice(0, 4));
+
+    const creata = await db.transazione(async (q) => {
+      const ins = await q(`
+        INSERT INTO proforme (id, numero, anno, progressivo, client_id, committente_id,
+          progetto_id, data_emissione, periodo_da, periodo_a, categoria_fiscale,
+          emittente_dati, destinatario_dati,
+          imponibile, iva, ritenuta, bollo, totale_documento, da_pagare)
+        SELECT $1, $2::text || '/' || lpad(x.n::text, 3, '0'), $2::int, x.n, $3, $4, $5,
+               $6::date, $7::date, $8::date, $9, $10::jsonb, $11::jsonb,
+               $12, $13, $14, $15, $16, $17
+          FROM (SELECT COALESCE(MAX(progressivo), 0) + 1 AS n
+                  FROM proforme WHERE anno = $2::int) x
+        RETURNING id, numero`,
+        [uuidv4(), anno, clientId, committenteId, progettoId, oggi,
+         d.periodoDa, d.periodoA, d.categoria,
+         JSON.stringify(d.emittenteDati), JSON.stringify(d.destinatarioDati),
+         d.conti.imponibile, d.conti.iva, d.conti.ritenuta, d.conti.bollo,
+         d.conti.totaleDocumento, d.conti.daPagare]);
+      const pf = ins.rows[0];
+      for (const r of d.righe) {
+        await q(`INSERT INTO proforma_righe
+          (id, proforma_id, tranche_id, percorso_id, data, descrizione, quantita, prezzo_unitario, importo, ordine)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+          [uuidv4(), pf.id, r.tranche_id, t.perc_id || null, r.data, r.descrizione,
+           r.quantita, r.prezzo_unitario, r.importo, r.ordine]);
+      }
+      return pf;
+    });
+    res.json({ ok: true, id: creata.id, numero: creata.numero });
+  } catch (err) {
+    console.error('[proforma/rata]', err);
+    res.status(500).json({ error: 'Errore nella creazione della proforma' });
+  }
+});
+
+// «Progetto Flamingo Revolution», ma senza scrivere «Progetto» due volte se il
+// titolo già comincia così.
+function nomeProgetto(titolo) {
+  const s = String(titolo || '').trim();
+  if (!s) return 'Progetto';
+  return /^progetto\b/i.test(s) ? s : 'Progetto ' + s;
+}
+
 // Il PDF si RIGENERA ogni volta dai dati congelati: non si conserva un file, e
 // due stampe dello stesso documento sono identiche anche fra due anni.
 router.get('/dashboard/proforma/:id/pdf', requireCoach, async (req, res) => {
@@ -1987,11 +2129,38 @@ router.get('/dashboard/amministrazione/proforma', requireCoach, async (req, res)
     const [daChiedere, emr, pfr] = await Promise.all([
       maturato.daChiedere(),
       db.query('SELECT * FROM emittente WHERE id = 1'),
-      db.query(`SELECT pf.*, c.name AS cliente_nome, c.email AS cliente_email
-                  FROM proforme pf LEFT JOIN clients c ON c.id = pf.client_id
+      // ⭐ C3b — chi riceve NON è più per forza un cliente: una proforma di una
+      // rata di progetto va al COMMITTENTE. Il nome si prende dalla fotografia
+      // congelata dentro il documento, che è giusta per definizione e non
+      // cambia se qualcuno si rinomina domani. `clients` resta solo per l'email
+      // e per il link alla scheda.
+      db.query(`SELECT pf.*,
+                       COALESCE(pf.destinatario_dati->>'denominazione',
+                                c.name, k.denominazione) AS cliente_nome,
+                       COALESCE(c.email, k.email) AS cliente_email
+                  FROM proforme pf
+                  LEFT JOIN clients c ON c.id = pf.client_id
+                  LEFT JOIN committenti k ON k.id = pf.committente_id
                  ORDER BY pf.anno DESC, pf.progressivo DESC`),
     ]);
     const emittente = emr.rows[0] || {};
+
+    // ⭐ C3b — le righe servono al TESTO della mail: una proforma che chiede una
+    // rata non parla di «sessioni», e il testo deve nominare la rata. Si caricano
+    // solo per i documenti ancora da mandare, che sono gli unici con una
+    // finestrella d'invio da riempire.
+    const daMandareIds = pfr.rows.filter(proforma.daMandare).map(p => p.id);
+    if (daMandareIds.length) {
+      const rr = await db.query(
+        `SELECT * FROM proforma_righe WHERE proforma_id = ANY($1::text[]) ORDER BY ordine`,
+        [daMandareIds]);
+      const perProforma = new Map();
+      for (const r of rr.rows) {
+        if (!perProforma.has(r.proforma_id)) perProforma.set(r.proforma_id, []);
+        perProforma.get(r.proforma_id).push(r);
+      }
+      for (const p of pfr.rows) p.righe = perProforma.get(p.id) || [];
+    }
 
     // Perché NON si può chiedere: la ragione si calcola con lo STESSO modulo che
     // usa la rotta di creazione, così la pagina non può promettere un pulsante
@@ -2046,8 +2215,8 @@ router.post('/dashboard/proforma/:id/invia', requireCoach, express.json(), async
 
     await mailer.sendMail({
       to,
-      subject: b.subject || proforma.testoMail(pf).subject,
-      text: b.body || proforma.testoMail(pf).body,
+      subject: b.subject || proforma.testoMail(pf, righe.rows).subject,
+      text: b.body || proforma.testoMail(pf, righe.rows).body,
       attachments: [{ filename: nome, content: bytes, contentType: 'application/pdf' }],
     });
 
@@ -2357,7 +2526,17 @@ router.get('/dashboard/progetti/:id', requireCoach, async (req, res) => {
     // propone uno: non si salva niente da soli, la proposta la conferma il coach.
     const piano = await db.query(
       'SELECT * FROM tranche_progetto WHERE progetto_id=$1 ORDER BY ordine', [req.params.id]);
-    res.send(progettoDettaglioPage(pr.rows[0], coachee.rows, req, disponibili.rows, percorsi.rows, fasi.rows, seduteColl.rows, piano.rows));
+    // ⭐ C3 — quali rate di questo progetto sono già dentro una proforma viva.
+    // È da qui che esce «Chiesta», e non da una colonna scritta a mano.
+    const chieste = await db.query(`
+      SELECT r.tranche_id FROM proforma_righe r
+        JOIN proforme pf ON pf.id = r.proforma_id
+        JOIN tranche_progetto t ON t.id = r.tranche_id
+        LEFT JOIN partecipazioni pa ON pa.id = t.partecipazione_id
+       WHERE pf.stato <> 'annullata'
+         AND COALESCE(t.progetto_id, pa.progetto_id) = $1`, [req.params.id]);
+    res.send(progettoDettaglioPage(pr.rows[0], coachee.rows, req, disponibili.rows, percorsi.rows, fasi.rows, seduteColl.rows, piano.rows,
+      new Set(chieste.rows.map(r => r.tranche_id))));
   } catch (err) {
     console.error(err);
     res.status(500).send('Errore');
@@ -3823,6 +4002,9 @@ Germano`;
   // (`maturato.js` conta solo `modalita = 'Standard'`): non era un guasto, era
   // un pezzo di modello che non era mai stato costruito.
   const trPerc = fatt.tranchePercorsi || [];
+  // ⭐ C3 — l'insieme delle rate gia dentro una proforma viva. Da qui esce lo
+  // stato «Chiesta» e la sparizione del pulsante: nessuna casella da spuntare.
+  const rateChieste = fatt.rateChieste || new Set();
   const pacchetti = percorsi
     .filter(pc => pc.modalita === 'Pacchetto' && pc.client_id === client.id)
     .map(pc => {
@@ -3835,8 +4017,8 @@ Germano`;
         data_inizio: pc.data_inizio ? String(pc.data_inizio).slice(0, 10) : '',
         data_meta:   pc.data_meta   ? String(pc.data_meta).slice(0, 10)   : '',
         data_fine:   pc.data_fine   ? String(pc.data_fine).slice(0, 10)   : '',
-        righe: pianoUi.righeDi(salvate, quota, 'committente'),
-        tot4:  tranche.totali(salvate, quota),
+        righe: pianoUi.righeDi(salvate, quota, 'committente', rateChieste),
+        tot4:  tranche.totali(salvate, quota, rateChieste),
         // La scadenza si calcola qui, col modulo puro: le tre date stanno sul
         // percorso, e «metà percorso» può ancora non esserci — che è
         // un'informazione, non un errore.
@@ -3850,13 +4032,16 @@ Germano`;
   // rimesso in piedi il difetto che abbiamo appena tolto.
   const tabellaRate = (salvate, quota, scadenze) => {
     const righeSalvate = salvate.map((t, i) => {
-      const st   = tranche.STATI[t.stato || 'da_chiedere'] || tranche.STATI.da_chiedere;
+      const stato = tranche.statoDi(t, rateChieste);
+      const st   = tranche.STATI[stato] || tranche.STATI.da_chiedere;
       const imp  = Math.round(Number(t.importo));
       const perc = quota ? Math.round(imp / quota * 100) : null;
       const scad = scadenze[i];
       // ⚠️ PONTE fino alla fetta C3, come sulla scheda del progetto: «chiesta»
       // si accenderà da sola quando partirà la proforma della rata.
-      const comando = (t.stato === 'incassata')
+      const comando = (stato === 'da_chiedere')
+        ? `<button onclick="chiediRata('${t.id}','${esc(t.etichetta)}, \u20ac ${imp.toLocaleString('it-IT')}')" class="btn btn-primary btn-sm">Chiedi il pagamento</button>`
+        : (stato === 'incassata')
         ? `<span style="font-size:11.5px;color:var(--hint)">${t.data_incasso ? 'il ' + itDate(t.data_incasso) : ''}</span>
            <button onclick="segnaStato('${t.id}','da_chiedere')" class="btn btn-neutral btn-sm" title="Torna indietro">Annulla</button>`
         : `<button onclick="apriIncasso('${t.id}','${esc(t.etichetta)}, € ${imp.toLocaleString('it-IT')}')" class="btn btn-neutral btn-sm">È arrivato</button>`;
@@ -3922,7 +4107,7 @@ Germano`;
     const q       = pr.quota_coachee != null ? Math.round(Number(pr.quota_coachee)) : 0;
     const salvate = trPart.filter(t => t.partecipazione_id === pr.part_id);
     return { pr, q, salvate,
-      tot4: tranche.totali(salvate, q),
+      tot4: tranche.totali(salvate, q, rateChieste),
       // Le date degli inneschi stanno sul PROGETTO: la scadenza si calcola da
       // quelle, ed è per questo che la finestrella le mostra spente invece di
       // nasconderle.
@@ -4663,7 +4848,7 @@ Germano`;
     }))).replace(/</g, '\\u003c')};
     var QUOTE_PROGETTO = ${JSON.stringify(progettiConto.filter(g => g.q > 0).map(g => ({
       part_id: g.pr.part_id, titolo: g.pr.titolo, quota: g.q,
-      righe: pianoUi.righeDi(g.salvate, g.q, 'partecipante'),
+      righe: pianoUi.righeDi(g.salvate, g.q, 'partecipante', rateChieste),
       data_inizio: g.pr.data_inizio ? String(g.pr.data_inizio).slice(0, 10) : '',
       data_meta:   g.pr.data_meta   ? String(g.pr.data_meta).slice(0, 10)   : '',
       data_fine:   g.pr.data_fine   ? String(g.pr.data_fine).slice(0, 10)   : '',
@@ -5205,6 +5390,10 @@ Germano`;
         btn.disabled = false; btn.textContent = 'Chiedi il pagamento';
       }
     }
+    ${/* ⚠️ `chiediRata()` NON si riscrive qui: la porta piano-ui.js, insieme alla
+          finestrella del piano, ed è disponibile ogni volta che c'è una cifra
+          concordata — cioè ogni volta che esistono delle rate da chiedere.
+          Averla in due punti vorrebbe dire due versioni della stessa conferma. */ ''}
     // Cliccando fuori, la finestrella si chiude. ⚠️ Si SALTA quello che non c'e:
     // alcune finestrelle compaiono solo in certe schede (il piano solo se c'e una
     // cifra concordata) e una di queste e stata tolta il 15/08. Senza il filtro,
@@ -5559,7 +5748,7 @@ function proformaPage(daChiedere, proforme, req) {
   // resta modificabile prima di mandare.
   const datiInvio = {};
   for (const p of daMandare) {
-    const t = proforma.testoMail(p);
+    const t = proforma.testoMail(p, p.righe);
     datiInvio[p.id] = {
       numero: p.numero,
       to: (p.destinatario_dati || {}).email || p.cliente_email || '',
@@ -5573,7 +5762,7 @@ function proformaPage(daChiedere, proforme, req) {
         <div>
           <a href="/dashboard/proforma/${p.id}/pdf" target="_blank" style="font-size:16px;font-weight:700;color:var(--blue);text-decoration:none">n. ${esc(p.numero)}</a>
           <div style="font-size:13px;color:var(--muted)">
-            ${esc(p.cliente_nome || '(cliente cancellato)')} · ${p.data_emissione ? itDate(p.data_emissione) : ''}
+            ${esc(p.cliente_nome || '(destinatario cancellato)')} · ${p.data_emissione ? itDate(p.data_emissione) : ''}
           </div>
         </div>
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-left:auto">
@@ -6198,7 +6387,10 @@ function progettiPage(progetti, committenti, req) {
 // ═══════════════════════════════════════════════════════
 // PAGINA DETTAGLIO PROGETTO (Fase 3a) — dati + coachee collegati
 // ═══════════════════════════════════════════════════════
-function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, seduteColl, piano) {
+function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, seduteColl, piano, rateChieste) {
+  // ⭐ C3 — l'insieme delle rate gia dentro una proforma viva: da qui esce lo
+  // stato «Chiesta». Se non arriva, `statoDi` ripiega sulla colonna salvata.
+  rateChieste = rateChieste || new Set();
   // Fetta B (Mattone 2) — il percorso CONDIVISO (team/group) e le sue sessioni collettive.
   seduteColl = seduteColl || [];
   const percCond = (percorsi || []).find(x => !x.client_id) || null;
@@ -6421,12 +6613,13 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
 
   const piani = pagatori.map(pg => {
     const suoi = pianoSalvato.filter(t => (t.partecipazione_id || null) === pg.pid);
-    return { ...pg, nuovo: !suoi.length, righe: pianoUi.righeDi(suoi, pg.quota, pg.tipo) };
+    return { ...pg, nuovo: !suoi.length,
+      righe: pianoUi.righeDi(suoi, pg.quota, pg.tipo, rateChieste) };
   });
 
   // ⭐ I QUATTRO NUMERI si contano dalle tranche SALVATE, non dalle proposte:
   // una proposta non è un impegno con nessuno.
-  const tot4 = tranche.totali(pianoSalvato, qTot);
+  const tot4 = tranche.totali(pianoSalvato, qTot, rateChieste);
 
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — ${esc(p.titolo)}</title>${baseStyle()}
   <style>

@@ -75,5 +75,30 @@ console.log('\n— LA SCADENZA —');
     tr.scadenza({ innesco: 'firma', giorni: 0 }, prog));
 }
 
+// ── C3 (17/08): «CHIESTA» SI RICAVA, NON SI SPUNTA ─────────────────────────
+console.log('\n— A CHE PUNTO È UNA RATA —');
+{
+  const rate = [
+    { id: 'a', importo: 1000, stato: 'da_chiedere' },
+    { id: 'b', importo: 2000, stato: 'da_chiedere' },
+    { id: 'c', importo: 3000, stato: 'incassata' },
+  ];
+  const chieste = new Set(['b', 'c']);
+  prova('senza l’elenco delle proforma si ripiega sulla colonna salvata',
+    'da_chiedere', tr.statoDi(rate[1]));
+  prova('una rata dentro una proforma viva è CHIESTA, anche se il salvato dice altro',
+    'chiesta', tr.statoDi(rate[1], chieste));
+  prova('⭐ incassata VINCE su chiesta: una rata incassata sta ancora nella sua proforma',
+    'incassata', tr.statoDi(rate[2], chieste));
+  prova('una rata che non sta in nessuna proforma resta da chiedere',
+    'da_chiedere', tr.statoDi(rate[0], chieste));
+  prova('i quattro numeri seguono la stessa regola',
+    { concordato: 6000, daChiedere: 1000, chiesto: 2000, incassato: 3000 },
+    tr.totali(rate, 6000, chieste));
+  prova('⭐ annullata la proforma (l’id esce dall’elenco), la rata torna da chiedere DA SOLA',
+    { concordato: 6000, daChiedere: 3000, chiesto: 0, incassato: 3000 },
+    tr.totali(rate, 6000, new Set(['c'])));
+}
+
 console.log(`\n${falliti ? '✗' : '✓'} ${falliti} prove fallite.`);
 process.exit(falliti ? 1 : 0);
