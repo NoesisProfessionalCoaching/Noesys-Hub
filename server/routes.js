@@ -4181,7 +4181,7 @@ Germano`;
   const ultima = proforme[0];              // già ordinate dalla più recente
   const stU = ultima ? (STATO_PF[ultima.stato] || STATO_PF.emessa) : null;
   const rigaUltima = !ultima ? '' : rigaDue('Ultima proforma', `
-      <a href="/dashboard/proforma/${ultima.id}/pdf" target="_blank" style="font-weight:700;color:var(--blue);text-decoration:none">n. ${esc(ultima.numero)}</a>
+      <a href="#" onclick="apriPdf('${ultima.id}','Proforma n. ${esc(ultima.numero)}');return false" style="font-weight:700;color:var(--blue);text-decoration:none">n. ${esc(ultima.numero)}</a>
       <span style="font-size:13px;color:var(--muted);margin-left:8px">${ultima.data_emissione ? itDate(ultima.data_emissione) : ''}</span>
       <span style="font-size:13px;margin-left:8px">€ ${fiscale.euro(ultima.da_pagare)}</span>
       <span class="badge" style="background:${stU.bg};color:${stU.c};margin-left:8px">${stU.label}</span>
@@ -5037,9 +5037,15 @@ Germano`;
     sottotitolo: 'In quante volte si paga. Si scrivono gli euro: la percentuale la calcola l\'Hub.',
     mostraDividi: false,
   }) + pianoUi.modaleIncasso() : ''}
+  ${/* ⚠️ Questa NON sta dentro `pianoAttivo`: il link all'ultima proforma c'è
+        su qualunque scheda, anche senza pacchetto. Metterla nel ramo
+        condizionale vorrebbe dire un link che non apre niente — il guasto che
+        si vede solo in un browser vero. */ ''}
+  ${modalePdf()}
 
   <div id="toast" style="display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--navy);color:#fff;padding:10px 20px;border-radius:20px;font-size:13px;font-weight:600;z-index:200">Fatto!</div>
   <script>
+    ${jsModalePdf()}
     const CID = '${client.id}';
     // Per comporre link e testo della mail dello strumento, senza chiedere al server.
     const PERM_BASE = '${PLATFORM_URL}/c/${client.token}';
@@ -5892,8 +5898,74 @@ function anomaliePage(anomalie, conteggi, req) {
 // I tre passaggi ci sono solo se hanno qualcosa dentro, tranne quando non c'è
 // proprio niente: in quel caso lo dice, invece di lasciare la pagina bianca.
 // ═══════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐ 18/08 — IL PDF SI APRE, E SI CHIUDE.
+// Germano il 17/08: «ho provato ad aprire il pdf della proforma, si è aperto,
+// ma non c'è la possibilità di chiuderlo». Il PDF si apriva in una SCHEDA NUOVA
+// (target="_blank"), servita «inline»: in una scheda aperta così il tasto
+// «indietro» del browser è spento, perché quella scheda non ha una storia. Non
+// c'era niente di rotto — semplicemente l'Hub non offriva nessuna via d'uscita
+// e per uscire bisognava sapere di dover chiudere la scheda.
+// ⭐ Adesso il documento si apre DENTRO l'Hub, con la sua X e il suo «Chiudi».
+// ⚠️ Resta anche «Apri in una scheda nuova»: per stampare o salvare il file
+// serve il visualizzatore vero del browser, e su un telefono un PDF dentro un
+// riquadro si legge male. Una via sola non basterebbe per tutti e due i casi.
+// ═══════════════════════════════════════════════════════════════════════════
+function modalePdf() {
+  return `
+    <div class="modal-overlay" id="modal-pdf">
+      <div class="modal-box" style="max-width:900px;width:900px;padding:16px">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
+          <strong id="pdf-titolo" style="font-size:15px"></strong>
+          <span style="flex:1"></span>
+          <a id="pdf-scheda" href="#" target="_blank" class="btn btn-neutral btn-sm">Apri in una scheda nuova</a>
+          <button onclick="chiudiPdf()" class="btn btn-neutral btn-sm" title="Chiudi">✕</button>
+        </div>
+        <iframe id="pdf-telaio" title="Anteprima del documento"
+                style="width:100%;height:70vh;border:1px solid var(--line);border-radius:8px;background:#f7f9fb"></iframe>
+        ${/* ⚠️ Questa riga c'è SEMPRE, e non è pigrizia. Non tutti i browser
+              mostrano un PDF dentro un riquadro (su iPhone spesso no), e non
+              c'è modo di saperlo da qui: se l'anteprima resta vuota, senza
+              questa riga si tornerebbe al vicolo cieco di partenza — un
+              documento aperto che non si sa come guardare né come chiudere. */ ''}
+        <div style="font-size:11.5px;color:var(--hint);margin-top:6px">
+          Non si vede il documento qui sopra? Aprilo in una scheda nuova con il pulsante in alto.
+        </div>
+        <div class="modal-actions" style="margin-top:12px">
+          <span style="flex:1"></span>
+          <button onclick="chiudiPdf()" class="btn btn-primary">Chiudi</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function jsModalePdf() {
+  return `
+    function apriPdf(id, titolo) {
+      var t = document.getElementById('pdf-telaio');
+      document.getElementById('pdf-titolo').textContent = titolo || 'Documento';
+      document.getElementById('pdf-scheda').href = '/dashboard/proforma/' + id + '/pdf';
+      t.src = '/dashboard/proforma/' + id + '/pdf';
+      document.getElementById('modal-pdf').style.display = 'flex';
+    }
+    function chiudiPdf() {
+      // ⚠️ Si svuota il telaio: senza, il PDF resta caricato sotto la pagina e
+      // alla riapertura si vedrebbe per un istante quello di prima.
+      document.getElementById('pdf-telaio').src = 'about:blank';
+      document.getElementById('modal-pdf').style.display = 'none';
+    }
+    // Il tasto Esc chiude, come ci si aspetta da una finestrella.
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && document.getElementById('modal-pdf')
+          && document.getElementById('modal-pdf').style.display === 'flex') chiudiPdf();
+    });`;
+}
+
 function proformaPage(daChiedere, proforme, req) {
   const eur = n => '€ ' + fiscale.euro(n);
+  // Il numero del documento apre l'anteprima invece di portare via dalla pagina.
+  const linkPdf = (p, stile) =>
+    `<a href="#" onclick="apriPdf('${p.id}','Proforma n. ${esc(p.numero)}');return false" style="${stile}">n. ${esc(p.numero)}</a>`;
 
   const passo = (n, titolo, sottotitolo, corpo) => `
     <section style="margin-bottom:26px">
@@ -5974,14 +6046,14 @@ function proformaPage(daChiedere, proforme, req) {
     <div class="card" style="margin-bottom:12px">
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
         <div>
-          <a href="/dashboard/proforma/${p.id}/pdf" target="_blank" style="font-size:16px;font-weight:700;color:var(--blue);text-decoration:none">n. ${esc(p.numero)}</a>
+          ${linkPdf(p, "font-size:16px;font-weight:700;color:var(--blue);text-decoration:none")}
           <div style="font-size:13px;color:var(--muted)">
             ${esc(p.cliente_nome || '(destinatario cancellato)')} · ${p.data_emissione ? itDate(p.data_emissione) : ''}
           </div>
         </div>
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-left:auto">
           <strong style="font-size:15px">${eur(p.da_pagare)}</strong>
-          <a href="/dashboard/proforma/${p.id}/pdf" target="_blank" class="btn btn-neutral btn-sm">Apri il PDF</a>
+          <button onclick="apriPdf('${p.id}','Proforma n. ${esc(p.numero)}')" class="btn btn-neutral btn-sm">Apri il PDF</button>
           <button onclick="apriInvio('${p.id}')" class="btn btn-gold btn-sm">✉️ Rivedi e manda</button>
           <button onclick="annulla('${p.id}','${esc(p.numero)}',false)" class="btn btn-neutral btn-sm">Annulla</button>
         </div>
@@ -6015,7 +6087,7 @@ function proformaPage(daChiedere, proforme, req) {
     <div class="card" style="margin-bottom:12px">
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
         <div>
-          <a href="/dashboard/proforma/${p.id}/pdf" target="_blank" style="font-size:16px;font-weight:700;color:var(--blue);text-decoration:none">n. ${esc(p.numero)}</a>
+          ${linkPdf(p, "font-size:16px;font-weight:700;color:var(--blue);text-decoration:none")}
           <div style="font-size:13px;color:var(--muted)">
             ${esc(p.cliente_nome || '(destinatario cancellato)')}
             ${scad ? ' · scadenza ' + itDate(scad)
@@ -6048,7 +6120,7 @@ function proformaPage(daChiedere, proforme, req) {
     <div class="card" style="margin-bottom:12px;border-left:3px solid #4F8B73">
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
         <div>
-          <a href="/dashboard/proforma/${p.id}/pdf" target="_blank" style="font-size:16px;font-weight:700;color:var(--blue);text-decoration:none">n. ${esc(p.numero)}</a>
+          ${linkPdf(p, "font-size:16px;font-weight:700;color:var(--blue);text-decoration:none")}
           <div style="font-size:13px;color:var(--muted)">
             ${esc(p.cliente_nome || '(destinatario cancellato)')}
             ${quando ? ' · incassata il ' + itDate(quando) : ''}
@@ -6086,7 +6158,7 @@ function proformaPage(daChiedere, proforme, req) {
           return `
           <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 0;border-top:1px solid #f1f3f6;flex-wrap:wrap">
             <div>
-              <a href="/dashboard/proforma/${p.id}/pdf" target="_blank" style="font-weight:700;color:${ann ? 'var(--hint)' : 'var(--blue)'};text-decoration:none">n. ${esc(p.numero)}</a>
+              ${linkPdf(p, "font-weight:700;color:" + (ann ? "var(--hint)" : "var(--blue)") + ";text-decoration:none")}
               <span style="font-size:13px;color:var(--muted);margin-left:8px">${esc(p.cliente_nome || '—')}</span>
             </div>
             <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
@@ -6150,6 +6222,7 @@ function proformaPage(daChiedere, proforme, req) {
         Registrare un incasso in due modi diversi sarebbe l'errore che questa
         fetta sta togliendo. */ ''}
   ${pianoUi.modaleIncasso()}
+  ${modalePdf()}
 
   ${/* La finestrella è UNA sola per tutte le proforma: quello che cambia lo
         porta dentro `INVIO`, preparato qui dal server. Lo stesso schema di
@@ -6259,6 +6332,7 @@ function proformaPage(daChiedere, proforme, req) {
     ${/* ⭐ C4 — apriIncasso / confermaIncasso / chiudiIncasso arrivano da
           piano-ui.js: sono le stesse delle schede col piano. */ ''}
     ${pianoUi.jsIncasso()}
+    ${jsModalePdf()}
 
     // Un incasso non si corregge: si toglie e si rimette. Un fatto o c'e o non
     // c'e — e togliendolo il documento torna da se fra quelli in attesa.
