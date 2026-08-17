@@ -9,6 +9,10 @@
 // Esce con codice 0 se è tutto a posto, 1 se una regola si è rotta.
 
 const pf = require('../server/proforma');
+const fisc = require('../server/fiscale');
+// ⭐ C3 (17/08): al modulo si passa il SOGGETTO già normalizzato, non il record
+// grezzo. Qui si traduce come fa la pagina, così le prove usano la stessa porta.
+const sog = c => fisc.daCliente(c);
 
 let falliti = 0;
 function prova(titolo, atteso, ottenuto) {
@@ -65,7 +69,7 @@ console.log('\n— LE RIGHE: UNA PER SESSIONE —');
 console.log('\n— IL DOCUMENTO COMPLETO: il caso vero di Prova Soldi —');
 {
   const righe = pf.righeDaSedute(sedute);
-  const d = pf.componiProforma({ righe, cliente, emittente, dataEmissione: '2026-08-03' });
+  const d = pf.componiProforma({ righe, soggetto: sog(cliente), email: cliente.email, emittente, dataEmissione: '2026-08-03' });
   prova('imponibile: 3 sessioni di cui un intake ×2 = 400 €', 400, d.conti.imponibile);
   prova('IVA 22% = 88, da bonificare 488',
     { iva: 88, daPagare: 488 }, { iva: d.conti.iva, daPagare: d.conti.daPagare });
@@ -85,8 +89,8 @@ console.log('\n— LO STESSO CLIENTE, MA SOSTITUTO D’IMPOSTA —');
   // la ritenuta compare e quello che ti bonifica CAMBIA.
   const prof = { ...cliente, partita_iva: '98765432109', regime: 'ordinario',
     pec: 'studio@pec.it' };
-  const d = pf.componiProforma({ righe: pf.righeDaSedute(sedute), cliente: prof,
-    emittente, dataEmissione: '2026-08-03' });
+  const d = pf.componiProforma({ righe: pf.righeDaSedute(sedute), soggetto: sog(prof),
+    email: prof.email, emittente, dataEmissione: '2026-08-03' });
   prova('categoria: sostituto d’imposta', 'sostituto_it', d.categoria);
   prova('a parità di sessioni ti bonifica MENO, perché trattiene la ritenuta',
     { imponibile: 400, iva: 88, ritenuta: 80, totaleDocumento: 488, daPagare: 408 },
@@ -98,18 +102,83 @@ console.log('\n— QUANDO NON SI PUÒ EMETTERE, E PERCHÉ (mai un blocco muto) �
 {
   const righe = pf.righeDaSedute(sedute);
   prova('con tutto a posto non c’è nessun motivo per fermarsi',
-    [], pf.motiviCheImpediscono({ emittente, cliente, righe }));
+    [], pf.motiviCheImpediscono({ emittente, soggetto: sog(cliente), righe }));
   prova('senza IBAN si ferma, e dice dove si scrive',
     true, /IBAN.*Chi emette/.test(
-      pf.motiviCheImpediscono({ emittente: { ...emittente, iban: '' }, cliente, righe })[0]));
+      pf.motiviCheImpediscono({ emittente: { ...emittente, iban: '' }, soggetto: sog(cliente), righe })[0]));
   prova('col cliente senza codice fiscale si ferma, e dice cosa manca a LUI',
     true, /codice fiscale/.test(
-      pf.motiviCheImpediscono({ emittente, cliente: { ...cliente, codice_fiscale: '' }, righe })[0]));
+      pf.motiviCheImpediscono({ emittente, soggetto: sog({ ...cliente, codice_fiscale: '' }), righe })[0]));
   prova('senza sessioni da chiedere lo dice, invece di fare un documento da zero euro',
-    1, pf.motiviCheImpediscono({ emittente, cliente, righe: [] }).length);
+    1, pf.motiviCheImpediscono({ emittente, soggetto: sog(cliente), righe: [] }).length);
   prova('due problemi insieme → due motivi, non uno solo',
     2, pf.motiviCheImpediscono({ emittente: { ...emittente, iban: '' },
-      cliente: { ...cliente, codice_fiscale: '' }, righe }).length);
+      soggetto: sog({ ...cliente, codice_fiscale: '' }), righe }).length);
+}
+
+// ── FETTA C3: CHIEDERE UNA RATA, ANCHE A UN COMMITTENTE ────────────────────
+// Una rata non è una sessione: non ha una data di svolgimento, non si
+// moltiplica, e chi la riceve deve riconoscerla nel piano che ha firmato.
+console.log('\n— LE RIGHE DI UNA RATA —');
+{
+  const rate = [{ id: 't1', etichetta: 'Acconto', importo: 2100 }];
+  const r = pf.righeDaTranche(rate, { titolo: 'Progetto Flamingo Revolution', quota: 7000 });
+  prova('una rata, una riga', 1, r.length);
+  prova('⭐ la descrizione dice QUALE rata, di CHE COSA e con che percentuale',
+    'Acconto (30%) — Progetto Flamingo Revolution', r[0].descrizione);
+  prova('la percentuale si RICALCOLA da importo/quota, non si salva mai',
+    '(30%)', (r[0].descrizione.match(/\(\d+%\)/) || [''])[0]);
+  prova('la riga si ricorda da quale rata viene: è ciò che impedisce di chiederla due volte',
+    't1', r[0].tranche_id);
+  prova('quantità 1 e nessuna data: una rata non si svolge in un giorno',
+    { quantita: 1, data: null }, { quantita: r[0].quantita, data: r[0].data });
+  prova('senza la quota non si inventa una percentuale',
+    'Saldo — Progetto X',
+    pf.righeDaTranche([{ id: 't2', etichetta: 'Saldo', importo: 100 }],
+      { titolo: 'Progetto X' })[0].descrizione);
+}
+
+console.log('\n— LA STESSA PROFORMA, MA A UN COMMITTENTE —');
+{
+  const committente = {
+    denominazione: 'Flamingo Beauty S.r.l.', paese: 'IT',
+    natura_giuridica: 'persona_giuridica', partita_iva: '11122233344',
+    regime: 'ordinario', indirizzo: 'Via dei Fiori 3', cap: '20100',
+    citta: 'Milano', provincia: 'MI', pec: 'flamingo@pec.it',
+  };
+  const s = fisc.daCommittente(committente);
+  const righe = pf.righeDaTranche([{ id: 't1', etichetta: 'Acconto', importo: 2100 }],
+    { titolo: 'Progetto Flamingo Revolution', quota: 7000 });
+  const d = pf.componiProforma({ righe, soggetto: s, email: 'amministrazione@flamingo.it',
+    emittente, dataEmissione: '2026-08-17',
+    periodo: { da: '2026-09-01', a: '2026-12-15' } });
+  prova('un’azienda con partita IVA è sostituto d’imposta', 'sostituto_it', d.categoria);
+  prova('su 2.100: IVA 462, ritenuta 420, ti bonifica 2.142',
+    { imponibile: 2100, iva: 462, ritenuta: 420, totaleDocumento: 2562, daPagare: 2142 },
+    { imponibile: d.conti.imponibile, iva: d.conti.iva, ritenuta: d.conti.ritenuta,
+      totaleDocumento: d.conti.totaleDocumento, daPagare: d.conti.daPagare });
+  prova('il destinatario è l’azienda, con la sua denominazione',
+    'Flamingo Beauty S.r.l.', d.destinatarioDati.denominazione);
+  prova('l’indirizzo del committente sta in `indirizzo` e arriva lo stesso in `via`',
+    'Via dei Fiori 3', d.destinatarioDati.via);
+  prova('⭐ il periodo di una rata arriva da fuori: è quello del progetto',
+    { da: '2026-09-01', a: '2026-12-15' }, { da: d.periodoDa, a: d.periodoA });
+  prova('l’email non è un dato fiscale: si passa a parte e finisce nella fotografia',
+    'amministrazione@flamingo.it', d.destinatarioDati.email);
+}
+
+console.log('\n— IL BLOCCO PARLA DI CHI RICEVE, NON SEMPRE DEL «CLIENTE» —');
+{
+  const vuoto = fisc.daCommittente({ denominazione: 'Flamingo Beauty S.r.l.',
+    paese: 'IT', natura_giuridica: 'persona_giuridica' });
+  const m = pf.motiviCheImpediscono({ emittente, soggetto: vuoto, righe: [{ importo: 1 }] });
+  prova('un committente senza partita IVA ferma il documento', 1, m.length);
+  prova('e il messaggio manda nella scheda del COMMITTENTE, non in quella del cliente',
+    true, /committente.*scheda del committente/s.test(m[0]));
+  prova('quando non c’è niente da chiedere, il motivo si può dire con parole giuste',
+    'Questa rata è già stata chiesta.',
+    pf.motiviCheImpediscono({ emittente, soggetto: fisc.daCliente(cliente), righe: [],
+      nienteDaChiedere: 'Questa rata è già stata chiesta.' })[0]);
 }
 
 // ── IL PROMEMORIA: DAL PRIMO LUNEDÌ ────────────────────────────────────────

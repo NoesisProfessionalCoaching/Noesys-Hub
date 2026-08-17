@@ -753,6 +753,20 @@ async function init() {
                  REFERENCES percorsi(id) ON DELETE CASCADE`);
   await query(`ALTER TABLE tranche_progetto ALTER COLUMN progetto_id DROP NOT NULL`);
   await query(`CREATE INDEX IF NOT EXISTS tranche_progetto_perc ON tranche_progetto (percorso_id)`);
+  // ⭐ FETTA C3 (17/08/2026) — LA PROFORMA IMPARA A CHIEDERE UNA RATA.
+  // Fino a ieri sapeva parlare solo a un CLIENTE e contenere solo SESSIONI.
+  // Una rata di progetto la paga il committente, e una riga di proforma deve
+  // poter dire «questa è quella rata lì» — è da quel legame che si ricava,
+  // senza nessuna casella da spuntare, che una rata è già stata chiesta.
+  await query(`ALTER TABLE proforme ADD COLUMN IF NOT EXISTS committente_id TEXT
+                 REFERENCES committenti(id) ON DELETE SET NULL`);
+  await query(`ALTER TABLE proforme ADD COLUMN IF NOT EXISTS progetto_id TEXT
+                 REFERENCES progetti(id) ON DELETE SET NULL`);
+  // ⚠️ ON DELETE SET NULL come per `seduta_id`, mai CASCADE: cancellare una rata
+  // o un progetto non può far sparire un documento già emesso.
+  await query(`ALTER TABLE proforma_righe ADD COLUMN IF NOT EXISTS tranche_id TEXT
+                 REFERENCES tranche_progetto(id) ON DELETE SET NULL`);
+  await query(`CREATE INDEX IF NOT EXISTS proforma_righe_tranche ON proforma_righe (tranche_id)`);
   // «Metà percorso» per i percorsi, come già per i progetti: l'Hub non può
   // dedurre quando un percorso sarà a metà, lo scrive il coach. Finché è vuota,
   // la rata legata a quel momento non ha una scadenza — e la pagina lo dice.

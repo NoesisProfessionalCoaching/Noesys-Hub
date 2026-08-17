@@ -59,6 +59,41 @@ function righeDaSedute(sedute) {
     });
 }
 
+/**
+ * Le righe di una proforma che chiede UNA RATA (fetta C3, 17/08/2026).
+ *
+ * ⚠️ Una rata non è una sessione: non ha una data di svolgimento e non si
+ * moltiplica per niente. La sua riga dice **quale rata di che cosa**, perché chi
+ * la riceve deve riconoscerla nel piano che ha firmato — la percentuale serve
+ * proprio a quello ed è per questo che si scrive per esteso.
+ * La percentuale si RICALCOLA da importo/quota: non è mai un dato salvato
+ * (regola del 27/07).
+ *
+ * @param {Array} rate le tranche da chiedere (di solito una sola)
+ * @param {object} ctx  { titolo, quota } — di quale progetto/pacchetto, e la
+ *   cifra concordata di CHI PAGA, che è il denominatore della percentuale.
+ */
+function righeDaTranche(rate, ctx) {
+  const quota = Number((ctx || {}).quota) || 0;
+  const titolo = ((ctx || {}).titolo || '').trim();
+  return (rate || []).map((t, i) => {
+    const importo = fiscale.arrotonda(t.importo);
+    const perc = quota ? Math.round(importo / quota * 100) : null;
+    const etichetta = (t.etichetta || 'Rata').trim();
+    return {
+      tranche_id: t.id,
+      data: null,                  // una rata non si svolge in un giorno
+      descrizione: etichetta
+        + (perc !== null ? ' (' + perc + '%)' : '')
+        + (titolo ? ' — ' + titolo : ''),
+      quantita: 1,
+      prezzo_unitario: importo,
+      importo,
+      ordine: i,
+    };
+  });
+}
+
 // Le fotografie di chi manda e di chi riceve. Si congelano dentro il documento
 // perché un indirizzo che cambia non deve riscrivere una proforma già spedita.
 function fotoEmittente(e) {
@@ -74,13 +109,22 @@ function fotoEmittente(e) {
   };
 }
 
-function fotoDestinatario(c) {
-  const s = fiscale.daCliente(c || {});
+/**
+ * ⭐ FETTA C3 — qui non arriva più «un cliente», arriva **un soggetto già
+ * normalizzato**: `fiscale.daCliente()` e `fiscale.daCommittente()` producono la
+ * stessa identica forma (verificato il 17/08), quindi la proforma non ha nessun
+ * motivo di sapere se sta scrivendo a una persona o a un'azienda. Sapendolo,
+ * avrebbe due strade da tenere d'accordo per sempre.
+ * L'email sta a parte perché non è un dato fiscale e i due traduttori non la
+ * portano: sul cliente è `email`, sul committente è `email` del committente.
+ */
+function fotoDestinatario(s, email) {
+  s = s || {};
   return {
     denominazione: s.denominazione, via: s.via || '', cap: s.cap || '',
     citta: s.citta || '', provincia: s.provincia || '', paese: s.paese || 'IT',
     codice_fiscale: s.codice_fiscale || '', partita_iva: s.partita_iva || '',
-    email: (c && c.email) || '',
+    email: email || '',
   };
 }
 
@@ -91,19 +135,27 @@ function fotoDestinatario(c) {
  * l'Hub non deve MAI fermarsi in silenzio lasciando chi lo usa a chiedersi
  * perché non succede niente — ogni blocco dice cosa manca e dove si sistema.
  */
-function motiviCheImpediscono({ emittente, cliente, righe }) {
+function motiviCheImpediscono({ emittente, soggetto, righe, nienteDaChiedere }) {
   const motivi = [];
   const em = fiscale.datiMancantiEmittente(emittente);
   if (!em.pronto) {
     motivi.push('Mancano i tuoi dati: ' + em.mancanti.join(', ')
       + ' — si scrivono in Amministrazione, «Chi emette».');
   }
-  const st = fiscale.statoFatturabilita(fiscale.daCliente(cliente || {}));
+  const s = soggetto || {};
+  const st = fiscale.statoFatturabilita(s);
   if (st.stato !== 'pronto') {
-    motivi.push('I dati del cliente non bastano per fatturargli. ' + st.messaggio + '.');
+    // Chi si va a sistemare cambia con chi riceve: mandare il coach nella
+    // scheda sbagliata è peggio che non dirgli niente.
+    const chi = s.ruolo === 'committente' ? 'del committente' : 'del cliente';
+    const dove = s.ruolo === 'committente'
+      ? ' — si sistemano nella scheda del committente.'
+      : ' — si sistemano nella scheda del cliente.';
+    motivi.push('I dati ' + chi + ' non bastano per fatturargli. ' + st.messaggio + '.' + dove);
   }
   if (!righe || !righe.length) {
-    motivi.push('Non c’è nessuna sessione da chiedere: sono già state chieste tutte.');
+    motivi.push(nienteDaChiedere
+      || 'Non c’è nessuna sessione da chiedere: sono già state chieste tutte.');
   }
   return motivi;
 }
@@ -114,20 +166,24 @@ function motiviCheImpediscono({ emittente, cliente, righe }) {
  * prossimo ed è l'unico posto dove due richieste insieme non possono prenderne
  * uno uguale.
  */
-function componiProforma({ righe, cliente, emittente, dataEmissione }) {
-  const categoria = fiscale.categoriaFiscale(fiscale.daCliente(cliente || {}));
+function componiProforma({ righe, soggetto, email, emittente, dataEmissione, periodo }) {
+  const categoria = fiscale.categoriaFiscale(soggetto || {});
   const imponibile = fiscale.arrotonda(
     (righe || []).reduce((s, r) => s + Number(r.importo || 0), 0));
   const conti = fiscale.calcolaDocumento({ categoria, imponibile });
+  // Il periodo di solito si ricava dalle date delle righe (le sessioni). Una
+  // RATA però non si svolge in un giorno: lì il periodo è quello del progetto,
+  // e arriva da fuori. Senza, il documento non direbbe di quando si parla.
   const date = (righe || []).map(r => r.data).filter(Boolean).sort();
+  const p = periodo || {};
   return {
     dataEmissione,
     categoria,
     conti,                                   // null se la categoria non è decidibile
-    periodoDa: date[0] || null,
-    periodoA: date[date.length - 1] || null,
+    periodoDa: p.da || date[0] || null,
+    periodoA: p.a || date[date.length - 1] || null,
     emittenteDati: fotoEmittente(emittente),
-    destinatarioDati: fotoDestinatario(cliente),
+    destinatarioDati: fotoDestinatario(soggetto, email),
     righe: righe || [],
   };
 }
@@ -502,7 +558,7 @@ function daQuantoFerma(giorni) {
 }
 
 module.exports = {
-  numeroProforma, righeDaSedute, componiProforma, motiviCheImpediscono,
+  numeroProforma, righeDaSedute, righeDaTranche, componiProforma, motiviCheImpediscono,
   fotoEmittente, fotoDestinatario,
   generaPdf, nomeFile, testoMail, archiviaSuDrive,
   GIORNI_FERMA, daMandare, giorniFerma, daQuantoFerma,

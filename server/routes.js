@@ -1640,11 +1640,15 @@ router.post('/dashboard/clients/:id/proforma', requireCoach, async (req, res) =>
        ORDER BY s.data`, [req.params.id]);
 
     const righe = proforma.righeDaSedute(sed.rows);
-    const motivi = proforma.motiviCheImpediscono({ emittente, cliente, righe });
+    // ⭐ C3 — al modulo si passa il SOGGETTO già normalizzato, non il cliente:
+    // così la stessa strada serve anche un committente (fiscale.daCommittente).
+    const soggetto = fiscale.daCliente(cliente || {});
+    const motivi = proforma.motiviCheImpediscono({ emittente, soggetto, righe });
     if (motivi.length) return res.status(400).json({ error: motivi.join(' ') });
 
     const oggi = new Date().toISOString().slice(0, 10);
-    const d = proforma.componiProforma({ righe, cliente, emittente, dataEmissione: oggi });
+    const d = proforma.componiProforma({ righe, soggetto, email: cliente.email,
+      emittente, dataEmissione: oggi });
     if (!d.conti) return res.status(400).json({ error: 'Non si riesce a stabilire la categoria fiscale del cliente.' });
     const anno = Number(oggi.slice(0, 4));
 
@@ -1999,7 +2003,7 @@ router.get('/dashboard/amministrazione/proforma', requireCoach, async (req, res)
     const perId = new Map(cl.rows.map(c => [c.id, c]));
     for (const c of daChiedere) {
       c.motivi = proforma.motiviCheImpediscono({
-        emittente, cliente: perId.get(c.id) || {},
+        emittente, soggetto: fiscale.daCliente(perId.get(c.id) || {}),
         righe: new Array(c.nSessioni),
       });
     }
@@ -3744,7 +3748,8 @@ Germano`;
   // la rotta quando crea il documento (stesso modulo), così non può succedere
   // che il pulsante prometta una cosa e il server ne faccia un'altra.
   const motiviBlocco = !mat.nSessioni ? [] : proforma.motiviCheImpediscono({
-    emittente: fatt.emittente || {}, cliente: client, righe: new Array(mat.nSessioni),
+    emittente: fatt.emittente || {}, soggetto: fiscale.daCliente(client),
+    righe: new Array(mat.nSessioni),
   });
   const azioneMaturato = !mat.nSessioni ? '' : (motiviBlocco.length ? `
         <div style="background:#fffdf6;border-left:3px solid var(--gold);border-radius:8px;padding:12px 14px;margin-top:10px">
