@@ -6158,41 +6158,93 @@ function proformaPage(daChiedere, proforme, req) {
     </div>`;
   }).join('');
 
-  // ── 5. Già fatte ──────────────────────────────────────────────────────────
+  // ── 5. Chiuse ─────────────────────────────────────────────────────────────
   // Non è un passaggio da fare: è la ricevuta, e serve a non chiedere due volte.
   // ⚠️ `inviata_data` è un MOMENTO, non una data: con itDate() usciva «Wed Aug
   // 12», perché quella funzione taglia una stringa ISO e qui arriva un timestamp.
   // itDateTime() lo scrive in ora italiana — e su una cosa spedita l'ora serve.
-  // ⭐ C4 — qui restano solo i documenti che non chiedono più niente: annullati,
-  // o incassati E fatturati. Gli altri stanno nei due passaggi qui sopra, dove
-  // c'è scritto cosa fare.
-  const fatte = proforme.filter(p =>
+  //
+  // 🔴 18/08 — DIVISE IN DUE, dopo che Germano ha guardato la pagina con i suoi
+  // dati: «vengono indicate tutte quelle annullate, questo non dovrebbe
+  // succedere». Prima un unico elenco «Già fatte» metteva la stessa faccia a
+  // tre cose diverse, e tre prove annullate stavano sopra l'unica riga utile.
+  // ⛔ Cancellarle NO (era la sua proposta, e gliel'ho detto): il numero resta
+  // bruciato comunque, e un buco nella numerazione senza spiegazione è peggio
+  // di un documento che dice ANNULLATA — soprattutto se quella proforma era
+  // già stata spedita, e il cliente ce l'ha in mano.
+  // ⭐ Quindi restano, ma ripiegate: si aprono se servono.
+  const chiuse = proforme.filter(p =>
     !proforma.daMandare(p) && !inAttesa.includes(p) && !incassi.daFatturare(p));
-  const fatteHtml = !fatte.length ? '' : `
+  const concluse  = chiuse.filter(p => p.stato !== 'annullata');
+  const annullate = chiuse.filter(p => p.stato === 'annullata');
+
+  const rigaConclusa = p => {
+    const quando = incassi.dataChiudeIlConto(p.incassi);
+    return `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 0;border-top:1px solid #f1f3f6;flex-wrap:wrap">
+        <div>
+          ${linkPdf(p, "font-weight:700;color:var(--blue);text-decoration:none")}
+          <span style="font-size:13px;color:var(--muted);margin-left:8px">${esc(p.cliente_nome || '—')}</span>
+          <div style="font-size:12px;color:var(--hint);margin-top:2px">
+            ${quando ? 'incassata il ' + itDate(quando) : 'mandata' + (p.inviata_data ? ' il ' + itDateTime(p.inviata_data) : '')}
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <span style="font-size:13px;color:var(--ink)">${eur(p.da_pagare)}</span>
+          ${/* ⭐ IL NUMERO DELLA FATTURA SI VEDE. Buco mio, trovato da Germano
+                provando: appena lo scrivevi la riga spariva dal passaggio 4 e
+                quel numero non compariva più da nessuna parte — se il
+                commercialista chiede «che numero hai dato a questa?», bisognava
+                andarlo a cercare nel documento. */ ''}
+          ${p.fattura_numero
+            ? `<span class="badge" style="background:#eafaf1;color:#065f46">Fattura n. ${esc(p.fattura_numero)}${p.fattura_data ? ' del ' + itDate(p.fattura_data) : ''}</span>`
+            : `<span class="badge" style="background:#e8f4fd;color:#1A5280">Mandata${p.inviata_data ? ' il ' + itDateTime(p.inviata_data) : ''}</span>`}
+          ${p.drive_url
+            ? `<a href="${esc(p.drive_url)}" target="_blank" style="font-size:12px;color:var(--muted);text-decoration:none">copia su Drive</a>`
+            : `<button onclick="riprovaDrive('${p.id}')" class="btn btn-neutral btn-sm" title="La mail è partita, ma la copia in archivio no">Copia su Drive non riuscita — riprova</button>`}
+          <button onclick="annulla('${p.id}','${esc(p.numero)}',true)" class="btn btn-neutral btn-sm">Annulla</button>
+        </div>
+      </div>`;
+  };
+
+  // ⚠️ Un'annullata MAI SPEDITA e una annullata DOPO l'invio non sono la stessa
+  // cosa: la seconda il cliente ce l'ha, e va detto. Prima avevano la stessa
+  // etichetta grigia.
+  const rigaAnnullata = p => `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 0;border-top:1px solid #f1f3f6;flex-wrap:wrap">
+        <div>
+          ${linkPdf(p, "font-weight:700;color:var(--hint);text-decoration:none")}
+          <span style="font-size:13px;color:var(--hint);margin-left:8px">${esc(p.cliente_nome || '—')}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <span style="font-size:13px;color:var(--hint)">${eur(p.da_pagare)}</span>
+          ${p.inviata_data
+            ? `<span class="badge" style="background:#fdf0ee;color:#a4342a">Annullata dopo essere stata mandata</span>`
+            : `<span class="badge" style="background:#f1f3f6;color:#8a8a8a">Annullata, mai mandata</span>`}
+        </div>
+      </div>`;
+
+  const conclusaHtml = !concluse.length ? '' : `
     <section style="margin-top:34px">
-      <h2 style="margin-bottom:4px;font-size:16px;color:var(--muted)">Già fatte</h2>
-      <div class="card" style="padding:4px 18px">
-        ${fatte.map(p => {
-          const ann = p.stato === 'annullata';
-          return `
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 0;border-top:1px solid #f1f3f6;flex-wrap:wrap">
-            <div>
-              ${linkPdf(p, "font-weight:700;color:" + (ann ? "var(--hint)" : "var(--blue)") + ";text-decoration:none")}
-              <span style="font-size:13px;color:var(--muted);margin-left:8px">${esc(p.cliente_nome || '—')}</span>
-            </div>
-            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-              <span style="font-size:13px;color:${ann ? 'var(--hint)' : 'var(--ink)'}">${eur(p.da_pagare)}</span>
-              ${ann
-                ? `<span class="badge" style="background:#f1f3f6;color:#8a8a8a">Annullata</span>`
-                : `<span class="badge" style="background:#e8f4fd;color:#1A5280">Mandata${p.inviata_data ? ' il ' + itDateTime(p.inviata_data) : ''}${p.inviata_a ? ' a ' + esc(p.inviata_a) : ''}</span>
-                   ${p.drive_url
-                     ? `<a href="${esc(p.drive_url)}" target="_blank" style="font-size:12px;color:var(--muted);text-decoration:none">copia su Drive</a>`
-                     : `<button onclick="riprovaDrive('${p.id}')" class="btn btn-neutral btn-sm" title="La mail è partita, ma la copia in archivio no">Copia su Drive non riuscita — riprova</button>`}
-                   <button onclick="annulla('${p.id}','${esc(p.numero)}',true)" class="btn btn-neutral btn-sm">Annulla</button>`}
-            </div>
-          </div>`; }).join('')}
-      </div>
+      <h2 style="margin-bottom:4px;font-size:16px;color:var(--muted)">Chiuse</h2>
+      <p style="color:var(--hint);font-size:12px;margin:0 0 10px">Incassate e già fatturate: non chiedono più niente.</p>
+      <div class="card" style="padding:4px 18px">${concluse.map(rigaConclusa).join('')}</div>
     </section>`;
+
+  // Ripiegate: ci sono, non stanno in mezzo. Il numero resta bruciato e il
+  // documento resta consultabile — è tutto quello che serve.
+  const annullateHtml = !annullate.length ? '' : `
+    <section style="margin-top:22px">
+      <details>
+        <summary style="cursor:pointer;color:var(--muted);font-size:13px">
+          ${annullate.length === 1 ? '1 proforma annullata' : annullate.length + ' proforma annullate'}
+          <span style="color:var(--hint)">— il numero resta bruciato, il documento si può ancora aprire</span>
+        </summary>
+        <div class="card" style="padding:4px 18px;margin-top:10px">${annullate.map(rigaAnnullata).join('')}</div>
+      </details>
+    </section>`;
+
+  const fatteHtml = conclusaHtml + annullateHtml;
 
   const nientePerNiente = !daChiedere.length && !proforme.length;
 
