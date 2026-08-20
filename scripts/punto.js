@@ -96,6 +96,12 @@ try {
 async function numeriVeri() {
   const url = process.env.DATABASE_URL_REALE;
   if (!url) { dì('\n🔎 DATI VERI — saltati (manca --env-file=.env.reale)'); return; }
+  // ⚠️ SI DICE SEMPRE DA QUALE DATABASE VENGONO I NUMERI: è una regola del
+  // cantiere, non una gentilezza. Questo script è nato dicendo «produzione»
+  // mentre leggeva lo sviluppo — un numero senza la sua provenienza è un numero
+  // di cui non ci si può fidare.
+  const host = (url.match(/@([^:/]+)/) || [])[1] || '(sconosciuto)';
+  const dove = host.startsWith('reseau') ? 'PRODUZIONE' : 'SVILUPPO';
   const { Pool } = require(path.join(REPO, 'node_modules', 'pg'));
   const pool = new Pool({
     connectionString: url,
@@ -105,18 +111,42 @@ async function numeriVeri() {
   });
   try {
     const q = async s => (await pool.query(s)).rows;
-    const [c] = await q('SELECT count(*)::int n FROM clients');
-    const [p] = await q("SELECT count(*)::int n, count(*) FILTER (WHERE stato='attivo')::int attivi FROM percorsi");
-    const pf = await q('SELECT stato, count(*)::int n FROM proforme GROUP BY stato ORDER BY stato');
-    const [i] = await q('SELECT count(*)::int n, COALESCE(sum(importo),0)::float tot FROM incassi');
+    // ⭐ 20/08 — I NUMERI SEPARANO I VERI DAI GUSCI DI PROVA.
+    // Prima qui c'era `count(*) FROM clients` e usciva «clienti 15», mettendo
+    // insieme le persone vere e i record di collaudo. Germano: «hai inserito un
+    // numero di clienti falso». Un totale che mescola le due cose è una bugia, e
+    // sui soldi è una bugia pericolosa: oggi Noesys ha incassato ZERO.
+    // ⚠️ `di_collaudo IS NULL` = mai classificato. Non entra in nessuno dei due
+    // conti e viene DETTO: è il modo in cui un record nuovo si fa notare invece
+    // di scivolare dentro un totale.
+    const [c] = await q(`SELECT count(*) FILTER (WHERE di_collaudo IS FALSE)::int veri,
+                                count(*) FILTER (WHERE di_collaudo IS TRUE)::int prova,
+                                count(*) FILTER (WHERE di_collaudo IS NULL)::int boh
+                           FROM clients`);
+    const [p] = await q(`SELECT count(*) FILTER (WHERE c.di_collaudo IS FALSE)::int veri,
+                                count(*) FILTER (WHERE c.di_collaudo IS FALSE AND p.stato='attivo')::int attivi
+                           FROM percorsi p JOIN clients c ON c.id = p.client_id`);
+    const [k] = await q(`SELECT count(*) FILTER (WHERE di_collaudo IS NULL)::int boh FROM committenti`);
+    const [g] = await q(`SELECT count(*) FILTER (WHERE di_collaudo IS NULL)::int boh FROM progetti`);
+    // I soldi: veri = documenti che NON vanno a un cliente o committente di collaudo.
+    const [s1] = await q(`SELECT
+        COALESCE(sum(i.importo) FILTER (WHERE COALESCE(cl.di_collaudo, ko.di_collaudo) IS NOT TRUE), 0)::float veri,
+        COALESCE(sum(i.importo) FILTER (WHERE COALESCE(cl.di_collaudo, ko.di_collaudo) IS TRUE), 0)::float prova
+      FROM incassi i JOIN proforme pf ON pf.id = i.proforma_id
+      LEFT JOIN clients cl ON cl.id = pf.client_id
+      LEFT JOIN committenti ko ON ko.id = pf.committente_id`);
     const [ult] = await q('SELECT numero FROM proforme ORDER BY anno DESC, progressivo DESC LIMIT 1');
-    const [daF] = await q(`SELECT count(*)::int n FROM proforme p
-      WHERE p.stato='inviata' AND p.fattura_numero IS NULL
-        AND COALESCE((SELECT sum(importo) FROM incassi i WHERE i.proforma_id=p.id),0) >= p.da_pagare`);
-    dì('\n🔎 DATI VERI (produzione, sola lettura)');
-    dì(`   clienti ${c.n} · percorsi ${p.n} (${p.attivi} attivi)`);
-    dì(`   proforma: ${pf.map(r => r.stato + ' ' + r.n).join(' · ')} — ultimo numero ${ult ? ult.numero : '—'}`);
-    dì(`   incassi registrati ${i.n} (€ ${i.tot.toFixed(2)}) · da fatturare in SuperBill: ${daF.n}`);
+    dì(`\n🔎 DATI DAL DATABASE DI ${dove} — ${host} (sola lettura)`);
+    dì(`   clienti VERI ${c.veri} (${p.veri} percorsi, ${p.attivi} attivi)`);
+    dì(`   ⚗️  di collaudo, da non contare mai: ${c.prova} clienti · tutti i committenti · tutti i progetti`);
+    dì(`   💶 incassato VERO: € ${s1.veri.toFixed(2)}   (di collaudo: € ${s1.prova.toFixed(2)})`);
+    dì(`   proforma: ultimo numero bruciato ${ult ? ult.numero : '—'} — tutte di collaudo`);
+    const boh = c.boh + k.boh + g.boh;
+    if (boh) {
+      dì(`\n   🔴 ${boh} RECORD NON CLASSIFICATI (${c.boh} clienti · ${k.boh} committenti · ${g.boh} progetti)`);
+      dì('      Sono nati dopo l\'ultima classificazione: CHIEDERE A GERMANO se sono veri');
+      dì('      o di prova, e scriverlo in db.js. Finché sono qui, non stanno in nessun conto.');
+    }
   } catch (e) {
     dì(`\n🔎 DATI VERI — non raggiungibili (${e.message.split('\n')[0]})`);
   } finally { await pool.end().catch(() => {}); }

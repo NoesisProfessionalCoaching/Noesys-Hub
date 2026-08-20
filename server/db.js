@@ -804,6 +804,41 @@ async function init() {
   await query(`ALTER TABLE proforme ADD COLUMN IF NOT EXISTS scadenza DATE`);
   // ─────────────────────────────────────────────────────────────────────────
 
+  // ─── ⭐ 20/08/2026 — CHI È VERO E CHI È DI COLLAUDO, SCRITTO NEI DATI ──────
+  // 🔴 Nato da un errore: il punto della situazione stampava «clienti 15»,
+  // mettendo insieme le persone vere e i gusci di prova. Germano: «hai inserito
+  // un numero di clienti falso… devi sempre sapere quali sono i clienti veri».
+  // ⭐ Finché quell'informazione vive solo in una memoria, OGNI conto che scrivo
+  // può ignorarla. Scritta qui, la può usare qualunque query — e non dipende più
+  // da cosa mi ricordo.
+  // ⚠️ Non contraddice la decisione c1 dell'11/08 («niente flag è-di-prova sui
+  // record»): quella parlava di ETICHETTE NELLE PAGINE. Il segno sta nei dati;
+  // dove mostrarlo lo decidiamo caso per caso, e per ora non si mostra da nessuna
+  // parte.
+  // ⭐ LA COLONNA NASCE VUOTA APPOSTA. NULL vuol dire «non ancora classificato»,
+  // e un record nuovo nasce così: il punto della situazione lo segnala invece di
+  // farlo entrare in un totale come se fosse vero. Un default avrebbe rimesso in
+  // piedi lo stesso difetto, in silenzio.
+  await query(`ALTER TABLE clients     ADD COLUMN IF NOT EXISTS di_collaudo BOOLEAN`);
+  await query(`ALTER TABLE committenti ADD COLUMN IF NOT EXISTS di_collaudo BOOLEAN`);
+  await query(`ALTER TABLE progetti    ADD COLUMN IF NOT EXISTS di_collaudo BOOLEAN`);
+  // La classificazione di partenza, decisa da Germano (17-20/08). Si scrive UNA
+  // volta sola: `WHERE di_collaudo IS NULL` fa sì che un domani, se cambia
+  // un'etichetta a mano, il riavvio non gliela riscriva addosso.
+  await query(`UPDATE clients SET di_collaudo = TRUE WHERE di_collaudo IS NULL AND name IN (
+                 'Prova Soldi', 'Federica Rodi', 'Betty Forse', 'Ninny Boh', 'Prova', 'Terry Non lo so')`);
+  await query(`UPDATE clients SET di_collaudo = FALSE WHERE di_collaudo IS NULL AND name IN (
+                 'Francesco Pilo', 'Alessandra Patti', 'Giuliano David', 'Davide Bozzoni',
+                 'Rebecca Ros', 'Alessia Notari', 'Barbara Preti', 'Giulio Sudano', 'Marika Rappo')`);
+  // ⚠️ Committenti e progetti si marcano PER NOME, non tutti in blocco: un
+  // «UPDATE … WHERE di_collaudo IS NULL» marcherebbe di collaudo anche il primo
+  // committente VERO che arriverà a settembre.
+  await query(`UPDATE committenti SET di_collaudo = TRUE WHERE di_collaudo IS NULL AND denominazione IN (
+                 'Flamingo Beauty', 'Gessi White Teeth')`);
+  await query(`UPDATE progetti SET di_collaudo = TRUE WHERE di_collaudo IS NULL AND titolo IN (
+                 'Flamingo Revolution')`);
+  // ─────────────────────────────────────────────────────────────────────────
+
   // «Metà percorso» per i percorsi, come già per i progetti: l'Hub non può
   // dedurre quando un percorso sarà a metà, lo scrive il coach. Finché è vuota,
   // la rata legata a quel momento non ha una scadenza — e la pagina lo dice.
