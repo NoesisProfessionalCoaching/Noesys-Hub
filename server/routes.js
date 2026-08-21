@@ -1063,6 +1063,33 @@ function sedutaFields(b) {
   };
 }
 
+// «Prepara Doc. Final» (21/08/2026) — un clic, nessuna maschera.
+// Il coach non deve compilare niente: obiettivo, argomenti e attività nascono dal
+// REPORT, e quando la Final si fissa quel report non esiste ancora. Qui si crea solo
+// la riga che ASPETTA il report della Final, ed è l'aggancio del Documento di chiusura.
+// ⭐ La data NON si chiede: vive già in agenda (regola «vince l'ultima notizia») e un
+// secondo ingresso vorrebbe dire due date che prima o poi divergono. Se in agenda non
+// c'è niente, il pulsante non inventa: lo dice e si ferma (scelta di Germano, 21/08).
+router.post('/dashboard/clients/:id/percorsi/:pid/prepara-final', requireCoach, express.json(), async (req, res) => {
+  try {
+    const gia = await db.query("SELECT id FROM sedute WHERE percorso_id=$1 AND tipo='Final'", [req.params.pid]);
+    if (gia.rows.length) return res.json({ ok: true, id: gia.rows[0].id, gia: true });
+
+    const righe = await appuntamenti.perCliente(req.params.id);
+    const mio = righe.find(r => r.percorso_id === req.params.pid);
+    const quando = mio && mio.scad ? String(mio.scad).slice(0, 10) : null;
+    if (!quando) return res.status(400).json({
+      error: "Non c'è nessun appuntamento fissato per questo percorso. Fissa prima la data della Final in home, poi torna qui." });
+
+    const sid = uuidv4();
+    await db.query(
+      `INSERT INTO sedute (id, percorso_id, client_id, tipo, data, ore, stato, origine)
+       VALUES ($1,$2,$3,'Final',$4,0,'bozza','manuale')`,
+      [sid, req.params.pid, req.params.id, quando]);
+    res.json({ ok: true, id: sid, data: quando });
+  } catch (err) { console.error('[prepara-final]', err); res.status(500).json({ error: 'Errore' }); }
+});
+
 // Crea una seduta (riga della Scheda Cliente)
 router.post('/dashboard/clients/:id/percorsi/:pid/sedute', requireCoach, express.json(), async (req, res) => {
   try {
@@ -4073,13 +4100,18 @@ Germano`;
   // In sospeso qui = ci sono sessioni in BOZZA da approvare. Prima nasceva
   // sempre aperta; dal 13/08 vale lo stesso criterio di tutte le altre.
   const bozzeDaApprovare = sedute.some(s => s.stato === 'bozza' && !isProgrammata(s));
+  // Il pulsante «Prepara Doc. Final» ha senso solo su un percorso ATTIVO che non ha
+  // ancora la sua Final: dove la Final c'è già (o il percorso è chiuso/interrotto) non
+  // compare proprio — «niente Final, niente documento», e una Final non si fa due volte.
+  const percorsoPerFinal = percorsi.find(p => p.stato === 'attivo'
+    && !sedute.some(s => s.percorso_id === p.id && s.tipo === 'Final'));
   const seduteHtml = `
     <div class="card">
       <details class="sec"${bozzeDaApprovare ? ' open' : ''}>
         <summary style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;cursor:pointer">
           <span style="display:flex;align-items:center;gap:8px"><span class="sec-caret">▸</span><h2 style="margin:0">Scheda Cliente <span style="font-weight:400;font-size:13px;color:#aaa">(${sedute.length} ${sedute.length === 1 ? 'sessione' : 'sessioni'}${oreConfermate > 0 ? ` · ${fmtOre(oreConfermate)} h` : ''})</span></h2></span>
           <span style="display:inline-flex;gap:8px;align-items:center">
-            ${percorsi.length ? `<button onclick="event.stopPropagation();openSeduta()" class="btn btn-neutral btn-sm" title="Scrivi a mano una sessione: una già fatta, oppure una FISSATA (con la data nel futuro), che resta «in programma» e non conta ore finché non avviene">+ Aggiungi sessione</button>` : ''}
+            ${percorsoPerFinal ? `<button onclick="event.stopPropagation();preparaFinal('${percorsoPerFinal.id}')" class="btn btn-neutral btn-sm" title="Crea la riga della Final che aspetta il suo report: è l'aggancio del Documento di chiusura. La data la prende dall'appuntamento in agenda.">📄 Prepara Doc. Final</button>` : ''}
             ${client.drive_url ? `<button id="scan-btn" onclick="event.stopPropagation();scanDrive()" class="btn btn-gold btn-sm" title="Legge i report Word nuovi dalla cartella Drive e ne aggiunge la riga in bozza">⟳ Cerca nuovi report</button>` : ''}
           </span>
         </summary>
@@ -5200,6 +5232,12 @@ Germano`;
       oreAuto();
       document.getElementById('s-ore').value = s.ore;
       document.getElementById('modal-seduta').style.display = 'flex';
+    }
+    async function preparaFinal(pid) {
+      const r = await fetch('/dashboard/clients/' + CID + '/percorsi/' + pid + '/prepara-final', { method: 'POST' });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { alert(d.error || 'Non è riuscito'); return; }
+      location.reload();
     }
     async function saveSeduta() {
       const pid = document.getElementById('s-percorso').value;
