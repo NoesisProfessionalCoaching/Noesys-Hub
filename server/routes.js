@@ -173,6 +173,7 @@ async function mostraHome(req, res) {
                   LEFT JOIN clients cl ON cl.id = COALESCE(s.client_id, p.client_id)
                   LEFT JOIN progetti g ON g.id = p.progetto_id
                  WHERE s.stato = 'bozza'
+                   AND (s.data IS NULL OR s.data <= CURRENT_DATE)
                  ORDER BY s.data DESC NULLS LAST LIMIT 6`),
       db.query(`SELECT cl.id, cl.name, count(*)::int n
                   FROM percorsi p JOIN clients cl ON cl.id = p.client_id
@@ -1069,10 +1070,14 @@ router.post('/dashboard/clients/:id/percorsi/:pid/sedute', requireCoach, express
     const f = sedutaFields(req.body);
     const sid = uuidv4();
     await db.query(
-      `INSERT INTO sedute (id, percorso_id, client_id, tipo, data, ore, obiettivo, argomenti, attivita, scadenza, prossima_ora, eseguita, note)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+      `INSERT INTO sedute (id, percorso_id, client_id, tipo, data, ore, obiettivo, argomenti, attivita, scadenza, prossima_ora, eseguita, note, stato)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
       [sid, req.params.pid, req.params.id, t, req.body.data || null, oreForTipo(t, req.body.ore),
-       f.obiettivo, f.argomenti, f.attivita, f.scadenza, f.prossima_ora, f.eseguita, f.note]
+       f.obiettivo, f.argomenti, f.attivita, f.scadenza, f.prossima_ora, f.eseguita, f.note,
+       // Una sessione con data nel futuro è FISSATA, non fatta: nasce in bozza, così
+       // non conta ore né sessioni finché non avviene, e quando arriva il suo report
+       // è questa riga a riempirsi (server/scan.js → rigaDaRiempire).
+       (req.body.data && String(req.body.data) > oggiIso()) ? 'bozza' : 'confermata']
     );
     await recomputePercorso(req.params.pid);
     res.json({ ok: true, id: sid });
@@ -3858,14 +3863,15 @@ function cellEseg(v) {
 // Una riga della Scheda Cliente (una per sessione).
 function renderSedutaRow(s) {
   const T = { Intake: { bg: '#e8f4fd', c: '#1A5280' }, Ongoing: { bg: '#eafaf1', c: '#4F8B73' }, Final: { bg: '#fff8ec', c: '#8a6d1e' } }[s.tipo] || { bg: '#eee', c: '#555' };
-  const isBozza = s.stato === 'bozza';
+  const isProg = isProgrammata(s);
+  const isBozza = s.stato === 'bozza' && !isProg;
   const cell = v => (v && String(v).trim() && String(v).trim() !== '—') ? esc(String(v)) : '<span style="color:#ccc">—</span>';
   const noteVal = (s.note && s.note.trim()) ? s.note : (s.scheda || ''); // recupera il vecchio formato
   const approvaBtn = isBozza
     ? `<button onclick="approvaSeduta('${s.id}','${s.percorso_id}')" class="btn btn-sm" style="background:#e7f1ec;color:#2e6b52;display:block;margin-bottom:5px" title="Approva">✓ Approva</button>` : '';
-  return `<tr style="${isBozza ? 'background:#fffdf3' : ''}">
+  return `<tr style="${isBozza ? 'background:#fffdf3' : (isProg ? 'background:#f6faff' : '')}">
     <td style="white-space:nowrap">${s.data ? itDate(s.data) : '—'}</td>
-    <td style="white-space:nowrap"><span class="badge" style="background:${T.bg};color:${T.c}">${esc(s.tipo)}</span>${isBozza ? '<div style="margin-top:5px"><span class="badge" style="background:#fdf6e3;color:#8a6d1e;border:1px solid #efdfa8">bozza</span></div>' : ''}</td>
+    <td style="white-space:nowrap"><span class="badge" style="background:${T.bg};color:${T.c}">${esc(s.tipo)}</span>${isBozza ? '<div style="margin-top:5px"><span class="badge" style="background:#fdf6e3;color:#8a6d1e;border:1px solid #efdfa8">bozza</span></div>' : ''}${isProg ? '<div style="margin-top:5px"><span class="badge" style="background:#eef4fb;color:#1A5280;border:1px solid #cfe0f0">in programma</span></div>' : ''}</td>
     <td>${cellText(s.obiettivo)}</td>
     <td>${cellList(s.argomenti)}</td>
     <td>${cellList(s.attivita)}</td>
@@ -4066,7 +4072,7 @@ Germano`;
     s + (x.stato === 'confermata' ? (Number(x.ore) || 0) : 0), 0);
   // In sospeso qui = ci sono sessioni in BOZZA da approvare. Prima nasceva
   // sempre aperta; dal 13/08 vale lo stesso criterio di tutte le altre.
-  const bozzeDaApprovare = sedute.some(s => s.stato === 'bozza');
+  const bozzeDaApprovare = sedute.some(s => s.stato === 'bozza' && !isProgrammata(s));
   const seduteHtml = `
     <div class="card">
       <details class="sec"${bozzeDaApprovare ? ' open' : ''}>
@@ -8030,6 +8036,20 @@ function fmtDate(d) {
 }
 
 // Data 'AAAA-MM-GG' → 'GG/MM/AAAA' (formato italiano per la visualizzazione).
+// Oggi in ORA ITALIANA, come 'AAAA-MM-GG'. ⚠️ Non si usa toISOString(): quella
+// dà l'ora di Greenwich e fino alle 2 di notte scriverebbe il giorno prima.
+function oggiIso() {
+  return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Rome' }).format(new Date());
+}
+
+// Una sessione FISSATA ma non ancora avvenuta. Sta in tabella come bozza — così non
+// conta né ore né sessioni, come tutte le bozze — ma non è una proposta da approvare:
+// è un appuntamento preso, ed è la riga da cui nasce il Documento di chiusura.
+// Si riconosce dalla data: nel futuro = deve ancora succedere.
+function isProgrammata(s) {
+  return s && s.stato === 'bozza' && !!s.data && String(s.data).slice(0, 10) > oggiIso();
+}
+
 function itDate(d) {
   if (!d) return '';
   const s = String(d).slice(0, 10);

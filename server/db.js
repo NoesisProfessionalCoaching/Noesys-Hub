@@ -946,6 +946,56 @@ async function init() {
      WHERE p.revocato_il IS NULL
   `);
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // I DOCUMENTI CHE VANNO AL CLIENTE (21/08/2026)
+  // Report ≠ Documenti: i report sono i documenti professionali del coach e stanno
+  // su Drive; qui vive quello che riceve il CLIENTE (chiusura del percorso oggi,
+  // mini documento di sessione domani). Una tabella sola per tutti i tipi.
+  //
+  // ⭐ LA REGOLA CHE SPIEGA LE DUE COLONNE. `generato` è quello che ha scritto la
+  // macchina; `correzioni` è quello che ha riscritto il coach. Devono stare in due
+  // posti separati perché il documento CONTINUA A CRESCERE dopo che lui l'ha
+  // approvato: durante la Final arriva la seconda ruota, dopo la Final arriva il
+  // report. Se la macchina riscrivesse un unico testo, ogni arrivo cancellerebbe
+  // le sue correzioni. Con due colonne, si rigenera `generato` quanto serve e ciò
+  // che ha scritto lui resta intoccato: quando si mostra il documento, dove c'è una
+  // correzione vince la correzione.
+  //
+  // `stato`: bozza → approvato (prima della sessione) → completato (dopo il report
+  // della Final) → consegnato (congelato in PDF su Drive).
+  // 🔴 Gli stati non li fa avanzare la macchina da sola: approvare e consegnare
+  // sono due gesti del coach.
+  await query(`
+    CREATE TABLE IF NOT EXISTS documenti (
+      id            TEXT PRIMARY KEY,
+      percorso_id   TEXT NOT NULL REFERENCES percorsi(id) ON DELETE CASCADE,
+      client_id     TEXT REFERENCES clients(id) ON DELETE CASCADE,
+      seduta_id     TEXT,
+      tipo          TEXT NOT NULL DEFAULT 'chiusura',
+      stato         TEXT NOT NULL DEFAULT 'bozza',
+      generato      JSONB DEFAULT '{}'::jsonb,
+      correzioni    JSONB DEFAULT '{}'::jsonb,
+      generato_at   TIMESTAMPTZ,
+      approvato_at  TIMESTAMPTZ,
+      consegnato_at TIMESTAMPTZ,
+      created_at    TIMESTAMPTZ DEFAULT NOW(),
+      updated_at    TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+  // Quali ruote sta usando questo documento (righe di `sessions`). Si scrivono
+  // quando il documento le trova: così il documento sa sempre quali due ruote sta
+  // confrontando, e la seconda entra quando c'è davvero, non a caso.
+  await query(`ALTER TABLE documenti ADD COLUMN IF NOT EXISTS ruota_intake_id TEXT`);
+  await query(`ALTER TABLE documenti ADD COLUMN IF NOT EXISTS ruota_final_id  TEXT`);
+  // Il file congelato su Drive (cartella `Documenti` del cliente): esiste solo
+  // dopo «Congela e consegna».
+  await query(`ALTER TABLE documenti ADD COLUMN IF NOT EXISTS drive_file_id TEXT`);
+  await query(`ALTER TABLE documenti ADD COLUMN IF NOT EXISTS drive_url     TEXT`);
+  // Un percorso ha UN documento di chiusura: l'indice impedisce che due passaggi
+  // ravvicinati sullo stesso pulsante ne creino due.
+  await query(`CREATE UNIQUE INDEX IF NOT EXISTS documenti_chiusura_unico
+                 ON documenti (percorso_id) WHERE tipo = 'chiusura'`);
+
   // Stesso account coach della piattaforma strumenti (solo per il DB di test:
   // sul DB reale condiviso la riga esiste già).
   const existing = await query('SELECT id FROM coach WHERE username = $1', ['Germano']);

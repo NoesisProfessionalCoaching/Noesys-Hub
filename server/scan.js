@@ -87,6 +87,53 @@ function dataDaReport(rep) {
   return null;
 }
 
+// ── LA FINAL FISSATA IN ANTICIPO (21/08/2026) ────────────────────────────────
+// Quando il coach fissa la Final, scrive la riga nella Scheda Cliente PRIMA che la
+// sessione avvenga: e' da quella riga che si prepara il Documento di chiusura, che
+// lui deve leggere e approvare prima di entrare in sessione.
+// Quella riga aspetta il suo report: quando il report della Final arriva, deve
+// RIEMPIRE quella riga, non affiancarne una seconda (le righe doppie sono gia'
+// costate una pulizia a mano).
+// ⚠️ Vale SOLO per la Final: di Final ce n'e' UNA per percorso, e questo rende
+// l'accoppiamento sicuro senza dover indovinare la data (una sessione si sposta,
+// la data cambia, e accoppiare per data sbaglierebbe). Gli altri tipi restano come
+// prima: un report, una riga nuova.
+async function rigaDaRiempire({ percorsoId, tipo }) {
+  if (tipo !== 'Final') return null;
+  const r = await db.query(
+    `SELECT id, ore FROM sedute
+      WHERE percorso_id = $1 AND tipo = 'Final' AND source_file_id IS NULL
+      ORDER BY created_at ASC LIMIT 1`, [percorsoId]);
+  return r.rows[0] || null;
+}
+
+// Scrive nella Scheda Cliente la riga che nasce da UN report: riempie la riga che
+// aspettava (Final fissata in anticipo) oppure ne crea una nuova. Torna {sid, riempita}.
+// ⭐ È esportata apposta: è QUI che vive la regola «una Final, una riga sola», e la
+// prova (scripts/prova-final-programmata.js) fa girare questa, non una copia.
+async function salvaRigaReport({ percorso, cliente, rep, riga }) {
+  const attesa = await rigaDaRiempire({ percorsoId: percorso.id, tipo: rep.tipo });
+  if (attesa) {
+    // La riga c'era già: si riempie, non si duplica. Le ore restano quelle scritte
+    // dal coach — la durata della Final la mette lui — e lo stato resta 'bozza',
+    // perché la riga la approva sempre lui.
+    await db.query(
+      `UPDATE sedute SET data = COALESCE($2, data), obiettivo=$3, argomenti=$4, attivita=$5,
+              scadenza=$6, prossima_ora=$7, eseguita=$8, note=$9, origine='auto', source_file_id=$10
+        WHERE id = $1`,
+      [attesa.id, dataDaReport(rep), riga.obiettivo, riga.argomenti, riga.attivita,
+       riga.scadenza, riga.ora, riga.eseguita, riga.note, rep.id]);
+    return { sid: attesa.id, riempita: true };
+  }
+  const sid = uuidv4();
+  await db.query(
+    `INSERT INTO sedute (id, percorso_id, client_id, tipo, data, ore, obiettivo, argomenti, attivita, scadenza, prossima_ora, eseguita, note, stato, origine, source_file_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'bozza','auto',$14)`,
+    [sid, percorso.id, cliente.id, rep.tipo, dataDaReport(rep), oreDefault(rep.tipo),
+     riga.obiettivo, riga.argomenti, riga.attivita, riga.scadenza, riga.ora, riga.eseguita, riga.note, rep.id]);
+  return { sid, riempita: false };
+}
+
 // Contesto: gli strumenti compilati dal cliente, in formato dati (Claude legge il JSON).
 async function buildStrumentiText(clientId) {
   const r = await db.query(
@@ -145,14 +192,9 @@ async function scanClientReports({ onlyClientId } = {}) {
         const { value: reportText } = await mammoth.extractRawText({ buffer: buf });
         if (!reportText || !reportText.trim()) throw new Error('Word vuoto o illeggibile');
         const riga = await claude.generaRiga({ tipo: rep.tipo, cliente, reportText, strumentiText });
-        const sid = uuidv4();
-        await db.query(
-          `INSERT INTO sedute (id, percorso_id, client_id, tipo, data, ore, obiettivo, argomenti, attivita, scadenza, prossima_ora, eseguita, note, stato, origine, source_file_id)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'bozza','auto',$14)`,
-          [sid, percorso.id, cliente.id, rep.tipo, dataDaReport(rep), oreDefault(rep.tipo),
-           riga.obiettivo, riga.argomenti, riga.attivita, riga.scadenza, riga.ora, riga.eseguita, riga.note, rep.id]);
+        const { sid, riempita } = await salvaRigaReport({ percorso, cliente, rep, riga });
         done.add(rep.id);
-        result.processed.push({ cliente: cliente.name, tipo: rep.tipo, file: rep.name, sid });
+        result.processed.push({ cliente: cliente.name, tipo: rep.tipo, file: rep.name, sid, riempita });
       } catch (e) {
         result.errors.push({ cliente: cliente.name, file: rep.name, err: e.message });
       }
@@ -328,4 +370,4 @@ async function scanCollectiveReports({ onlyProjectId } = {}) {
   return result;
 }
 
-module.exports = { scanClientReports, scanProjectReports, scanCollectiveReports };
+module.exports = { scanClientReports, scanProjectReports, scanCollectiveReports, rigaDaRiempire, salvaRigaReport };

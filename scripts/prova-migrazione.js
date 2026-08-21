@@ -23,6 +23,7 @@ const TABELLE_ATTESE = [
   'committenti', 'progetti', 'partecipazioni', 'fasi_progetto',
   'permessi_strumenti', 'moduli_letti', 'emittente',
   'proforme', 'proforma_righe', 'appuntamenti', 'tranche_progetto', 'incassi',
+  'documenti',
 ];
 
 const url = process.env.DATABASE_URL;
