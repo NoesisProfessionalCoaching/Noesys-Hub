@@ -4079,6 +4079,7 @@ Germano`;
         <summary style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;cursor:pointer">
           <span style="display:flex;align-items:center;gap:8px"><span class="sec-caret">▸</span><h2 style="margin:0">Scheda Cliente <span style="font-weight:400;font-size:13px;color:#aaa">(${sedute.length} ${sedute.length === 1 ? 'sessione' : 'sessioni'}${oreConfermate > 0 ? ` · ${fmtOre(oreConfermate)} h` : ''})</span></h2></span>
           <span style="display:inline-flex;gap:8px;align-items:center">
+            ${percorsi.length ? `<button onclick="event.stopPropagation();openSeduta()" class="btn btn-neutral btn-sm" title="Scrivi a mano una sessione: una già fatta, oppure una FISSATA (con la data nel futuro), che resta «in programma» e non conta ore finché non avviene">+ Aggiungi sessione</button>` : ''}
             ${client.drive_url ? `<button id="scan-btn" onclick="event.stopPropagation();scanDrive()" class="btn btn-gold btn-sm" title="Legge i report Word nuovi dalla cartella Drive e ne aggiunge la riga in bozza">⟳ Cerca nuovi report</button>` : ''}
           </span>
         </summary>
