@@ -991,6 +991,16 @@ async function init() {
   // dopo «Congela e consegna».
   await query(`ALTER TABLE documenti ADD COLUMN IF NOT EXISTS drive_file_id TEXT`);
   await query(`ALTER TABLE documenti ADD COLUMN IF NOT EXISTS drive_url     TEXT`);
+  // ⭐ IL TERZO CASSETTO (22/08/2026) — la parte DA CONSEGNARE.
+  // Il documento della Final, letto e approvato dal coach, non si tocca mai più.
+  // Quello che arriva dopo — le parole del Cliente prese dal report della Final,
+  // i suoi impegni, le parole del coach — vive qui, e in pagina si sovrappone.
+  // Tre cassetti, tre proprietari: la macchina (`generato`), il coach
+  // (`correzioni`), il Cliente attraverso il report della Final (`consegna`).
+  await query(`ALTER TABLE documenti ADD COLUMN IF NOT EXISTS consegna JSONB`);
+  await query(`ALTER TABLE documenti ADD COLUMN IF NOT EXISTS consegna_at TIMESTAMPTZ`);
+  await query(`ALTER TABLE documenti ADD COLUMN IF NOT EXISTS consegna_approvata_at TIMESTAMPTZ`);
+
   // Un percorso ha UN documento di chiusura: l'indice impedisce che due passaggi
   // ravvicinati sullo stesso pulsante ne creino due.
   await query(`CREATE UNIQUE INDEX IF NOT EXISTS documenti_chiusura_unico

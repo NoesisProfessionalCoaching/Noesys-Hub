@@ -1084,16 +1084,26 @@ router.get('/dashboard/clients/:id/percorsi/:pid/documento', requireCoach, async
     if (!doc) return res.send(paginaDocumentoDaFare(cliente, req.params.pid));
 
     const materiale = await docChiusura.raccogliMateriale({ percorsoId: req.params.pid });
-    const contenuti = docChiusura.unisci(doc.generato, doc.correzioni);
+    // ⭐ L'ORDINE CONTA: prima si posa sopra la parte venuta dal report della Final,
+    // poi le correzioni del coach. Una regola sola — quello che scrive lui sta
+    // sopra a tutto, sia al testo della macchina sia alle parole dal report.
+    const contenuti = docChiusura.unisci(
+      docChiusura.fondiConsegna(doc.generato, doc.consegna), doc.correzioni);
     // I pulsanti in più della pagina dell'Hub (nel file da solo non ci sono: lì non
     // c'è dove salvare). L'approvazione compare finché la bozza non è approvata.
     const azioni = `<span class="sep"></span>
       <button id="b-edit">Modifica</button>
       <button id="b-salva" class="save">Salva le correzioni</button>
-      ${doc.stato === 'approvato' ? '<span style="font-size:12px;color:#2e6b52;font-weight:800;padding:0 6px">✓ approvato</span>'
-        : '<button id="b-approva">Approva per la sessione</button>'}
+      ${doc.consegna
+        ? (doc.consegna_approvata_at
+            ? '<span style="font-size:12px;color:#2e6b52;font-weight:800;padding:0 6px">✓ approvato da consegnare</span>'
+            : '<button id="b-approva-consegna">Approva il documento da consegnare</button>')
+        : (doc.stato === 'approvato'
+            ? '<span style="font-size:12px;color:#2e6b52;font-weight:800;padding:0 6px">✓ approvato</span>'
+            : '<button id="b-approva">Approva per la sessione</button>')}
       <a class="torna" href="/dashboard/clients/${req.params.id}" style="margin-left:10px;font-size:12px">← scheda</a>`;
-    const corpo = docHtml.renderDocumento({ contenuti, cliente, ruote: materiale.ruote, soloCorpo: true, modificabile: true, azioni });
+    const corpo = docHtml.renderDocumento({ contenuti, cliente, ruote: materiale.ruote, soloCorpo: true,
+      modificabile: true, azioni, versione: doc.consegna ? 'consegna' : 'final' });
     res.send(paginaDocumento(cliente, req.params.pid, doc, corpo));
   } catch (err) { console.error('[documento]', err); res.status(500).send('Errore nel documento: ' + err.message); }
 });
@@ -1125,6 +1135,14 @@ router.post('/dashboard/clients/:id/percorsi/:pid/documento/correzioni', require
     const quante = await docChiusura.salvaCorrezioni({ documentoId: doc.id, correzioni: req.body.correzioni });
     res.json({ ok: true, quante });
   } catch (err) { console.error('[documento/correzioni]', err); res.status(500).json({ error: 'Errore' }); }
+});
+
+// La SECONDA approvazione: quella del documento che andrà al Cliente.
+router.post('/dashboard/clients/:id/percorsi/:pid/documento/approva-consegna', requireCoach, async (req, res) => {
+  try {
+    await db.query("UPDATE documenti SET consegna_approvata_at=NOW(), updated_at=NOW() WHERE percorso_id=$1 AND tipo='chiusura'", [req.params.pid]);
+    res.json({ ok: true });
+  } catch (err) { console.error('[documento/approva-consegna]', err); res.status(500).json({ error: 'Errore' }); }
 });
 
 // L'approvazione PRIMA della sessione: è un gesto del coach, non della macchina.
@@ -8330,6 +8348,13 @@ ${corpo}
       dillo(d.quante === 1 ? 'Salvata 1 correzione.' : 'Salvate ' + d.quante + ' correzioni.');
     } catch (err) { dillo('Non ho salvato: ' + err.message); }
     salva.disabled = false;
+  };
+
+  var apprC = document.getElementById('b-approva-consegna');
+  if (apprC) apprC.onclick = async function(){
+    if (!confirm('Approvi il documento da consegnare? Resta modificabile: approvare vuol dire che va bene per il Cliente.')) return;
+    var r = await fetch(location.pathname + '/approva-consegna', { method: 'POST' });
+    if (r.ok) location.reload(); else dillo('Non è riuscito.');
   };
 
   var appr = document.getElementById('b-approva');

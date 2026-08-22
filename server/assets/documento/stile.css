@@ -74,7 +74,7 @@
   .cover .gb{height:4px;width:210px;border-radius:3px;background:var(--grad);margin:30px 0 22px}
   .cover .meta{display:flex;gap:36px;flex-wrap:wrap;font-size:13px;color:var(--hint)}
   .cover .meta b{color:var(--ink);font-weight:700;display:block;margin-top:3px;font-size:14px}
-  .logo-tl{position:absolute;top:26px;left:44px;height:104px;width:auto}
+  .logo-tl{position:absolute;top:26px;left:44px;height:120px;width:auto}  /* +15% — Germano, 22/08 */
   .bozza{position:absolute;top:40px;right:52px;font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;
     color:#8a6d10;background:rgba(216,174,46,.14);border:1px solid rgba(216,174,46,.45);border-radius:999px;padding:6px 13px}
 

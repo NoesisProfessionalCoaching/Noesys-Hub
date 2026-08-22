@@ -365,6 +365,142 @@ Costruisci il documento di chiusura come da istruzioni.`;
   return { system: SYSTEM, user };
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// LA PARTE DA CONSEGNARE — quello che nasce DOPO la Final.
+// Il documento che il coach ha letto e approvato non si tocca. Qui si prepara
+// solo ciò che prima non poteva esistere: le PAROLE DEL CLIENTE, prese dal report
+// della Final. Vanno al posto delle tracce del coach nelle tre pagine di chiusura,
+// e nella pagina delle ruote diventano le due frasi su cosa gli dicono i numeri.
+// 🔴 SI CITA, NON SI INTERPRETA: le sue parole, non un riassunto nostro. E si
+// voltano in PRIMA PERSONA se il report parla di lui in terza.
+// ═══════════════════════════════════════════════════════════════════════════
+const SCHEMA_CONSEGNA = {
+  type: 'object',
+  properties: {
+    ruoteParole: { type: 'array', items: { type: 'string' } },   // due frasi sue sulle variazioni
+    portiViaParole: { type: 'array', items: { type: 'string' } },
+    nonTornareParole: { type: 'array', items: { type: 'string' } },
+    daQuiInAvanti: { type: 'array', items: { type: 'object', properties: {
+      etichetta: { type: 'string' },   // il titoletto della risposta
+      parole: { type: 'string' },      // il suo impegno, in prima persona
+    }, required: ['etichetta','parole'], additionalProperties: false } },
+    paroleDelCoach: { type: 'object', properties: {
+      titolo: { type: 'string' }, corpo: { type: 'array', items: { type: 'string' } },
+    }, required: ['titolo','corpo'], additionalProperties: false },
+    chiusura: { type: 'object', properties: {
+      titolo: { type: 'string' }, messaggio: { type: 'string' },
+    }, required: ['titolo','messaggio'], additionalProperties: false },
+  },
+  required: ['ruoteParole','portiViaParole','nonTornareParole','daQuiInAvanti','paroleDelCoach','chiusura'],
+  additionalProperties: false,
+};
+
+const SYSTEM_CONSEGNA = `Sei l'assistente di un coach professionista (Noesys). La sessione Final si è svolta e il coach ne ha scritto il report. Il documento che il Cliente riceverà esiste già per la parte costruita prima della sessione: adesso devi aggiungere SOLO quello che prima non poteva esserci, cioè QUELLO CHE HA DETTO IL CLIENTE.
+
+🔴 LE REGOLE, in ordine di importanza
+1. SI CITA, NON SI INTERPRETA. Ogni frase deve poggiare su quello che il Cliente ha detto nel report della Final. Se non l'ha detto, non c'è. Meglio due frasi vere che sei inventate.
+2. PRIMA PERSONA, sempre. Il report parla di lui in terza persona («Francesco ha detto che…»): tu volti in prima («Ho capito che…»). Le parole restano le sue, cambia solo la persona. Mai in terza.
+3. MAI descrivere o dedurre EMOZIONI: se un'emozione l'ha nominata lui, si riporta come sua parola; altrimenti non esiste.
+4. Frasi corte. Questo documento lo rilegge fra un anno.
+
+COSA DEVI PRODURRE
+- ruoteParole: DUE frasi (non di più) con cui il Cliente ha commentato le variazioni fra la ruota d'intake e quella della Final: cosa gli dicono quei numeri. Se nel report non ha commentato le ruote, restituisci un elenco vuoto: non inventare.
+- portiViaParole: quello che ha detto di portarsi a casa. 3-5 frasi sue, in prima persona.
+- nonTornareParole: quello che ha detto sui punti in cui rischia di tornare indietro e su come se ne accorgerà. 2-4 frasi sue.
+- daQuiInAvanti: i suoi impegni. Per ognuno un'etichetta brevissima («Il segnale a cui sto attento», «Cosa faccio quando succede», «Su cosa mi appoggio») e la frase in prima persona («Mi impegno a…», «Tengo la strategia di…»). Solo impegni che ha preso lui.
+- paroleDelCoach: BOZZA delle parole del coach al Cliente, costruita SOLO con osservazioni che il coach ha già scritto nei suoi report, la Final compresa (le note conclusive). Il coach le riscriverà: dagli il materiale suo, non parole tue. Massimo quattro paragrafi corti, rivolti al Cliente («Ti ho visto…»).
+- chiusura: titolo = il nome di battesimo del Cliente; messaggio = poche righe personali, concrete, senza retorica, che chiudono il percorso.
+
+Italiano lineare e semplice. Rispondi SOLO con l'oggetto JSON richiesto, come struttura vera e non come testo.`;
+
+// Il materiale di questo secondo passaggio: il report della FINAL (che qui SERVE),
+// il documento come il coach l'ha approvato, e le due ruote coi loro numeri.
+function costruisciPromptConsegna({ materiale, documento }) {
+  const finale = (materiale.report || []).find(r => r.tipo === 'Final');
+  const v = materiale.ruote && materiale.ruote.variazioni;
+  const ruote = v
+    ? 'Variazioni fra le due ruote: ' + v.aree.map(a => `${String(a.area)} da ${a.prima} a ${a.dopo}`).join(' · ')
+    : '(non ci sono due ruote da confrontare)';
+
+  const cosaCera = [
+    'Cosa ti porti — i punti che il coach aveva preparato:',
+    ...((documento.portiVia && documento.portiVia.punti) || []).map(p => `  · ${p.titolo}: ${p.testo}`),
+    'Come non tornare indietro — i punti preparati:',
+    ...((documento.nonTornareIndietro && documento.nonTornareIndietro.punti) || []).map(p => `  · ${p.titolo}: ${p.testo}`),
+    'Le domande di chiusura che il coach gli ha fatto:',
+    ...((documento.daQuiInAvanti) || []).map(d => `  · ${d.domanda}`),
+  ].join('\n');
+
+  const user =
+`Cliente: ${materiale.cliente.name}
+
+=== IL REPORT DELLA FINAL (è la fonte di tutto ciò che scrivi) ===
+${finale && finale.testo ? finale.testo : '(report della Final non disponibile: ' + ((finale && finale.mancante) || 'manca') + ')'}
+
+=== LE RUOTE ===
+${ruote}
+
+=== COSA C'ERA GIÀ NEL DOCUMENTO (per sapere a cosa rispondono le sue parole) ===
+${cosaCera}
+
+Aggiungi quello che ha detto il Cliente, come da istruzioni.`;
+  return { system: SYSTEM_CONSEGNA, user };
+}
+
+async function generaConsegna({ percorsoId }) {
+  if (!process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY non configurata');
+  const doc = await caricaDocumento({ percorsoId });
+  if (!doc) throw new Error('Non c\'è nessun documento di chiusura da completare');
+  const materiale = await raccogliMateriale({ percorsoId, conFinal: true });
+  const finale = (materiale.report || []).find(r => r.tipo === 'Final' && r.testo);
+  if (!finale) throw new Error('Il report della Final non è ancora leggibile su Drive');
+
+  const documento = unisci(doc.generato, doc.correzioni);
+  const { system, user } = costruisciPromptConsegna({ materiale, documento });
+  const client = new Anthropic();
+  const r = await client.messages.create({
+    model: MODEL, max_tokens: 8000, system,
+    messages: [{ role: 'user', content: user }],
+    tools: [{ name: 'consegna', description: 'Le parole del Cliente dal report della Final', input_schema: SCHEMA_CONSEGNA }],
+    tool_choice: { type: 'tool', name: 'consegna' },
+  });
+  const blocco = r.content.find(b => b.type === 'tool_use');
+  if (!blocco) throw new Error("L'IA non ha restituito la parte da consegnare");
+  const contenuti = normalizzaConsegna(blocco.input);
+  await db.query(`UPDATE documenti SET consegna=$2, consegna_at=NOW(), updated_at=NOW() WHERE id=$1`,
+    [doc.id, JSON.stringify(contenuti)]);
+  return contenuti;
+}
+
+// Stesso raddrizzatore dell'altra generazione: elenchi che tornano come testo,
+// e pezzi troncati. Se manca davvero qualcosa lo dice.
+function normalizzaConsegna(grezzo) {
+  const d = Object.assign({}, grezzo || {});
+  for (const k of Object.keys(d)) {
+    if (typeof d[k] === 'string' && /^\s*[[{]/.test(d[k])) {
+      const letto = leggiJsonAncheStorto(d[k]);
+      if (letto !== null) d[k] = letto;
+    }
+  }
+  // ⚠️ 22/08: un elenco può tornare come TESTO UNICO con le frasi a capo. Il
+  // contenuto è giusto, la forma no: si spezza per righe invece di buttare tutto.
+  for (const k of ['ruoteParole', 'portiViaParole', 'nonTornareParole']) {
+    if (typeof d[k] === 'string') {
+      d[k] = d[k].split(/\r?\n+/).map(t => t.replace(/^[-·•\s]+/, '').trim()).filter(Boolean);
+    }
+  }
+  const mancano = [];
+  for (const k of ['ruoteParole', 'portiViaParole', 'nonTornareParole', 'daQuiInAvanti']) {
+    if (!Array.isArray(d[k])) mancano.push(k + ' (deve essere un elenco)');
+  }
+  for (const [k, campi] of Object.entries({ paroleDelCoach: ['titolo','corpo'], chiusura: ['titolo','messaggio'] })) {
+    if (!d[k] || typeof d[k] !== 'object') { mancano.push(k); continue; }
+    for (const c of campi) if (d[k][c] === undefined) mancano.push(k + '.' + c);
+  }
+  if (mancano.length) throw new Error('La parte da consegnare è incompleta: manca ' + mancano.join(', '));
+  return d;
+}
+
 // ── 7 · RADDRIZZARE QUELLO CHE TORNA ────────────────────────────────────────
 // 21/08/2026, visto sui report veri di Francesco: il modello ha restituito due
 // sezioni come TESTO (una stringa che contiene JSON) invece che come struttura.
@@ -492,6 +628,28 @@ function unisci(generato, correzioni) {
   return fuori;
 }
 
+// Il documento come si consegna: quello approvato dal coach + le parole del
+// Cliente al posto delle tracce. ⚠️ Non riscrive niente: le tracce restano dove
+// sono (servono alla versione da sessione), le parole si affiancano.
+function fondiConsegna(contenuti, consegna) {
+  if (!consegna) return contenuti;
+  const d = JSON.parse(JSON.stringify(contenuti || {}));
+  if (d.portiVia) d.portiVia.parole = consegna.portiViaParole || [];
+  if (d.nonTornareIndietro) d.nonTornareIndietro.parole = consegna.nonTornareParole || [];
+  d.ruoteParole = consegna.ruoteParole || [];
+  // Le domande restano quelle del coach; a ognuna si affianca la sua risposta.
+  d.daQuiInAvanti = (d.daQuiInAvanti || []).map((q, i) => {
+    const r = (consegna.daQuiInAvanti || [])[i] || {};
+    return Object.assign({}, q, { etichetta: r.etichetta || q.etichetta, parole: r.parole || '' });
+  });
+  // Se il Cliente ha preso più impegni delle domande fatte, non si buttano.
+  (consegna.daQuiInAvanti || []).slice(d.daQuiInAvanti.length).forEach(r =>
+    d.daQuiInAvanti.push({ domanda: '', etichetta: r.etichetta, parole: r.parole }));
+  if (consegna.paroleDelCoach) d.paroleDelCoach = consegna.paroleDelCoach;
+  if (consegna.chiusura) d.chiusura = consegna.chiusura;
+  return d;
+}
+
 async function caricaDocumento({ percorsoId }) {
   const r = await db.query("SELECT * FROM documenti WHERE percorso_id=$1 AND tipo='chiusura'", [percorsoId]);
   return r.rows[0] || null;
@@ -546,4 +704,5 @@ async function salvaCorrezione({ documentoId, sentiero, testo }) {
 }
 
 module.exports = { MODEL, SCHEMA, costruisciPrompt, generaContenuti, normalizza,
-  unisci, caricaDocumento, salvaGenerato, salvaCorrezione, salvaCorrezioni, raccogliMateriale, datiDalDatabase, testiDeiReport, scegliRuote, variazioniRuote, leggiAree };
+  SCHEMA_CONSEGNA, costruisciPromptConsegna, generaConsegna, normalizzaConsegna,
+  unisci, fondiConsegna, caricaDocumento, salvaGenerato, salvaCorrezione, salvaCorrezioni, raccogliMateriale, datiDalDatabase, testiDeiReport, scegliRuote, variazioniRuote, leggiAree };

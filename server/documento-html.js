@@ -133,7 +133,7 @@ function slideMomento(m, n, idx) {
     ${traccia(m.traccia)}`, n);
 }
 
-function slideRuote(ruote, n, numeriDelCliente) {
+function slideRuote(ruote, n, ruoteParole) {
   if (!ruote) return '';
   // Nel business il cliente può aver compilato più ruote diverse: quale confrontare
   // lo dirà quella della Final. La pagina c'è lo stesso, con scritto che aspetta —
@@ -168,7 +168,8 @@ function slideRuote(ruote, n, numeriDelCliente) {
     <h2 style="margin-bottom:10px;max-width:none;font-size:27px">Le tue ruote a confronto</h2>
     <div class="ruote">${una(ruote.intake, 'Intake')}${una(ruote.final, 'Final')}</div>
     ${numeri}
-    ${fonte(numeriDelCliente)}
+    ${(ruoteParole || []).length ? `<div class="qa q-con" style="margin-top:12px"><b>Le tue parole su questi numeri</b>${(ruoteParole || []).map((t, i) => `<p${targa(`ruoteParole.${i}`)}>${esc(t)}</p>`).join('')}</div>` : ''}
+
     ${traccia('Le variazioni non le commento io: chiedi a lui cosa gli dicono.')}`, n);
 }
 
@@ -177,6 +178,15 @@ function slideRuote(ruote, n, numeriDelCliente) {
 // CONSEGNARE quei punti spariscono e al loro posto ci vanno LE PAROLE DEL CLIENTE,
 // prese dal report della Final. Finché quel report non c'è, lo spazio dice che
 // aspetta: ⚠️ NON è uno spazio da riempire, è uno spazio prenotato.
+// 🔴 I TITOLI DI QUESTE PAGINE SONO FISSI (Germano, 22/08): non li inventa la
+// macchina, così non cambiano da un cliente all'altro. E niente titoletto piccolo
+// in alto: da qui in avanti le pagine parlano da sole.
+const TITOLI = {
+  portiVia: 'Cosa hai capito e appreso',
+  nonTornareIndietro: 'I punti a cui prestare attenzione',
+  daQuiInAvanti: 'I Segnali da ascoltare',
+  paroleDelCoach: 'Il Percorso in sintesi',
+};
 function slidePunti(sez, n, occ, chiave) {
   if (!sez || !(sez.punti || []).length) return '';
   const punti = lista(`${chiave}.punti`, sez.punti.map(p => voce(`
@@ -184,33 +194,41 @@ function slidePunti(sez, n, occ, chiave) {
       <b data-campo="titolo">${esc(p.titolo)}</b><p><span data-campo="testo">${esc(p.testo)}</span>${p.riferimento ? ` <span style="color:#9aa5b1" data-campo="riferimento">${esc(p.riferimento)}</span>` : ''}</p>
     </div></div>`)).join(''));
   return slide(`
-    ${occhiello(occ)}
-    <h2 style="margin-bottom:12px"${targa(`${chiave}.titolo`)}>${esc(sez.titolo)}</h2>
+    <h2 style="margin-bottom:12px"${targa(`${chiave}.titolo`)}>${esc(TITOLI[chiave] || sez.titolo)}</h2>
     <div class="q-ses">${punti}</div>
-    <div class="q-con">${paroleAttese(sez.parole)}</div>
+    <div class="q-con">${paroleAttese(sez.parole, `${chiave}.parole`)}</div>
     ${traccia('Non elencarglieli: sono la tua traccia. Chiedi a lui, e le sue parole prenderanno questo posto nel documento da consegnare.')}`, n);
 }
 
 // Le domande di chiusura: in sessione la domanda con le righe su cui scrivere,
 // nel documento da consegnare la risposta del Cliente sotto il suo titoletto.
 function slideDomande(dom, n) {
+  // ⚠️ Solo se il Cliente ha risposto davvero. Se non gli hai fatto quelle domande
+  // — o non ha risposto — una pagina di righe vuote nel documento non serve a
+  // nessuno e fa brutta figura. (Germano, 22/08.)
   if (!dom || !dom.length) return '';
+  if (!dom.some(d => String(d.parole || '').trim())) return '';
   const righe = dom.map((d, i) => `
     <div class="qa">
       <b class="q-ses"${targa(`daQuiInAvanti.${i}.domanda`)}>${esc(d.domanda)}</b>
       <div class="q-ses"><div class="riga"></div><div class="riga"></div></div>
-      <div class="q-con"><b>${esc(d.etichetta)}</b>${paroleAttese(d.parole)}</div>
+      <div class="q-con"><b${targa(`daQuiInAvanti.${i}.etichetta`)}>${esc(d.etichetta)}</b>${paroleAttese(d.parole, `daQuiInAvanti.${i}.parole`)}</div>
     </div>`).join('');
   return slide(`
-    ${occhiello('Le domande di chiusura', 'quello che mi sono dato')}
-    <h2 style="margin-bottom:12px">Da qui in avanti</h2>
+    <h2 style="margin-bottom:12px">${TITOLI.daQuiInAvanti}</h2>
     ${righe}
     ${traccia('Qui si scrive insieme: quello che dice adesso vale più di quello che ha detto prima.')}`, n);
 }
 
-const paroleAttese = p => p
-  ? `<p>${esc(p)}</p>`
-  : `<p style="color:#9aa5b1">Prende il posto delle parole del Cliente, dal report della Final.</p>`;
+// Le parole del Cliente si correggono come ogni altro pezzo: ognuna con la sua
+// targa. Quello che scrive il coach sta SOPRA a tutto — anche a quello che è
+// venuto dal report della Final.
+const paroleAttese = (p, chiave) => {
+  const righe = Array.isArray(p) ? p.filter(Boolean) : (p ? [p] : []);
+  return righe.length
+    ? righe.map((t, i) => `<p${targa(`${chiave}.${i}`)}>${esc(t)}</p>`).join('')
+    : `<p style="color:#9aa5b1">Prende il posto delle parole del Cliente, dal report della Final.</p>`;
+};
 
 // ── Il documento intero ─────────────────────────────────────────────────────
 function renderDocumento({ contenuti, cliente, ruote, soloCorpo = false, modificabile = false, azioni = '', versione = 'final' }) {
@@ -233,10 +251,7 @@ function renderDocumento({ contenuti, cliente, ruote, soloCorpo = false, modific
 
   (d.momenti || []).forEach((m, i) => pezzi.push(slideMomento(m, ++n, i)));
 
-  const numeriCliente = (d.numeri || []).length
-    ? 'I numeri che si è dato nei report: ' + d.numeri.map(x => esc(x.etichetta) + ' ' + esc(x.valore) + ' (' + esc(x.quando) + ')').join(' · ')
-    : '';
-  const sr = slideRuote(ruote, n + 1, numeriCliente); if (sr) { n++; pezzi.push(sr); }
+  const sr = slideRuote(ruote, n + 1, d.ruoteParole); if (sr) { n++; pezzi.push(sr); }
 
   const sp = slidePunti(d.portiVia, n + 1, 'Cosa ti porti', 'portiVia'); if (sp) { n++; pezzi.push(sp); }
   // 🔴 IL DOCUMENTO PER LA FINAL FINISCE QUI (Germano, 22/08).
@@ -251,13 +266,11 @@ function renderDocumento({ contenuti, cliente, ruote, soloCorpo = false, modific
   }
 
   if (versione === 'consegna' && d.paroleDelCoach) pezzi.push(slide(`
-    ${occhiello('Le parole del coach')}
-    <h2 style="margin-bottom:12px">${esc(d.paroleDelCoach.titolo)}</h2>
+    <h2 style="margin-bottom:12px">${esc(TITOLI.paroleDelCoach)}</h2>
     ${(d.paroleDelCoach.corpo || []).map((p, i) => `<p class="spieg coach-t"${targa(`paroleDelCoach.corpo.${i}`)}>${esc(p)}</p>`).join('')}
     ${fonte('Bozza costruita dalle note conclusive dei report: da riscrivere con parole tue.')}`, ++n));
 
   if (versione === 'consegna' && d.chiusura) pezzi.push(slide(`
-    ${occhiello('Chiusura')}
     <h2 style="margin-bottom:20px;max-width:24ch">${esc(d.chiusura.titolo)}</h2>
     <p class="chiu ultima"${targa('chiusura.messaggio')}>${esc(d.chiusura.messaggio)}</p>
     <div class="coda"><b>Noesys Professional Coaching</b><br>${esc(nome)}</div>`, ++n, 'chiusura'));
