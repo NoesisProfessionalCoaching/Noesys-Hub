@@ -133,7 +133,7 @@ function slideMomento(m, n, idx) {
     ${traccia(m.traccia)}`, n);
 }
 
-function slideRuote(ruote, n) {
+function slideRuote(ruote, n, numeriDelCliente) {
   if (!ruote) return '';
   // Nel business il cliente può aver compilato più ruote diverse: quale confrontare
   // lo dirà quella della Final. La pagina c'è lo stesso, con scritto che aspetta —
@@ -147,17 +147,28 @@ function slideRuote(ruote, n) {
       ${r ? ruotaSvg(r.aree) : '<div class="attesa">Qui entra la ruota della Final, appena la salvate nello strumento.</div>'}
     </div>`;
   const v = ruote.variazioni;
-  const numeri = v ? `<p class="spieg">${v.salite} aree salite · ${v.scese} scese · ${v.ferme} ferme. Media da ${v.mediaPrima} a ${v.mediaDopo}.` +
-      (v.maggiore ? ` La variazione più grande: ${esc(v.maggiore.area)}, da ${v.maggiore.prima} a ${v.maggiore.dopo}.` : '') +
-      (v.areeNonConfrontabili && v.areeNonConfrontabili.length ? ` <span style="color:#9aa5b1">Aree non confrontabili: ${esc(v.areeNonConfrontabili.join(', '))}.</span>` : '') + '</p>'
-    : `<p class="spieg" style="color:#9aa5b1">${ruote.final && !ruote.intake
-        ? "Manca la ruota d'intake nello strumento: senza quella il confronto non si può fare."
-        : 'La ruota della Final si fa in sessione: comparirà qui da sola, con le variazioni.'}</p>`;
+  // Le TRE variazioni che contano: le più grosse, in valore assoluto — una discesa
+  // conta quanto una salita. Sotto le ruote, per averle davanti mentre se ne parla.
+  const treGrosse = v ? v.aree.slice().sort((a, b) => Math.abs(b.variazione) - Math.abs(a.variazione)).slice(0, 3) : [];
+  const cartelle = treGrosse.length
+    ? `<div class="numeri" style="margin-top:14px">${treGrosse.map(a => `
+        <div class="n"><div class="k">${esc(a.area)}</div>
+          <div class="v"><s>${a.prima}</s> <em>${a.dopo}</em></div>
+          <div class="d">${a.variazione > 0 ? '+' + a.variazione : (a.variazione || 'invariata')}</div></div>`).join('')}</div>`
+    : '';
+  const numeri = v
+    ? `<p class="spieg" style="margin-top:10px">${v.salite} aree salite · ${v.scese} scese · ${v.ferme} ferme. Media da ${v.mediaPrima} a ${v.mediaDopo}.` +
+      (v.areeNonConfrontabili && v.areeNonConfrontabili.length ? ` <span style="color:#9aa5b1">Aree non confrontabili: ${esc(v.areeNonConfrontabili.join(', '))}.</span>` : '') + '</p>' + cartelle
+    : `<p class="spieg" style="color:#9aa5b1">${ruote.ambiguo ? esc(ruote.avviso)
+        : (ruote.final && !ruote.intake)
+          ? "Manca la ruota d'intake nello strumento: senza quella il confronto non si può fare."
+          : 'La ruota della Final si fa in sessione: comparirà qui da sola, con le variazioni.'}</p>`;
   return slide(`
     ${occhiello('Le stesse domande', 'a distanza di tempo')}
     <h2 style="margin-bottom:10px;max-width:none;font-size:27px">Le tue ruote a confronto</h2>
     <div class="ruote">${una(ruote.intake, 'Intake')}${una(ruote.final, 'Final')}</div>
     ${numeri}
+    ${fonte(numeriDelCliente)}
     ${traccia('Le variazioni non le commento io: chiedi a lui cosa gli dicono.')}`, n);
 }
 
@@ -222,26 +233,10 @@ function renderDocumento({ contenuti, cliente, ruote, soloCorpo = false, modific
 
   (d.momenti || []).forEach((m, i) => pezzi.push(slideMomento(m, ++n, i)));
 
-  const sr = slideRuote(ruote, n + 1); if (sr) { n++; pezzi.push(sr); }
-
-  // 🔴 QUESTA PAGINA È IL CONFRONTO FRA I NUMERI DELLE DUE RUOTE (Germano, 21/08).
-  // Finché la seconda ruota non c'è, un confronto NON PUÒ ESISTERE: la pagina si
-  // mostra dichiarandosi da completare, e i numeri che il Cliente si è dato nei
-  // report restano lì come materiale, senza nessun paragone inventato.
-  if ((d.numeri || []).length) {
-    const dueRuote = !!(ruote && ruote.intake && ruote.final && ruote.variazioni);
-    const conf = dueRuote
-      ? `<div class="numeri" style="flex:1;align-content:center">${ruote.variazioni.aree.map(a =>
-          `<div class="n"><div class="k">${esc(a.area)}</div><div class="v"><s>${a.prima}</s> <em>${a.dopo}</em></div>` +
-          `<div class="d">${a.variazione > 0 ? '+' + a.variazione : (a.variazione || 'invariata')}</div></div>`).join('')}</div>`
-      : `<div class="attesa" style="margin:8px 0 14px">Il confronto si completa quando arriva la ruota della Final: qui compariranno i valori di allora accanto a quelli di oggi.</div>`;
-    pezzi.push(slide(`
-      ${occhiello('I numeri', dueRuote ? 'come sono cambiati' : 'da completare dopo la Final')}
-      <h2 style="margin-bottom:12px">I numeri sono tuoi, non miei</h2>
-      ${conf}
-      ${fonte('I numeri che si è dato nei report, per ora senza confronto: ' + d.numeri.map(x => esc(x.etichetta) + ' ' + esc(x.valore) + ' (' + esc(x.quando) + ')').join(' · '))}
-      ${traccia(dueRuote ? 'Non li commentare tu: chiedigli cosa gli dicono questi spostamenti.' : 'Questa pagina si riempie da sola dopo la ruota della Final.')}`, ++n));
-  }
+  const numeriCliente = (d.numeri || []).length
+    ? 'I numeri che si è dato nei report: ' + d.numeri.map(x => esc(x.etichetta) + ' ' + esc(x.valore) + ' (' + esc(x.quando) + ')').join(' · ')
+    : '';
+  const sr = slideRuote(ruote, n + 1, numeriCliente); if (sr) { n++; pezzi.push(sr); }
 
   const sp = slidePunti(d.portiVia, n + 1, 'Cosa ti porti', 'portiVia'); if (sp) { n++; pezzi.push(sp); }
   // 🔴 IL DOCUMENTO PER LA FINAL FINISCE QUI (Germano, 22/08).

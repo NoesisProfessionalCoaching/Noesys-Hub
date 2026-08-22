@@ -90,7 +90,7 @@
   .n .d{font-size:11.5px;color:var(--hint);margin-top:8px;line-height:1.5}
   .ruote{display:grid;grid-template-columns:1fr 1fr;gap:24px;flex:1;min-height:0}
   .rw{text-align:center;min-width:0;display:flex;flex-direction:column;min-height:0}
-  .rw svg{width:100%;height:auto;flex:1;min-height:0;max-height:318px}
+  .rw svg{width:100%;height:auto;flex:1;min-height:0;max-height:330px}
   body.consegna .rw svg{max-height:430px}
   .rw .cap{font-size:12.5px;font-weight:800;color:var(--ink);margin-bottom:2px}
   .rw .cap span{font-weight:700;color:var(--hint);letter-spacing:.1em;text-transform:uppercase;font-size:10.5px;margin-right:8px}
@@ -192,7 +192,7 @@
   /* RUOTA RIQUADRATA (Germano, 21/08): la ruota sta su un fondo bianco suo, con
      una cornice — non appoggiata direttamente alla slide, dove il pittogramma di
      sfondo la sporca. Vale per tutt'e due, quella che c'è e quella che aspetta. */
-  .rw{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 10px 8px}
+  .rw{background:#fff;border:1px solid var(--line);border-radius:12px;padding:8px 6px 4px}
   .rw .cap{margin-bottom:6px}
 
   /* ELENCHI MODIFICABILI (22/08): i punti si riscrivono, si tolgono e si aggiungono.
