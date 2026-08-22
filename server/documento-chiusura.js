@@ -135,6 +135,14 @@ async function testiDeiReport(sedute) {
   }
   return out;
 }
+// ⚠️ `created_at` torna dal database come oggetto data: tagliarne la stringa dava
+// «Wed Apr 22», che finiva tale e quale sotto la ruota nel documento.
+function giorno(v) {
+  if (!v) return null;
+  const d = v instanceof Date ? v : new Date(v);
+  return isNaN(d.getTime()) ? String(v).slice(0, 10) : d.toISOString().slice(0, 10);
+}
+
 const soloDati = s => ({ id: s.id, tipo: s.tipo, data: s.data ? String(s.data).slice(0, 10) : null, ore: s.ore });
 
 // ── 5 · IL MATERIALE COMPLETO ───────────────────────────────────────────────
@@ -160,8 +168,8 @@ async function raccogliMateriale({ percorsoId, conFinal = false }) {
     report,
     ruote: {
       tool: ruote.tool || null, avviso: ruote.avviso,
-      intake: ruote.intake ? { id: ruote.intake.id, quando: String(ruote.intake.created_at).slice(0, 10), aree: leggiAree(ruote.intake) } : null,
-      final:  ruote.final  ? { id: ruote.final.id,  quando: String(ruote.final.created_at).slice(0, 10),  aree: leggiAree(ruote.final) }  : null,
+      intake: ruote.intake ? { id: ruote.intake.id, quando: giorno(ruote.intake.created_at), aree: leggiAree(ruote.intake) } : null,
+      final:  ruote.final  ? { id: ruote.final.id,  quando: giorno(ruote.final.created_at),  aree: leggiAree(ruote.final) }  : null,
       variazioni: ruote.final ? variazioniRuote(ruote.intake, ruote.final) : null,
     },
   };
