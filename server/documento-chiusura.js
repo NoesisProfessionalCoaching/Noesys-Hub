@@ -261,9 +261,15 @@ I MOMENTI CHE CONTANO
   · considerazioni = 2-3 righe in tutto, massimo 45 parole: cosa ha prodotto quel momento. Non di più.
 - Ogni momento ha anche: la data ALL'ITALIANA, «4 maggio 2026» (o due, se è maturato in due sessioni), un'etichetta breve ("La svolta",
   "Passaggio scomodo", "La contraddizione") e un titolo concreto che richiama LA scena, mai generico.
-- portatoCitazione = LA FRASE ESATTA del report (parole del Cliente se ci sono, altrimenti il fatto preciso che
-  ha portato lui). Copiala, non riscriverla: è la prova che il documento poggia su di lui.
+- portatoCitazione = la frase del report che riporta quello che ha portato LUI (le sue parole se ci sono,
+  altrimenti il fatto preciso). È la prova che il documento poggia su di lui: non inventarla.
 - portatoSpiegazione = UNA riga: perché quell'elemento ha fatto la differenza.
+- 🔴 IL RIQUADRO «PORTATO DAL CLIENTE» (citazione e spiegazione) va sempre in PRIMA PERSONA — la voce del
+  Cliente, «non è necessario avere la schiena dritta», «ho scelto di restare appoggiato» — oppure
+  IMPERSONALE. ⛔ MAI in terza persona: se il report dice «Francesco ha dimostrato ai responsabili…»,
+  nel documento diventa «Ho dimostrato ai responsabili…» o «Dimostrare ai responsabili…». Le parole
+  restano le sue: cambia solo la persona, perché quel riquadro è roba sua, non un referto su di lui.
+  Regola di Germano del 22/08.
 - fonte = da dove viene ("Report dell'11 maggio: tabella autorevolezza 7/10 · esercizio sull'immagine…").
 - traccia = un'istruzione operativa al coach ("Chiedigli che numero darebbe oggi, prima di andare avanti").
 

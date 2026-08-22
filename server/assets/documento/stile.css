@@ -211,3 +211,9 @@
   body.correggo .aggiungi{display:inline-block;margin-top:4px;border:1px dashed #cfd8e3;background:#fff;
     color:#5b6672;border-radius:8px;padding:4px 12px;font-size:12px;font-weight:700;cursor:pointer}
   body.correggo [data-voce]{padding-right:22px}
+
+  /* VIRGOLETTE DELLA CITAZIONE: le mette il foglio di stile, non il testo.
+     Se stessero nel testo, correggendo la frase verrebbero salvate anche loro e
+     alla ricarica ci si ritroverebbe «« due volte »». */
+  .portato .q::before{content:'«'}
+  .portato .q::after{content:'»'}

@@ -29,6 +29,12 @@ const esc = t => String(t == null ? '' : t)
 // dopo, all'HTML già fatto, ha modificato anche il JavaScript della pagina e ha
 // rotto i pulsanti: non si torna a fare così.
 let MODIFICABILE = false;
+// ⚠️ 22/08: prima la targa stava su uno SPAN dentro la riga. Scrivendo all'inizio o
+// alla fine, il browser metteva il testo FUORI dallo span, e al salvataggio quel
+// pezzo risultava invariato: le correzioni sparivano senza dire niente.
+// Adesso la targa si mette sull'elemento intero (`<h2 ${targa(...)}>`), così tutto
+// quello che scrivi resta dentro il pezzo che l'Hub sta seguendo.
+const targa = (sentiero) => MODIFICABILE ? ` data-k="${sentiero}" contenteditable="false"` : '';
 const ed = (sentiero, testo) => MODIFICABILE
   ? `<span data-k="${sentiero}" contenteditable="false">${testo}</span>`
   : testo;
@@ -106,17 +112,17 @@ function slideMomento(m, n, idx) {
     (m.punti || []).map(p => voce(`<span class="punto" data-campo>${esc(p)}</span>`)).join(''));
   return slide(`
     ${occhiello(dataLunga(m.data), m.etichetta)}
-    <h2>${ed(`momenti.${idx}.titolo`, esc(m.titolo))}</h2>
+    <h2${targa(`momenti.${idx}.titolo`)}>${esc(m.titolo)}</h2>
     <div class="split">
       <div>
         <div class="punti">${punti}</div>
-        ${m.considerazioni ? `<p class="spieg">${ed(`momenti.${idx}.considerazioni`, esc(m.considerazioni))}</p>` : ''}
+        ${m.considerazioni ? `<p class="spieg"${targa(`momenti.${idx}.considerazioni`)}>${esc(m.considerazioni)}</p>` : ''}
         ${fonte(m.fonte)}
       </div>
       <div class="portato">
         <div class="lab">Portato dal Cliente</div>
-        <div class="q">«${esc(m.portatoCitazione)}»</div>
-        <div class="f">${ed(`momenti.${idx}.portatoSpiegazione`, esc(m.portatoSpiegazione))}</div>
+        <div class="q"${targa(`momenti.${idx}.portatoCitazione`)}>${esc(m.portatoCitazione)}</div>
+        <div class="f"${targa(`momenti.${idx}.portatoSpiegazione`)}>${esc(m.portatoSpiegazione)}</div>
       </div>
     </div>
     ${traccia(m.traccia)}`, n);
@@ -159,7 +165,7 @@ function slidePunti(sez, n, occ, chiave) {
     </div></div>`)).join(''));
   return slide(`
     ${occhiello(occ)}
-    <h2 style="margin-bottom:12px">${ed(`${chiave}.titolo`, esc(sez.titolo))}</h2>
+    <h2 style="margin-bottom:12px"${targa(`${chiave}.titolo`)}>${esc(sez.titolo)}</h2>
     <div class="q-ses">${punti}</div>
     <div class="q-con">${paroleAttese(sez.parole)}</div>
     ${traccia('Non elencarglieli: sono la tua traccia. Chiedi a lui, e le sue parole prenderanno questo posto nel documento da consegnare.')}`, n);
@@ -171,7 +177,7 @@ function slideDomande(dom, n) {
   if (!dom || !dom.length) return '';
   const righe = dom.map((d, i) => `
     <div class="qa">
-      <b class="q-ses">${ed(`daQuiInAvanti.${i}.domanda`, esc(d.domanda))}</b>
+      <b class="q-ses"${targa(`daQuiInAvanti.${i}.domanda`)}>${esc(d.domanda)}</b>
       <div class="q-ses"><div class="riga"></div><div class="riga"></div></div>
       <div class="q-con"><b>${esc(d.etichetta)}</b>${paroleAttese(d.parole)}</div>
     </div>`).join('');
@@ -197,13 +203,13 @@ function renderDocumento({ contenuti, cliente, ruote, soloCorpo = false, modific
   pezzi.push(slide(`
     <img class="logo-tl" alt="Noesys Professional Coaching" src="${LOGO}">
     <div class="claim">${esc(nome)}</div>
-    <h2 style="max-width:26ch">${ed('copertina.titolo', esc(d.copertina ? d.copertina.titolo : ''))}</h2>
+    <h2 style="max-width:26ch"${targa('copertina.titolo')}>${esc(d.copertina ? d.copertina.titolo : '')}</h2>
     <div class="meta">${esc(d.copertina ? d.copertina.periodo : '')}</div>`, ++n, 'cover'));
 
   if (d.filo) pezzi.push(slide(`
     ${occhiello('Il filo del percorso')}
-    <h2>${ed('filo.titolo', esc(d.filo.titolo))}</h2>
-    ${(d.filo.corpo || []).map((p, i) => `<p class="spieg">${ed(`filo.corpo.${i}`, esc(p))}</p>`).join('')}`, ++n));
+    <h2${targa('filo.titolo')}>${esc(d.filo.titolo)}</h2>
+    ${(d.filo.corpo || []).map((p, i) => `<p class="spieg"${targa(`filo.corpo.${i}`)}>${esc(p)}</p>`).join('')}`, ++n));
 
   (d.momenti || []).forEach((m, i) => pezzi.push(slideMomento(m, ++n, i)));
 
@@ -243,13 +249,13 @@ function renderDocumento({ contenuti, cliente, ruote, soloCorpo = false, modific
   if (versione === 'consegna' && d.paroleDelCoach) pezzi.push(slide(`
     ${occhiello('Le parole del coach')}
     <h2 style="margin-bottom:12px">${esc(d.paroleDelCoach.titolo)}</h2>
-    ${(d.paroleDelCoach.corpo || []).map((p, i) => `<p class="spieg coach-t">${ed(`paroleDelCoach.corpo.${i}`, esc(p))}</p>`).join('')}
+    ${(d.paroleDelCoach.corpo || []).map((p, i) => `<p class="spieg coach-t"${targa(`paroleDelCoach.corpo.${i}`)}>${esc(p)}</p>`).join('')}
     ${fonte('Bozza costruita dalle note conclusive dei report: da riscrivere con parole tue.')}`, ++n));
 
   if (versione === 'consegna' && d.chiusura) pezzi.push(slide(`
     ${occhiello('Chiusura')}
     <h2 style="margin-bottom:20px;max-width:24ch">${esc(d.chiusura.titolo)}</h2>
-    <p class="chiu ultima">${ed('chiusura.messaggio', esc(d.chiusura.messaggio))}</p>
+    <p class="chiu ultima"${targa('chiusura.messaggio')}>${esc(d.chiusura.messaggio)}</p>
     <div class="coda"><b>Noesys Professional Coaching</b><br>${esc(nome)}</div>`, ++n, 'chiusura'));
 
   const corpo = `<div class="doc">${barra(azioni)}${pezzi.join('')}</div>`;
