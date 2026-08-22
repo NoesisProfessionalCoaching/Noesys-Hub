@@ -63,19 +63,41 @@ async function datiDalDatabase(percorsoId) {
 function scegliRuote(ruoteGrezze) {
   const buone = (ruoteGrezze || []).filter(r => leggiAree(r).length);
   if (!buone.length) return { intake: null, final: null, avviso: 'Nessuna ruota compilata nello strumento.' };
+
   const perTool = {};
   for (const r of buone) (perTool[r.tool] = perTool[r.tool] || []).push(r);
   // ⚠️ Si ordina QUI per data, senza fidarsi dell'ordine in cui arrivano le righe:
   // «la più vecchia è l'intake, la più recente la final» è la regola, e una regola
   // che dipende da come chiama chi ti chiama prima o poi si rompe.
   for (const t of Object.keys(perTool)) perTool[t].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-  // Lo strumento con più versioni (a pari merito: quello con la versione più recente).
-  const tool = Object.keys(perTool).sort((a, b) =>
-    perTool[b].length - perTool[a].length ||
-    new Date(perTool[b][perTool[b].length - 1].created_at) - new Date(perTool[a][perTool[a].length - 1].created_at))[0];
-  const v = perTool[tool];
-  if (v.length === 1) return { intake: v[0], final: null, tool, avviso: 'C\'è una ruota sola: la seconda si fa in sessione.' };
-  return { intake: v[0], final: v[v.length - 1], tool, avviso: null };
+  const quando = v => new Date(v[v.length - 1].created_at).getTime();
+
+  // ── CASO 1 · un tipo di ruota è stato fatto DUE volte: è quello. ────────────
+  // Il tipo lo decide la FINAL: si guarda quale ruota è stata rifatta e si cerca
+  // la sua gemella più vecchia. Se per qualche motivo i tipi rifatti fossero due,
+  // vince quello con la versione più recente — cioè quello fatto in sessione.
+  const rifatti = Object.keys(perTool).filter(t => perTool[t].length > 1);
+  if (rifatti.length) {
+    const tool = rifatti.sort((a, b) => quando(perTool[b]) - quando(perTool[a]))[0];
+    const v = perTool[tool];
+    return { intake: v[0], final: v[v.length - 1], tool, avviso: null };
+  }
+
+  // ── CASO 2 · un solo tipo, fatto una volta: è l'intake, e si aspetta l'altra ─
+  const tipi = Object.keys(perTool);
+  if (tipi.length === 1) {
+    return { intake: perTool[tipi[0]][0], final: null, tool: tipi[0],
+             avviso: "C'è una ruota sola: la seconda si fa in sessione." };
+  }
+
+  // ── CASO 3 · più tipi diversi, uno a testa: NON si può sapere quale ─────────
+  // Succede nel business, dove esistono la ruota della vita, quella del business
+  // e quella della leadership. Quale confrontare lo dice la ruota che si farà
+  // nella Final: finché non c'è, l'Hub non sceglie a caso — lo dice e aspetta.
+  // Poi entrano tutte e due insieme. (Regola di Germano, 22/08/2026.)
+  return { intake: null, final: null, tool: null, ambiguo: tipi,
+           avviso: 'Questo cliente ha compilato più ruote diverse (' + tipi.join(', ') +
+                   '): quale confrontare si saprà quando farete quella della Final. Entreranno tutte e due insieme.' };
 }
 
 function leggiAree(riga) {

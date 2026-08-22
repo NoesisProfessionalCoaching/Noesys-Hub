@@ -59,6 +59,35 @@ const FINAL = ruota('r-final', 'ruotavita', '2026-07-13T13:00:00Z',
   prova('una riga illeggibile non fa cadere niente', null, rotta.intake);
 }
 
+// ── Il caso BUSINESS: più ruote diverse (vita · business · leadership) ──────
+// Quale confrontare lo dice la ruota che si fa nella Final. Finché non c'è,
+// l'Hub non sceglie a caso: lo dice e aspetta. (Regola di Germano, 22/08.)
+{
+  const vitaIntake = INTAKE;
+  const leadIntake = ruota('r-lead-1', 'ruota-leadership', '2026-04-22T11:00:00Z', { 'Visione': 5, 'Delega': 6 });
+  // ⚠️ ORE 15: dopo la ruota della vita del 13 luglio (ore 13). Serve al caso in cui
+  // i tipi rifatti siano due: deve vincere quella fatta PER ULTIMA, cioè in sessione.
+  const leadFinal  = ruota('r-lead-2', 'ruota-leadership', '2026-07-13T15:00:00Z', { 'Visione': 8, 'Delega': 7 });
+
+  const dubbio = doc.scegliRuote([vitaIntake, leadIntake]);
+  prova('due ruote diverse, una a testa: non sceglie a caso', [null, null],
+    [dubbio.intake, dubbio.final]);
+  prova('e dice quali sono, invece di tacere', true,
+    /ruotavita/.test(dubbio.avviso || '') && /leadership/.test(dubbio.avviso || ''));
+
+  const deciso = doc.scegliRuote([vitaIntake, leadIntake, leadFinal]);
+  prova('appena una viene rifatta, è quella: si confronta con la sua gemella',
+    ['ruota-leadership', 'r-lead-1', 'r-lead-2'], [deciso.tool, deciso.intake.id, deciso.final.id]);
+
+  const dueRifatte = doc.scegliRuote([INTAKE, FINAL, leadIntake, leadFinal]);
+  prova('se i tipi rifatti sono due, vince quello fatto per ultimo (in sessione)',
+    'ruota-leadership', dueRifatte.tool);
+
+  const solaLeadership = doc.scegliRuote([leadIntake]);
+  prova('un tipo solo, anche se non è la ruota della vita: è l\'intake e si aspetta',
+    ['r-lead-1', null], [solaLeadership.intake.id, solaLeadership.final]);
+}
+
 // ── I conti ─────────────────────────────────────────────────────────────────
 {
   const v = doc.variazioniRuote(INTAKE, FINAL);

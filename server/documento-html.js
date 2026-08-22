@@ -134,7 +134,11 @@ function slideMomento(m, n, idx) {
 }
 
 function slideRuote(ruote, n) {
-  if (!ruote || (!ruote.intake && !ruote.final)) return '';
+  if (!ruote) return '';
+  // Nel business il cliente può aver compilato più ruote diverse: quale confrontare
+  // lo dirà quella della Final. La pagina c'è lo stesso, con scritto che aspetta —
+  // sparire sarebbe peggio: il coach non saprebbe che quella pagina esiste.
+  if (!ruote.intake && !ruote.final && !ruote.ambiguo) return '';
   // 🔴 LE DUE RUOTE STANNO SEMPRE AFFIANCATE, anche quando ce n'è una sola: la metà
   // vuota È IL POSTO della ruota che si fa durante la Final. Non è spazio sprecato,
   // è spazio prenotato — non allargare la prima per riempirlo.
