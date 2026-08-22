@@ -127,7 +127,10 @@ function slideMomento(m, n, idx) {
       <div class="portato">
         <div class="lab">Le tue parole:</div>
         <div class="q"${targa(`momenti.${idx}.portatoCitazione`)}>${esc(m.portatoCitazione)}</div>
-        <div class="f"${targa(`momenti.${idx}.portatoSpiegazione`)}>${esc(m.portatoSpiegazione)}</div>
+        ${/* 🔴 22/08: la riga grigia sotto la citazione NON si mostra più. Spiegava
+             perché quell'elemento aveva fatto la differenza, ma sotto le parole del
+             Cliente sembrava un commento del coach su di lui — e il Cliente legge.
+             Il testo resta nei dati, non nel documento. */ ''}
       </div>
     </div>
     ${traccia(m.traccia)}`, n);

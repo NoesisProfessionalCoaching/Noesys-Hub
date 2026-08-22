@@ -149,6 +149,23 @@ const DOPO = {
         ['Intake', 'Ongoing', 'Final'], conFinal.report.map(r => r.tipo));
     }
 
+    // ── Le parole del Cliente tornate storte (casi veri del 22/08) ──────────
+    {
+      const storto = {
+        ruoteParole: [{ etichetta: 'Le aree cresciute', parole: 'Sono cresciuto dove volevo.' }],
+        portiViaParole: 'Prima frase.\nSeconda frase.',
+        nonTornareParole: ['Una frase sola.'],
+        daQuiInAvanti: [{ etichetta: 'Il segnale', parole: 'Mi impegno.' }],
+        paroleDelCoach: { titolo: 'x', corpo: ['a'] },
+        chiusura: { titolo: 'y', messaggio: 'z' },
+      };
+      const buono = doc.normalizzaConsegna(storto);
+      prova('⭐ una frase tornata come oggetto diventa la frase (non «[object Object]»)',
+        ['Sono cresciuto dove volevo.'], buono.ruoteParole);
+      prova('e un elenco tornato come testo unico si spezza in frasi',
+        ['Prima frase.', 'Seconda frase.'], buono.portiViaParole);
+    }
+
     console.log(falliti ? `\n✗ ${falliti} controlli falliti.` : '\n✓ Tutti i controlli passati.');
   } catch (e) {
     falliti++;

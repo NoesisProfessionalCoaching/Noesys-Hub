@@ -482,11 +482,25 @@ function normalizzaConsegna(grezzo) {
       if (letto !== null) d[k] = letto;
     }
   }
-  // ⚠️ 22/08: un elenco può tornare come TESTO UNICO con le frasi a capo. Il
-  // contenuto è giusto, la forma no: si spezza per righe invece di buttare tutto.
+  // ⚠️ 22/08, due forme sbagliate viste sui dati veri, tutt'e due col contenuto
+  // giusto dentro: (1) l'elenco torna come TESTO UNICO con le frasi a capo;
+  // (2) le voci tornano come OGGETTI ({parole, etichetta}) invece che come frasi,
+  // e in pagina si leggeva «[object Object]».
+  // Si raddrizza invece di buttare: quello che conta è la frase del Cliente.
   for (const k of ['ruoteParole', 'portiViaParole', 'nonTornareParole']) {
     if (typeof d[k] === 'string') {
       d[k] = d[k].split(/\r?\n+/).map(t => t.replace(/^[-·•\s]+/, '').trim()).filter(Boolean);
+    }
+    if (Array.isArray(d[k])) {
+      d[k] = d[k].map(v => {
+        if (typeof v === 'string') return v.trim();
+        if (v && typeof v === 'object') {
+          // la frase è il campo più lungo: 'parole', 'frase', 'testo'… non si indovina il nome
+          const testi = Object.values(v).filter(x => typeof x === 'string');
+          return testi.sort((a, b) => b.length - a.length)[0] || '';
+        }
+        return '';
+      }).filter(Boolean);
     }
   }
   const mancano = [];
