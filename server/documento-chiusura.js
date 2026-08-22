@@ -243,7 +243,15 @@ la fonte (da dove viene il contenuto) e la traccia (l'istruzione al coach: «Chi
 2. MAI descrivere o dedurre EMOZIONI e stati d'animo ("si sentiva insicuro", "era ansioso"). Riporta cosa ha detto e cosa ha fatto. Se un'emozione l'ha nominata lui, si può citare tra virgolette come sua parola — non come tua osservazione.
 
 I MOMENTI CHE CONTANO
-- Quanti ne trovi: NON c'è un numero da raggiungere. Un percorso di 8 sessioni può darne 7, uno di 2 può darne 2.
+- 🔴 QUANTI: **almeno uno per ogni sessione ONGOING**. Se le ongoing sono sei, i momenti sono almeno sei;
+  se sono due, almeno due. Nessuna sessione resta senza il suo tema: il Cliente c'è stato, e vuole
+  ritrovarcisi. Regola di Germano del 22/08.
+- Se una sessione ha prodotto DUE cose distinte e non collegate fra loro, si mettono **tutte e due**,
+  separate: non si accorpano per far prima (es. un discorso in pubblico andato bene e una decisione
+  presa in famiglia sono due momenti, non uno).
+- 🔴 DALL'INTAKE si prendono due cose, e vanno usate: **l'obiettivo di percorso** (è il filo da cui parte
+  tutto: entra nella copertina e nel filo) e **i valori/numeri di partenza** che il Cliente si è dato,
+  perché sono il termine di paragone dei confronti.
 - I momenti DIFFICILI si mettono se ci sono (difficile = true). Non è una quota da riempire: se nei report non ci sono, non inventarli.
 - 🔴 BREVITÀ. Il coach legge queste slide mentre parla con una persona: niente paragrafi.
   · punti = 2-4 PUNTI ELENCO, uno per riga, ognuno al massimo 12-14 parole: cosa è successo in quella sessione.
