@@ -33,6 +33,17 @@ const ed = (sentiero, testo) => MODIFICABILE
   ? `<span data-k="${sentiero}" contenteditable="false">${testo}</span>`
   : testo;
 
+// ── GLI ELENCHI CHE IL COACH PUÒ RIFARE ─────────────────────────────────────
+// Un elenco porta la sua targa sul contenitore; ogni voce si può riscrivere,
+// TOGLIERE o AGGIUNGERE. Al salvataggio parte l'elenco INTERO, non il singolo
+// pezzo: è l'unico modo perché «ho tolto il terzo punto» arrivi fino al database.
+const lista = (sentiero, voci) => MODIFICABILE
+  ? `<div data-lista="${sentiero}">${voci}<button class="aggiungi" type="button">+ aggiungi</button></div>`
+  : `<div>${voci}</div>`;
+const voce = (dentro) => MODIFICABILE
+  ? `<div data-voce>${dentro}<button class="togli" type="button" title="Togli questo punto">✕</button></div>`
+  : dentro;
+
 const MESI = ['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre'];
 function dataLunga(iso) {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ''));
@@ -91,13 +102,14 @@ const traccia = t => t ? `<div class="traccia"><b>Traccia.</b> ${esc(t)}</div>` 
 const fonte = t => t ? `<div class="fonte">${esc(t)}</div>` : '';
 
 function slideMomento(m, n, idx) {
-  const punti = (m.punti || []).map((p, i) => `<li>${ed(`momenti.${idx}.punti.${i}`, esc(p))}</li>`).join('');
+  const punti = lista(`momenti.${idx}.punti`,
+    (m.punti || []).map(p => voce(`<span class="punto" data-campo>${esc(p)}</span>`)).join(''));
   return slide(`
     ${occhiello(dataLunga(m.data), m.etichetta)}
     <h2>${ed(`momenti.${idx}.titolo`, esc(m.titolo))}</h2>
     <div class="split">
       <div>
-        ${punti ? `<ul class="punti">${punti}</ul>` : ''}
+        <div class="punti">${punti}</div>
         ${m.considerazioni ? `<p class="spieg">${ed(`momenti.${idx}.considerazioni`, esc(m.considerazioni))}</p>` : ''}
         ${fonte(m.fonte)}
       </div>
@@ -141,13 +153,13 @@ function slideRuote(ruote, n) {
 // aspetta: ⚠️ NON è uno spazio da riempire, è uno spazio prenotato.
 function slidePunti(sez, n, occ, chiave) {
   if (!sez || !(sez.punti || []).length) return '';
-  const punti = sez.punti.map((p, i) => `
-    <div class="filo"><div class="filo-n">${i + 1}</div><div>
-      <b>${ed(`${chiave}.punti.${i}.titolo`, esc(p.titolo))}</b><p>${ed(`${chiave}.punti.${i}.testo`, esc(p.testo))}${p.riferimento ? ` <span style="color:#9aa5b1">${esc(p.riferimento)}</span>` : ''}</p>
-    </div></div>`).join('');
+  const punti = lista(`${chiave}.punti`, sez.punti.map(p => voce(`
+    <div class="filo"><div class="filo-n"></div><div>
+      <b data-campo="titolo">${esc(p.titolo)}</b><p><span data-campo="testo">${esc(p.testo)}</span>${p.riferimento ? ` <span style="color:#9aa5b1" data-campo="riferimento">${esc(p.riferimento)}</span>` : ''}</p>
+    </div></div>`)).join(''));
   return slide(`
     ${occhiello(occ)}
-    <h2 style="margin-bottom:12px">${esc(sez.titolo)}</h2>
+    <h2 style="margin-bottom:12px">${ed(`${chiave}.titolo`, esc(sez.titolo))}</h2>
     <div class="q-ses">${punti}</div>
     <div class="q-con">${paroleAttese(sez.parole)}</div>
     ${traccia('Non elencarglieli: sono la tua traccia. Chiedi a lui, e le sue parole prenderanno questo posto nel documento da consegnare.')}`, n);
@@ -175,7 +187,7 @@ const paroleAttese = p => p
   : `<p style="color:#9aa5b1">Prende il posto delle parole del Cliente, dal report della Final.</p>`;
 
 // ── Il documento intero ─────────────────────────────────────────────────────
-function renderDocumento({ contenuti, cliente, ruote, soloCorpo = false, modificabile = false, azioni = '' }) {
+function renderDocumento({ contenuti, cliente, ruote, soloCorpo = false, modificabile = false, azioni = '', versione = 'final' }) {
   MODIFICABILE = !!modificabile;
   const d = contenuti || {};
   const nome = (cliente && (cliente.name || cliente.nome)) || (d.chiusura && d.chiusura.titolo) || '';
@@ -217,16 +229,24 @@ function renderDocumento({ contenuti, cliente, ruote, soloCorpo = false, modific
   }
 
   const sp = slidePunti(d.portiVia, n + 1, 'Cosa ti porti', 'portiVia'); if (sp) { n++; pezzi.push(sp); }
-  const sn = slidePunti(d.nonTornareIndietro, n + 1, 'Come non tornare indietro', 'nonTornareIndietro'); if (sn) { n++; pezzi.push(sn); }
-  const sd = slideDomande(d.daQuiInAvanti, n + 1); if (sd) { n++; pezzi.push(sd); }
+  // 🔴 IL DOCUMENTO PER LA FINAL FINISCE QUI (Germano, 22/08).
+  // «Come non tornare indietro», «Da qui in avanti», le parole del coach e la
+  // chiusura NON servono in sessione: nasceranno da quello che il Cliente dice, e
+  // il documento da consegnare le riempirà leggendo il report della Final. Averle
+  // qui vorrebbe dire mettergli in mano l'elenco delle domande che gli farai —
+  // e fargli pensare che le stai leggendo.
+  if (versione === 'consegna') {
+    const sn = slidePunti(d.nonTornareIndietro, n + 1, 'Come non tornare indietro', 'nonTornareIndietro'); if (sn) { n++; pezzi.push(sn); }
+    const sd = slideDomande(d.daQuiInAvanti, n + 1); if (sd) { n++; pezzi.push(sd); }
+  }
 
-  if (d.paroleDelCoach) pezzi.push(slide(`
+  if (versione === 'consegna' && d.paroleDelCoach) pezzi.push(slide(`
     ${occhiello('Le parole del coach')}
     <h2 style="margin-bottom:12px">${esc(d.paroleDelCoach.titolo)}</h2>
     ${(d.paroleDelCoach.corpo || []).map((p, i) => `<p class="spieg coach-t">${ed(`paroleDelCoach.corpo.${i}`, esc(p))}</p>`).join('')}
     ${fonte('Bozza costruita dalle note conclusive dei report: da riscrivere con parole tue.')}`, ++n));
 
-  if (d.chiusura) pezzi.push(slide(`
+  if (versione === 'consegna' && d.chiusura) pezzi.push(slide(`
     ${occhiello('Chiusura')}
     <h2 style="margin-bottom:20px;max-width:24ch">${esc(d.chiusura.titolo)}</h2>
     <p class="chiu ultima">${ed('chiusura.messaggio', esc(d.chiusura.messaggio))}</p>

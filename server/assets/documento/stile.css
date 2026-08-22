@@ -194,3 +194,20 @@
      sfondo la sporca. Vale per tutt'e due, quella che c'è e quella che aspetta. */
   .rw{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 10px 8px}
   .rw .cap{margin-bottom:6px}
+
+  /* ELENCHI MODIFICABILI (22/08): i punti si riscrivono, si tolgono e si aggiungono.
+     La numerazione la fa il CSS: se togli il secondo punto, il terzo diventa due. */
+  [data-lista]{counter-reset:v}
+  [data-voce]{counter-increment:v;position:relative}
+  [data-voce] .filo-n::before{content:counter(v)}
+  .punti .punto{position:relative;display:block;padding-left:16px;font-size:15px;line-height:1.55;
+    color:#4c5966;margin-bottom:7px}
+  .punti .punto::before{content:'';position:absolute;left:0;top:9px;width:6px;height:6px;
+    border-radius:50%;background:#c9a63a}
+  .togli,.aggiungi{display:none}
+  body.correggo .togli{display:inline-flex;align-items:center;justify-content:center;position:absolute;
+    right:-6px;top:-2px;width:20px;height:20px;border-radius:50%;border:1px solid #e6c9c9;background:#fff;
+    color:#a33;font-size:11px;cursor:pointer;line-height:1}
+  body.correggo .aggiungi{display:inline-block;margin-top:4px;border:1px dashed #cfd8e3;background:#fff;
+    color:#5b6672;border-radius:8px;padding:4px 12px;font-size:12px;font-weight:700;cursor:pointer}
+  body.correggo [data-voce]{padding-right:22px}

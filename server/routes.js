@@ -8231,14 +8231,55 @@ ${corpo}
   var partenza = {};
   pezzi.forEach(function(p){ partenza[p.getAttribute('data-k')] = p.innerText; });
 
+  // Gli elenchi: si leggono per intero, così «ho tolto un punto» e «ne ho aggiunto
+  // uno» arrivano fino al database. Una voce con dei campi dentro torna un oggetto,
+  // una voce sola torna il suo testo.
+  var liste = [].slice.call(document.querySelectorAll('[data-lista]'));
+  function leggiLista(l){
+    return [].slice.call(l.querySelectorAll('[data-voce]')).map(function(v){
+      var campi = [].slice.call(v.querySelectorAll('[data-campo]'));
+      var soloUno = campi.length === 1 && campi[0].getAttribute('data-campo') === '';
+      if (soloUno) return campi[0].innerText.trim();
+      var o = {};
+      campi.forEach(function(c){ var nome = c.getAttribute('data-campo'); if (nome) o[nome] = c.innerText.trim(); });
+      return o;
+    });
+  }
+  var listaPartenza = {};
+  liste.forEach(function(l){ listaPartenza[l.getAttribute('data-lista')] = JSON.stringify(leggiLista(l)); });
+
   var mod = document.getElementById('b-edit'), salva = document.getElementById('b-salva');
   var inModifica = false;
+  function scrivibili(){
+    return pezzi.concat([].slice.call(document.querySelectorAll('[data-campo]')));
+  }
   mod.onclick = function(){
     inModifica = !inModifica;
-    pezzi.forEach(function(p){ p.contentEditable = inModifica ? 'true' : 'false'; p.classList.toggle('viva', inModifica); });
+    document.body.classList.toggle('correggo', inModifica);
+    scrivibili().forEach(function(p){ p.contentEditable = inModifica ? 'true' : 'false'; p.classList.toggle('viva', inModifica); });
     mod.classList.toggle('on', inModifica);
     mod.textContent = inModifica ? 'Ho finito di scrivere' : 'Modifica';
   };
+
+  // Togli un punto · aggiungine uno (il nuovo nasce vuoto, sulla stessa forma degli altri)
+  document.addEventListener('click', function(e){
+    var t = e.target;
+    if (t.classList && t.classList.contains('togli')) {
+      var v = t.closest('[data-voce]');
+      if (v && confirm('Tolgo questo punto dal documento?')) v.remove();
+    }
+    if (t.classList && t.classList.contains('aggiungi')) {
+      var l = t.closest('[data-lista]');
+      var voci = l.querySelectorAll('[data-voce]');
+      if (!voci.length) return;
+      var nuova = voci[voci.length - 1].cloneNode(true);
+      [].slice.call(nuova.querySelectorAll('[data-campo]')).forEach(function(c){
+        c.innerText = ''; c.contentEditable = inModifica ? 'true' : 'false'; c.classList.toggle('viva', inModifica);
+      });
+      l.insertBefore(nuova, t);
+      var primo = nuova.querySelector('[data-campo]'); if (primo) primo.focus();
+    }
+  });
 
   function dillo(t){ var a = document.getElementById('avviso'); a.textContent = t; a.style.display = 'block';
     setTimeout(function(){ a.style.display = 'none'; }, 3500); }
@@ -8249,6 +8290,10 @@ ${corpo}
       var k = p.getAttribute('data-k'), ora = p.innerText;
       if (ora !== partenza[k]) cambiate[k] = ora;
     });
+    liste.forEach(function(l){
+      var k = l.getAttribute('data-lista'), ora = leggiLista(l);
+      if (JSON.stringify(ora) !== listaPartenza[k]) cambiate[k] = ora;
+    });
     if (!Object.keys(cambiate).length) { dillo('Non hai cambiato niente.'); return; }
     salva.disabled = true;
     try {
@@ -8257,6 +8302,7 @@ ${corpo}
       var d = await r.json();
       if (!r.ok) throw new Error(d.error || 'non riuscito');
       Object.keys(cambiate).forEach(function(k){ partenza[k] = cambiate[k]; });
+      liste.forEach(function(l){ listaPartenza[l.getAttribute('data-lista')] = JSON.stringify(leggiLista(l)); });
       dillo(d.quante === 1 ? 'Salvata 1 correzione.' : 'Salvate ' + d.quante + ' correzioni.');
     } catch (err) { dillo('Non ho salvato: ' + err.message); }
     salva.disabled = false;

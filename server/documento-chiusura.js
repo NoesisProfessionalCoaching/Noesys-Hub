@@ -432,9 +432,18 @@ function scriviIn(oggetto, sentiero, valore) {
 }
 
 // Il documento come si vede: generato + correzioni sopra. Non modifica gli originali.
+// ⭐ Una correzione può essere DUE cose (22/08):
+//  · un testo → sostituisce quel pezzo;
+//  · un ELENCO INTERO → sostituisce tutta la lista. È così che il coach può
+//    riscrivere un punto, TOGLIERNE uno o AGGIUNGERNE uno: la lista che conta è
+//    quella che ha lasciato lui, non quella che aveva prodotto la macchina.
 function unisci(generato, correzioni) {
   const fuori = JSON.parse(JSON.stringify(generato || {}));
   for (const [sentiero, testo] of Object.entries(correzioni || {})) {
+    if (Array.isArray(testo)) {                       // l'elenco riscritto dal coach
+      if (valoreDa(fuori, sentiero) !== undefined) scriviIn(fuori, sentiero, testo);
+      continue;
+    }
     // Una correzione su un pezzo che non esiste più (documento rigenerato con meno
     // momenti) NON si butta via: si lascia dov'è nel magazzino e semplicemente non
     // si mostra. Buttarla sarebbe perdere il lavoro del coach senza dirglielo.

@@ -108,6 +108,23 @@ const DOPO = {
     prova('e resta nel magazzino, non si butta via il lavoro del coach',
       'correzione orfana', riga2.correzioni['momenti.5.corpo.0']);
 
+    // ── Togliere e aggiungere punti: la correzione può essere un ELENCO ─────
+    {
+      const cid3 = randomUUID(), pid3 = randomUUID();
+      await db.query('INSERT INTO clients (id, name, token) VALUES ($1,$2,$3)', [cid3, 'Elenchi', randomUUID()]);
+      await db.query('INSERT INTO percorsi (id, client_id) VALUES ($1,$2)', [pid3, cid3]);
+      const generato = { momenti: [{ titolo: 'uno', punti: ['a', 'b', 'c'] }], filo: { titolo: 'x', corpo: ['p'] } };
+      const id3 = await doc.salvaGenerato({ percorsoId: pid3, clientId: cid3, sedutaId: null, contenuti: generato, ruote: {} });
+      // il coach toglie 'b', riscrive 'a' e aggiunge un punto suo
+      await doc.salvaCorrezioni({ documentoId: id3, correzioni: { 'momenti.0.punti': ['a rifatto', 'c', 'un punto mio'] } });
+      const r3 = await doc.caricaDocumento({ percorsoId: pid3 });
+      const visto3 = doc.unisci(r3.generato, r3.correzioni);
+      prova('⭐ l\'elenco del coach sostituisce quello della macchina (tolto, riscritto, aggiunto)',
+        ['a rifatto', 'c', 'un punto mio'], visto3.momenti[0].punti);
+      prova('e nel magazzino l\'elenco della macchina resta com\'era',
+        ['a', 'b', 'c'], r3.generato.momenti[0].punti);
+    }
+
     // ── ⭐ IL REPORT DELLA FINAL NON ENTRA NELLA GENERAZIONE ─────────────────
     // Il documento si prepara PRIMA della Final: quel report non esiste ancora.
     // (Su Francesco esiste, ed è l'unico caso: senza questa regola l'unica prova
