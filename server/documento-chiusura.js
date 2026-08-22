@@ -471,6 +471,13 @@ async function caricaDocumento({ percorsoId }) {
 // le due colonne esistono.
 async function salvaGenerato({ percorsoId, clientId, sedutaId, contenuti, ruote }) {
   const { v4: uuidv4 } = require('uuid');
+  // ⚠️ 22/08: il cliente NON si prende da chi chiama. Rifacendo a mano il documento
+  // di Francesco ho passato l'identificativo di un'altra cliente, e il documento è
+  // finito intestato a lei: la pagina funzionava (va per percorso) ma il pulsante
+  // nelle Azioni, che cerca per cliente, diceva «da preparare».
+  // ⭐ Il proprietario del documento è il proprietario del PERCORSO. Una verità sola.
+  const pc = await db.query('SELECT client_id FROM percorsi WHERE id=$1', [percorsoId]);
+  const proprietario = (pc.rows[0] && pc.rows[0].client_id) || clientId;
   const esistente = await caricaDocumento({ percorsoId });
   const ruotaIntake = ruote && ruote.intake ? ruote.intake.id : null;
   const ruotaFinal  = ruote && ruote.final  ? ruote.final.id  : null;
@@ -486,7 +493,7 @@ async function salvaGenerato({ percorsoId, clientId, sedutaId, contenuti, ruote 
   await db.query(
     `INSERT INTO documenti (id, percorso_id, client_id, seduta_id, tipo, stato, generato, generato_at, ruota_intake_id, ruota_final_id)
      VALUES ($1,$2,$3,$4,'chiusura','bozza',$5,NOW(),$6,$7)`,
-    [id, percorsoId, clientId, sedutaId, JSON.stringify(contenuti), ruotaIntake, ruotaFinal]);
+    [id, percorsoId, proprietario, sedutaId, JSON.stringify(contenuti), ruotaIntake, ruotaFinal]);
   return id;
 }
 
