@@ -176,32 +176,35 @@ const SCHEMA = {
     }, required: ['titolo', 'corpo'], additionalProperties: false },
     momenti: { type: 'array', items: { type: 'object', properties: {
       data: { type: 'string' },              // 'AAAA-MM-GG', o due date separate da ' e '
-      etichetta: { type: 'string' },         // es. 'Passaggio scomodo', 'La svolta'
+      etichetta: { type: 'string' },         // es. 'La svolta', 'Passaggio scomodo'
       difficile: { type: 'boolean' },        // vero solo se è davvero un momento duro
       titolo: { type: 'string' },
-      corpo: { type: 'array', items: { type: 'string' } },
+      punti: { type: 'array', items: { type: 'string' } },  // 2-4 punti BREVI: cosa è successo
+      considerazioni: { type: 'string' },    // 2-3 righe, non di più
       fonte: { type: 'string' },             // solo versione da sessione
       portatoCitazione: { type: 'string' },  // LA FRASE ESATTA del report
       portatoSpiegazione: { type: 'string' },
       traccia: { type: 'string' },           // solo versione da sessione
-    }, required: ['data','etichetta','difficile','titolo','corpo','fonte','portatoCitazione','portatoSpiegazione','traccia'], additionalProperties: false } },
+    }, required: ['data','etichetta','difficile','titolo','punti','considerazioni','fonte','portatoCitazione','portatoSpiegazione','traccia'], additionalProperties: false } },
     numeri: { type: 'array', items: { type: 'object', properties: {
       etichetta: { type: 'string' }, valore: { type: 'string' }, quando: { type: 'string' },
     }, required: ['etichetta','valore','quando'], additionalProperties: false } },
     portiVia: { type: 'object', properties: {
-      titolo: { type: 'string' }, punti: { type: 'array', items: { type: 'object', properties: {
-        titolo: { type: 'string' }, testo: { type: 'string' },
-      }, required: ['titolo','testo'], additionalProperties: false } },
+      titolo: { type: 'string' },
+      punti: { type: 'array', items: { type: 'object', properties: {
+        titolo: { type: 'string' }, testo: { type: 'string' }, riferimento: { type: 'string' },
+      }, required: ['titolo','testo','riferimento'], additionalProperties: false } },
     }, required: ['titolo','punti'], additionalProperties: false },
     nonTornareIndietro: { type: 'object', properties: {
-      titolo: { type: 'string' }, punti: { type: 'array', items: { type: 'object', properties: {
-        segnale: { type: 'string' }, contromossa: { type: 'string' },
-      }, required: ['segnale','contromossa'], additionalProperties: false } },
+      titolo: { type: 'string' },
+      punti: { type: 'array', items: { type: 'object', properties: {
+        titolo: { type: 'string' }, testo: { type: 'string' }, riferimento: { type: 'string' },
+      }, required: ['titolo','testo','riferimento'], additionalProperties: false } },
     }, required: ['titolo','punti'], additionalProperties: false },
     daQuiInAvanti: { type: 'array', items: { type: 'object', properties: {
-      domanda: { type: 'string' },   // versione da sessione: gliela fa il coach
-      impegno: { type: 'string' },   // versione da consegnare: prima persona, del cliente
-    }, required: ['domanda','impegno'], additionalProperties: false } },
+      domanda: { type: 'string' },   // la fa il coach in sessione, con le righe vuote sotto
+      etichetta: { type: 'string' },  // il titoletto della risposta nella versione da consegnare
+    }, required: ['domanda','etichetta'], additionalProperties: false } },
     paroleDelCoach: { type: 'object', properties: {
       titolo: { type: 'string' }, corpo: { type: 'array', items: { type: 'string' } },
     }, required: ['titolo','corpo'], additionalProperties: false },
@@ -217,6 +220,15 @@ const SYSTEM = `Sei l'assistente di un coach professionista (Noesys). Dai REPORT
 
 Non è un riassunto e non è un verbale: è il racconto del percorso restituito alla persona che l'ha fatto.
 
+🔴 A CHI STAI PARLANDO — la regola che viene prima di tutte
+Il documento è del CLIENTE e parla A LUI: sempre in SECONDA PERSONA, dandogli del tu.
+«Sei arrivato con un obiettivo pratico», «te lo sei dato 9 su 10», «la frase che conta l'hai detta tu».
+⛔ MAI in terza persona: niente «Francesco ha scoperto», «il cliente si è dato», «lui diceva».
+Vale per TUTTO ciò che legge lui: copertina, filo, i punti e le considerazioni dei momenti, cosa ti
+porti, come non tornare indietro, le domande, le parole del coach, la chiusura.
+✅ Le UNICHE due eccezioni sono i testi scritti PER IL COACH, che al Cliente non arrivano mai:
+la fonte (da dove viene il contenuto) e la traccia (l'istruzione al coach: «Chiedigli…», «Non elencarli…»).
+
 🔴 DUE REGOLE CHE VENGONO PRIMA DI TUTTO
 1. Il Cliente SI CITA, NON SI INTERPRETA. Ogni momento deve poggiare su una frase o un fatto che sta nei report. Non aggiungere, non dedurre, non "leggere dentro".
 2. MAI descrivere o dedurre EMOZIONI e stati d'animo ("si sentiva insicuro", "era ansioso"). Riporta cosa ha detto e cosa ha fatto. Se un'emozione l'ha nominata lui, si può citare tra virgolette come sua parola — non come tua osservazione.
@@ -224,20 +236,38 @@ Non è un riassunto e non è un verbale: è il racconto del percorso restituito 
 I MOMENTI CHE CONTANO
 - Quanti ne trovi: NON c'è un numero da raggiungere. Un percorso di 8 sessioni può darne 7, uno di 2 può darne 2.
 - I momenti DIFFICILI si mettono se ci sono (difficile = true). Non è una quota da riempire: se nei report non ci sono, non inventarli.
-- Ogni momento ha: la data (o due date, se è maturato in due sessioni), un'etichetta breve (es. "La svolta", "Passaggio scomodo", "La contraddizione"), un titolo evocativo e concreto (non generico: deve richiamare LA scena), uno o due paragrafi di corpo, la fonte, l'elemento portato dal Cliente e una traccia per il coach.
-- portatoCitazione = LA FRASE ESATTA del report (parole del Cliente se ci sono, altrimenti il fatto preciso che ha portato lui). Copiala, non riscriverla.
-- portatoSpiegazione = due righe che dicono perché quell'elemento ha fatto la differenza.
-- fonte = da dove viene ("Report dell'11 maggio: tabella autorevolezza 7/10 · esercizio sull'immagine…"). Serve al coach, sparisce nella versione da consegnare.
-- traccia = un'istruzione operativa al coach per la sessione ("Chiedigli che numero darebbe oggi, prima di andare avanti").
+- 🔴 BREVITÀ. Il coach legge queste slide mentre parla con una persona: niente paragrafi.
+  · punti = 2-4 PUNTI ELENCO, uno per riga, ognuno al massimo 12-14 parole: cosa è successo in quella sessione.
+  · considerazioni = 2-3 righe in tutto, massimo 45 parole: cosa ha prodotto quel momento. Non di più.
+- Ogni momento ha anche: la data (o due, se è maturato in due sessioni), un'etichetta breve ("La svolta",
+  "Passaggio scomodo", "La contraddizione") e un titolo concreto che richiama LA scena, mai generico.
+- portatoCitazione = LA FRASE ESATTA del report (parole del Cliente se ci sono, altrimenti il fatto preciso che
+  ha portato lui). Copiala, non riscriverla: è la prova che il documento poggia su di lui.
+- portatoSpiegazione = UNA riga: perché quell'elemento ha fatto la differenza.
+- fonte = da dove viene ("Report dell'11 maggio: tabella autorevolezza 7/10 · esercizio sull'immagine…").
+- traccia = un'istruzione operativa al coach ("Chiedigli che numero darebbe oggi, prima di andare avanti").
+
+🔴 LE TRE SLIDE DI CHIUSURA SONO LA TRACCIA DEL COACH, NON IL DOCUMENTO DEL CLIENTE
+Nel documento che il coach usa DURANTE la Final queste tre slide gli servono da traccia: gli ricordano
+cosa è successo, così può condurre. Nel documento che poi si consegna verranno SOSTITUITE dalle parole
+del Cliente, prese dal report della Final. Quindi: qui non scrivi conclusioni al posto suo, prepari il
+materiale del coach.
+- portiVia («Cosa ti porti»): 5-6 punti BREVI, uno per riga. Ogni punto = titolo di 3-5 parole + UNA riga
+  che dice cos'è + riferimento corto («Usata all'open day», «Scoperta l'11 maggio»). Solo cose che il
+  Cliente ha già usato o detto almeno una volta: niente teorie.
+- nonTornareIndietro: 3 punti, stessa forma. Sono i posti in cui è più facile che smetta: titolo + una
+  o due righe + riferimento con le date in cui è emerso.
+- daQuiInAvanti: 4 DOMANDE che il coach fa in chiusura, cucite su questo percorso (nomina le sue cose).
+  Per ognuna, la voce etichetta = il titoletto brevissimo che la risposta avrà nel documento da consegnare
+  (es. «Il segnale a cui sto attento», «Cosa faccio quando succede», «Su cosa mi appoggio»).
+  NON scrivere le risposte: sono sue e arriveranno dal report della Final.
 
 LE ALTRE PARTI
-- filo: il filo che tiene insieme il percorso, dall'inizio alla fine. Titolo che dice la cosa, non "Il tuo percorso".
-- numeri: i numeri che il CLIENTE si è dato nei report (voti, scale, percentuali), con quando li ha detti. Solo numeri suoi, mai calcolati da te.
-- portiVia: cosa si porta a casa. Punti concreti, ognuno con un titolo breve.
-- nonTornareIndietro: per ogni punto, il SEGNALE che qualcosa sta scivolando indietro e la CONTROMOSSA che lui ha già sperimentato nel percorso.
-- daQuiInAvanti: per ognuno, la DOMANDA che il coach gli fa in sessione e lo stesso contenuto come IMPEGNO in prima persona ("Mi impegno a…") per la versione da consegnare.
-- paroleDelCoach: BOZZA delle parole del coach, costruita SOLO con frasi e osservazioni che il coach ha già scritto nei suoi report (le note conclusive). Il coach le riscriverà: il tuo compito è dargli il materiale suo, non parole tue.
-- chiusura: titolo = il nome di battesimo del Cliente; messaggio = poche righe personali, concrete, senza retorica.
+- filo: il filo che tiene insieme il percorso. Titolo che dice la cosa, non "Il tuo percorso". DUE paragrafi corti.
+- numeri: i numeri che il CLIENTE si è dato nei report (voti, scale), con quando li ha detti. Mai calcolati da te.
+- paroleDelCoach: BOZZA delle parole del coach, costruita SOLO con frasi e osservazioni che il coach ha già
+  scritto nei suoi report (le note conclusive). Le riscriverà lui: dagli il materiale suo, non parole tue. Corta.
+- chiusura: titolo = il nome di battesimo del Cliente; messaggio = poche righe personali, senza retorica.
 
 LINGUA E TONO: italiano lineare e semplice, frasi corte, niente gergo, niente entusiasmo di maniera. Concreto: nomi di cose, scene, numeri. Mai adulazione.
 
@@ -359,4 +389,89 @@ async function generaContenuti({ materiale }) {
   return normalizza(blocco.input);
 }
 
-module.exports = { MODEL, SCHEMA, costruisciPrompt, generaContenuti, normalizza, raccogliMateriale, datiDalDatabase, testiDeiReport, scegliRuote, variazioniRuote, leggiAree };
+// ── 8 · IL MAGAZZINO — generato e correzioni, sempre separati ────────────────
+// 🔴 LA REGOLA CHE TIENE IN PIEDI TUTTO: `generato` lo riscrive la macchina ogni
+// volta che serve (arriva la seconda ruota, arriva il report della Final, si
+// rigenera); `correzioni` è del coach e NON si tocca MAI da codice automatico.
+// Quando si mostra il documento, dove c'è una correzione vince la correzione.
+// Senza questa divisione, il primo aggiornamento cancellerebbe quello che lui ha
+// letto, corretto e approvato prima della sessione.
+
+// La chiave di una correzione è il "sentiero" dentro il documento: 'filo.titolo',
+// 'momenti.2.corpo.0', 'chiusura.messaggio'. Così una correzione resta attaccata
+// al suo pezzo anche se intorno cambia altro.
+function valoreDa(oggetto, sentiero) {
+  return String(sentiero).split('.').reduce((o, k) => (o == null ? undefined : o[k]), oggetto);
+}
+function scriviIn(oggetto, sentiero, valore) {
+  const parti = String(sentiero).split('.');
+  let o = oggetto;
+  for (let i = 0; i < parti.length - 1; i++) {
+    const k = parti[i];
+    if (o[k] == null || typeof o[k] !== 'object') o[k] = /^\d+$/.test(parti[i + 1]) ? [] : {};
+    o = o[k];
+  }
+  o[parti[parti.length - 1]] = valore;
+}
+
+// Il documento come si vede: generato + correzioni sopra. Non modifica gli originali.
+function unisci(generato, correzioni) {
+  const fuori = JSON.parse(JSON.stringify(generato || {}));
+  for (const [sentiero, testo] of Object.entries(correzioni || {})) {
+    // Una correzione su un pezzo che non esiste più (documento rigenerato con meno
+    // momenti) NON si butta via: si lascia dov'è nel magazzino e semplicemente non
+    // si mostra. Buttarla sarebbe perdere il lavoro del coach senza dirglielo.
+    if (valoreDa(fuori, sentiero) === undefined) continue;
+    scriviIn(fuori, sentiero, testo);
+  }
+  return fuori;
+}
+
+async function caricaDocumento({ percorsoId }) {
+  const r = await db.query("SELECT * FROM documenti WHERE percorso_id=$1 AND tipo='chiusura'", [percorsoId]);
+  return r.rows[0] || null;
+}
+
+// Scrive SOLO la parte generata. Le correzioni restano quelle: è la ragione per cui
+// le due colonne esistono.
+async function salvaGenerato({ percorsoId, clientId, sedutaId, contenuti, ruote }) {
+  const { v4: uuidv4 } = require('uuid');
+  const esistente = await caricaDocumento({ percorsoId });
+  const ruotaIntake = ruote && ruote.intake ? ruote.intake.id : null;
+  const ruotaFinal  = ruote && ruote.final  ? ruote.final.id  : null;
+  if (esistente) {
+    await db.query(
+      `UPDATE documenti SET generato=$2, generato_at=NOW(), updated_at=NOW(),
+              seduta_id=COALESCE($3, seduta_id), ruota_intake_id=$4, ruota_final_id=$5
+        WHERE id=$1`,
+      [esistente.id, JSON.stringify(contenuti), sedutaId, ruotaIntake, ruotaFinal]);
+    return esistente.id;
+  }
+  const id = uuidv4();
+  await db.query(
+    `INSERT INTO documenti (id, percorso_id, client_id, seduta_id, tipo, stato, generato, generato_at, ruota_intake_id, ruota_final_id)
+     VALUES ($1,$2,$3,$4,'chiusura','bozza',$5,NOW(),$6,$7)`,
+    [id, percorsoId, clientId, sedutaId, JSON.stringify(contenuti), ruotaIntake, ruotaFinal]);
+  return id;
+}
+
+// Più correzioni in un colpo solo (il pulsante «Salva» della pagina).
+async function salvaCorrezioni({ documentoId, correzioni }) {
+  const voci = Object.entries(correzioni || {});
+  if (!voci.length) return 0;
+  await db.query(
+    `UPDATE documenti SET correzioni = COALESCE(correzioni,'{}'::jsonb) || $2::jsonb, updated_at = NOW()
+      WHERE id = $1`, [documentoId, JSON.stringify(Object.fromEntries(voci))]);
+  return voci.length;
+}
+
+// Una correzione del coach: si aggiunge alle sue, non tocca il generato.
+async function salvaCorrezione({ documentoId, sentiero, testo }) {
+  await db.query(
+    `UPDATE documenti SET correzioni = COALESCE(correzioni,'{}'::jsonb) || jsonb_build_object($2::text, $3::text),
+            updated_at = NOW() WHERE id = $1`,
+    [documentoId, sentiero, testo]);
+}
+
+module.exports = { MODEL, SCHEMA, costruisciPrompt, generaContenuti, normalizza,
+  unisci, caricaDocumento, salvaGenerato, salvaCorrezione, salvaCorrezioni, raccogliMateriale, datiDalDatabase, testiDeiReport, scegliRuote, variazioniRuote, leggiAree };
