@@ -184,7 +184,7 @@ const SCHEMA = {
       titolo: { type: 'string' }, corpo: { type: 'array', items: { type: 'string' } },
     }, required: ['titolo', 'corpo'], additionalProperties: false },
     momenti: { type: 'array', items: { type: 'object', properties: {
-      data: { type: 'string' },              // 'AAAA-MM-GG', o due date separate da ' e '
+      data: { type: 'string' },              // all'italiana: '4 maggio 2026' (o due date unite da ' e ')
       etichetta: { type: 'string' },         // es. 'La svolta', 'Passaggio scomodo'
       difficile: { type: 'boolean' },        // vero solo se è davvero un momento duro
       titolo: { type: 'string' },
@@ -249,14 +249,17 @@ I MOMENTI CHE CONTANO
 - Se una sessione ha prodotto DUE cose distinte e non collegate fra loro, si mettono **tutte e due**,
   separate: non si accorpano per far prima (es. un discorso in pubblico andato bene e una decisione
   presa in famiglia sono due momenti, non uno).
-- 🔴 DALL'INTAKE si prendono due cose, e vanno usate: **l'obiettivo di percorso** (è il filo da cui parte
-  tutto: entra nella copertina e nel filo) e **i valori/numeri di partenza** che il Cliente si è dato,
+- 🔴 DALL'INTAKE deve uscire SEMPRE **l'obiettivo di percorso**: è il filo da cui parte tutto, e va nella
+  copertina e nel filo. Da lì si prendono anche **i valori/numeri di partenza** che il Cliente si è dato,
   perché sono il termine di paragone dei confronti.
+  ⚠️ L'intake diventa un MOMENTO **solo se ha qualcosa da segnalare** (una scena, una frase, un fatto).
+  Se è solo l'inquadramento dell'obiettivo, l'obiettivo esce lo stesso — nella copertina e nel filo — ma
+  il momento non si fa. Regola di Germano del 22/08.
 - I momenti DIFFICILI si mettono se ci sono (difficile = true). Non è una quota da riempire: se nei report non ci sono, non inventarli.
 - 🔴 BREVITÀ. Il coach legge queste slide mentre parla con una persona: niente paragrafi.
   · punti = 2-4 PUNTI ELENCO, uno per riga, ognuno al massimo 12-14 parole: cosa è successo in quella sessione.
   · considerazioni = 2-3 righe in tutto, massimo 45 parole: cosa ha prodotto quel momento. Non di più.
-- Ogni momento ha anche: la data (o due, se è maturato in due sessioni), un'etichetta breve ("La svolta",
+- Ogni momento ha anche: la data ALL'ITALIANA, «4 maggio 2026» (o due, se è maturato in due sessioni), un'etichetta breve ("La svolta",
   "Passaggio scomodo", "La contraddizione") e un titolo concreto che richiama LA scena, mai generico.
 - portatoCitazione = LA FRASE ESATTA del report (parole del Cliente se ci sono, altrimenti il fatto preciso che
   ha portato lui). Copiala, non riscriverla: è la prova che il documento poggia su di lui.
