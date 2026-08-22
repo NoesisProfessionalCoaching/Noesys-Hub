@@ -104,7 +104,12 @@ function ruotaSvg(aree, { max = 10 } = {}) {
 // ── Le slide ────────────────────────────────────────────────────────────────
 const slide = (dentro, n, extra = '') => `<section class="slide${extra ? ' ' + extra : ''}">${dentro}<div class="num">${n}</div></section>`;
 const occhiello = (t, oro) => `<div class="occhiello">${esc(t)}${oro ? ` · <span>${esc(oro)}</span>` : ''}</div>`;
-const traccia = t => t ? `<div class="traccia"><b>Traccia.</b> ${esc(t)}</div>` : '';
+// 🔴 LE TRACCE NON SI MOSTRANO PIÙ (Germano, 22/08). Erano istruzioni per il coach
+// («Chiedigli che numero darebbe oggi»), ma questo documento sta sullo schermo
+// DAVANTI AL CLIENTE: le leggerebbe anche lui, e vedrebbe le mosse del coach
+// scritte in fondo alla pagina. Restano nei dati (la macchina continua a
+// produrle) ma non finiscono più nel documento.
+const traccia = () => '';
 const fonte = t => t ? `<div class="fonte">${esc(t)}</div>` : '';
 
 function slideMomento(m, n, idx) {
