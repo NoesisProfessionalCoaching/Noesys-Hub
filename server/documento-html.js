@@ -120,7 +120,7 @@ function slideMomento(m, n, idx) {
         ${fonte(m.fonte)}
       </div>
       <div class="portato">
-        <div class="lab">Portato dal Cliente</div>
+        <div class="lab">Le tue parole:</div>
         <div class="q"${targa(`momenti.${idx}.portatoCitazione`)}>${esc(m.portatoCitazione)}</div>
         <div class="f"${targa(`momenti.${idx}.portatoSpiegazione`)}>${esc(m.portatoSpiegazione)}</div>
       </div>

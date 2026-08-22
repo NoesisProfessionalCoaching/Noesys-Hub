@@ -449,7 +449,7 @@ router.get('/dashboard/clients/:id', requireCoach, async (req, res) => {
     const cr = await db.query('SELECT * FROM clients WHERE id = $1', [req.params.id]);
     const client = cr.rows[0];
     if (!client) return res.redirect('/dashboard/individuali');
-    const [sr, pr, payr, sedr, prjr, permr] = await Promise.all([
+    const [sr, pr, payr, sedr, docr, prjr, permr] = await Promise.all([
       db.query('SELECT * FROM sessions WHERE client_id=$1 ORDER BY tool, created_at DESC', [req.params.id]),
       db.query(`SELECT p.*, prj.titolo AS progetto_titolo
                 FROM percorsi p LEFT JOIN progetti prj ON prj.id = p.progetto_id
@@ -458,6 +458,9 @@ router.get('/dashboard/clients/:id', requireCoach, async (req, res) => {
                 ORDER BY p.created_at ASC`, [req.params.id]),
       db.query('SELECT * FROM payments WHERE client_id=$1 ORDER BY created_at DESC', [req.params.id]),
       db.query('SELECT * FROM sedute WHERE client_id=$1 ORDER BY data ASC NULLS LAST, created_at ASC', [req.params.id]),
+      // Il documento di chiusura, se c'è: serve solo a dire com'è messo nel
+      // riquadro «Documenti al cliente» (bozza, approvato, non ancora preparato).
+      db.query("SELECT percorso_id, stato FROM documenti WHERE client_id=$1 AND tipo='chiusura'", [req.params.id]),
       // Progetti di cui il coachee fa parte: SOLA LETTURA, per riflettere la sua
       // quota business sulla scheda. Il pagamento vive sul progetto (payments non toccata).
       db.query(`SELECT pa.id AS part_id, pa.quota_coachee,
@@ -522,6 +525,7 @@ router.get('/dashboard/clients/:id', requireCoach, async (req, res) => {
                    AND (pc.client_id = $1 OR pa.client_id = $1)`, [req.params.id]),
     ]);
     res.send(clientDetailPage(client, sr.rows, pr.rows, payr.rows, sedr.rows, prjr.rows, permr.rows, req, {
+      documenti: docr.rows,
       proforme: pfr.rows,
       maturato: mat[0] || null,
       emittente: emr.rows[0] || {},
@@ -3973,7 +3977,7 @@ function renderSedutaRow(s) {
     <td style="white-space:nowrap">${cellDate(s.scadenza)}${/^\d{1,2}:\d{2}$/.test(s.prossima_ora || '') ? `<div style="font-size:11px;color:var(--hint);margin-top:2px">ore ${esc(s.prossima_ora)}</div>` : ''}</td>
     <td style="text-align:center">${cellEseg(s.eseguita)}</td>
     <td>${cellText(noteVal)}</td>
-    <td style="white-space:nowrap">${approvaBtn}${s.tipo === 'Final' && s.client_id ? `<a href="/dashboard/clients/${s.client_id}/percorsi/${s.percorso_id}/documento" class="btn btn-gold btn-sm" style="display:block;margin-bottom:5px;text-decoration:none" title="Il documento di chiusura del percorso">📄 Documento</a>` : ''}<button onclick="editSeduta('${s.id}')" class="btn btn-neutral btn-sm" title="Modifica">✎</button> <button onclick="delSeduta('${s.id}','${s.percorso_id}')" class="btn btn-danger btn-sm" title="${isBozza ? 'Scarta' : 'Elimina'}">🗑</button></td>
+    <td style="white-space:nowrap">${approvaBtn}<button onclick="editSeduta('${s.id}')" class="btn btn-neutral btn-sm" title="Modifica">✎</button> <button onclick="delSeduta('${s.id}','${s.percorso_id}')" class="btn btn-danger btn-sm" title="${isBozza ? 'Scarta' : 'Elimina'}">🗑</button></td>
   </tr>`;
 }
 
@@ -4685,6 +4689,12 @@ Germano`;
       </div>
     </div>`;
 
+  // Il documento di chiusura vive sul percorso che ha la Final: è lì che appartiene.
+  const docRighe = (fatt && fatt.documenti) || [];
+  const percorsoConFinal = (percorsi.find(p => sedute.some(s => s.percorso_id === p.id && s.tipo === 'Final')) || {}).id || null;
+  const percorsoDocumento = (docRighe[0] && docRighe[0].percorso_id) || percorsoConFinal;
+  const docStato = (docRighe[0] && docRighe[0].stato) || null;
+
   const azioniHtml = `
     <div class="az-bar">
       <div class="zona-tit">Azioni e collegamenti</div>
@@ -4710,6 +4720,20 @@ Germano`;
             ${mail1SentTxt ? `<span class="az-fatto">✓ Mail 1 inviata il ${mail1SentTxt}</span>` : 'Mail 1 non inviata'} — lettera · scheda anagrafica · Codice ICF<br>
             ${mail2SentTxt ? `<span class="az-fatto">✓ Mail 2 inviata il ${mail2SentTxt}</span>` : 'Mail 2 non inviata'} — contratto · agenda
           </div>
+        </div>
+
+        <div class="az-gruppo">
+          <div class="az-nome">Documento di chiusura</div>
+          <div class="az-btns">
+            ${percorsoDocumento
+              ? `<a href="/dashboard/clients/${client.id}/percorsi/${percorsoDocumento}/documento" class="btn btn-primary btn-sm" style="text-decoration:none">📄 ${docStato ? 'Apri il documento' : 'Prepara il documento della Final'}</a>`
+              : `<button class="btn btn-off btn-sm" disabled title="Serve la riga della Final: si crea con «Prepara Doc. Final» nella Scheda Cliente">📄 Documento della Final</button>`}
+          </div>
+          <div class="az-stato">${percorsoDocumento
+            ? (docStato === 'approvato' ? '<span class="az-fatto">✓ approvato per la sessione</span> — resta modificabile'
+               : docStato ? 'Bozza da leggere, correggere e approvare.'
+               : 'Non ancora preparato: l\'Hub legge i report del percorso e ne fa la bozza.')
+            : 'Compare quando c\'è la sessione Final: niente Final, niente documento.'}</div>
         </div>
 
         <div class="az-gruppo">
