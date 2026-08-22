@@ -1086,8 +1086,6 @@ router.get('/dashboard/clients/:id/percorsi/:pid/documento', requireCoach, async
     const azioni = `<span class="sep"></span>
       <button id="b-edit">Modifica</button>
       <button id="b-salva" class="save">Salva le correzioni</button>
-      <span class="sep"></span>
-      <button id="b-rigenera">Rigenera</button>
       ${doc.stato === 'approvato' ? '<span style="font-size:12px;color:#2e6b52;font-weight:800;padding:0 6px">✓ approvato</span>'
         : '<button id="b-approva">Approva per la sessione</button>'}
       <a class="torna" href="/dashboard/clients/${req.params.id}" style="margin-left:10px;font-size:12px">← scheda</a>`;
@@ -1098,8 +1096,14 @@ router.get('/dashboard/clients/:id/percorsi/:pid/documento', requireCoach, async
 
 // Genera (o rigenera) la parte scritta dalla macchina. Le correzioni del coach
 // NON si toccano: stanno in un altro posto apposta.
+// 🔴 UNA VOLTA SOLA. Rigenerare vorrebbe dire riscrivere il testo che il coach ha
+// letto, corretto e approvato: anche tenendo le sue correzioni, tutto il resto
+// cambierebbe sotto le sue mani. Germano, 22/08: «Non voglio nessun rigenera.
+// Nessuno.» Quindi la bozza nasce una volta, e da lì in poi si tocca solo a mano.
 router.post('/dashboard/clients/:id/percorsi/:pid/documento/genera', requireCoach, async (req, res) => {
   try {
+    const gia = await docChiusura.caricaDocumento({ percorsoId: req.params.pid });
+    if (gia) return res.status(409).json({ error: 'Il documento esiste già: non si rigenera. Le correzioni si fanno a mano sulla pagina.' });
     const materiale = await docChiusura.raccogliMateriale({ percorsoId: req.params.pid });
     const contenuti = await docChiusura.generaContenuti({ materiale });
     const finale = (materiale.sedute || []).find(x => x.tipo === 'Final');
@@ -8265,13 +8269,6 @@ ${corpo}
     if (r.ok) location.reload(); else dillo('Non è riuscito.');
   };
 
-  var rig = document.getElementById('b-rigenera');
-  if (rig) rig.onclick = async function(){
-    if (!confirm('Rifaccio la bozza leggendo di nuovo i report. Le tue correzioni restano: sono salvate a parte.')) return;
-    rig.disabled = true; rig.textContent = 'Sto rileggendo i report…';
-    var r = await fetch(location.pathname + '/genera', { method: 'POST' });
-    if (r.ok) location.reload(); else { rig.disabled = false; rig.textContent = 'Rigenera'; dillo('Non è riuscito.'); }
-  };
 })();
 </script></body></html>`;
 }

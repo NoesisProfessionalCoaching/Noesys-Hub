@@ -138,10 +138,19 @@ async function testiDeiReport(sedute) {
 const soloDati = s => ({ id: s.id, tipo: s.tipo, data: s.data ? String(s.data).slice(0, 10) : null, ore: s.ore });
 
 // ── 5 · IL MATERIALE COMPLETO ───────────────────────────────────────────────
-async function raccogliMateriale({ percorsoId }) {
+// 🔴 IL REPORT DELLA FINAL NON ENTRA NELLA GENERAZIONE. Non è un accorgimento per
+// le prove: è la realtà. Il documento si prepara PRIMA della Final, quando quel
+// report non esiste ancora. Il report della Final serve DOPO, per il documento da
+// consegnare: le parole del Cliente sulle variazioni, gli impegni, il materiale
+// per le parole del coach.
+// ⚠️ Francesco Pilo è l'unico caso in cui quel report esiste già (la sua Final si è
+// svolta il 13/07/2026): senza questa regola l'unica prova disponibile sarebbe
+// falsata, e il documento racconterebbe cose che in una Final vera non si sanno.
+async function raccogliMateriale({ percorsoId, conFinal = false }) {
   const base = await datiDalDatabase(percorsoId);
   const ruote = scegliRuote(base.ruoteGrezze);
-  const report = await testiDeiReport(base.sedute);
+  const sedutePerReport = conFinal ? base.sedute : base.sedute.filter(x => x.tipo !== 'Final');
+  const report = await testiDeiReport(sedutePerReport);
   return {
     cliente: base.cliente,
     percorso: { id: base.percorso.id, tipo: base.percorso.tipo, modalita: base.percorso.modalita,

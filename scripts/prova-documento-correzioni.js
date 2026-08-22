@@ -108,6 +108,30 @@ const DOPO = {
     prova('e resta nel magazzino, non si butta via il lavoro del coach',
       'correzione orfana', riga2.correzioni['momenti.5.corpo.0']);
 
+    // ── ⭐ IL REPORT DELLA FINAL NON ENTRA NELLA GENERAZIONE ─────────────────
+    // Il documento si prepara PRIMA della Final: quel report non esiste ancora.
+    // (Su Francesco esiste, ed è l'unico caso: senza questa regola l'unica prova
+    // disponibile racconterebbe cose che in una Final vera non si sanno.)
+    {
+      const cid2 = randomUUID(), pid2 = randomUUID();
+      await db.query('INSERT INTO clients (id, name, token) VALUES ($1,$2,$3)', [cid2, 'Con la Final', randomUUID()]);
+      await db.query('INSERT INTO percorsi (id, client_id) VALUES ($1,$2)', [pid2, cid2]);
+      for (const [tipo, data] of [['Intake','2026-04-22'], ['Ongoing','2026-05-04'], ['Final','2026-07-13']]) {
+        await db.query(
+          `INSERT INTO sedute (id, percorso_id, client_id, tipo, data, ore, stato) VALUES ($1,$2,$3,$4,$5,1,'confermata')`,
+          [randomUUID(), pid2, cid2, tipo, data]);
+      }
+      const m = await doc.raccogliMateriale({ percorsoId: pid2 });
+      prova('⭐ nel materiale della generazione NON c\'è nessun report della Final',
+        ['Intake', 'Ongoing'], m.report.map(r => r.tipo));
+      prova('le sedute restano tutte e tre (è solo la lettura che salta la Final)',
+        ['Intake', 'Ongoing', 'Final'], m.sedute.map(x => x.tipo));
+
+      const conFinal = await doc.raccogliMateriale({ percorsoId: pid2, conFinal: true });
+      prova('e quando servirà per il documento da consegnare, la Final si può leggere',
+        ['Intake', 'Ongoing', 'Final'], conFinal.report.map(r => r.tipo));
+    }
+
     console.log(falliti ? `\n✗ ${falliti} controlli falliti.` : '\n✓ Tutti i controlli passati.');
   } catch (e) {
     falliti++;
