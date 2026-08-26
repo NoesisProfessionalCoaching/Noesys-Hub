@@ -6,6 +6,7 @@ const { signToken, requireCoach, COOKIE_NAME } = require('./auth');
 const { logoCompact, logoPicto } = require('./logo');
 const drive = require('./google-drive');
 const scan = require('./scan');
+const scanModuli = require('./scan-moduli');
 const documenti = require('./documenti');
 const mailer = require('./mailer');
 const moduli = require('./moduli');
@@ -447,7 +448,7 @@ router.get('/dashboard/clients/:id', requireCoach, async (req, res) => {
     const cr = await db.query('SELECT * FROM clients WHERE id = $1', [req.params.id]);
     const client = cr.rows[0];
     if (!client) return res.redirect('/dashboard/individuali');
-    const [sr, pr, payr, sedr, prjr, permr] = await Promise.all([
+    const [sr, pr, payr, sedr, prjr, permr, modr] = await Promise.all([
       db.query('SELECT * FROM sessions WHERE client_id=$1 ORDER BY tool, created_at DESC', [req.params.id]),
       db.query(`SELECT p.*, prj.titolo AS progetto_titolo
                 FROM percorsi p LEFT JOIN progetti prj ON prj.id = p.progetto_id
@@ -473,6 +474,12 @@ router.get('/dashboard/clients/:id', requireCoach, async (req, res) => {
                        (fine >= NOW()) AS valido
                   FROM permessi_validi WHERE client_id=$1
                  ORDER BY fine DESC`, [req.params.id]).catch(() => ({ rows: [] })),
+      // I moduli già letti da Drive (scheda anagrafica, contratto). Servono a dire
+      // com'è messa DAVVERO l'anagrafica nel riquadro «Aggiornamento dati»: prima
+      // lì c'era una frase fissa che diceva «non ancora acquisita» a tutti, sempre.
+      db.query(`SELECT tipo, esito, created_at FROM moduli_letti
+                 WHERE client_id=$1 ORDER BY created_at ASC`, [req.params.id])
+        .catch(() => ({ rows: [] })),
     ]);
     // Fatturazione (Fase 3): le proforma di questo cliente, quanto c'è da
     // chiedergli, e i dati di chi emette (servono a dire perché non si può
@@ -520,6 +527,7 @@ router.get('/dashboard/clients/:id', requireCoach, async (req, res) => {
                    AND (pc.client_id = $1 OR pa.client_id = $1)`, [req.params.id]),
     ]);
     res.send(clientDetailPage(client, sr.rows, pr.rows, payr.rows, sedr.rows, prjr.rows, permr.rows, req, {
+      moduliLetti: modr.rows,
       proforme: pfr.rows,
       maturato: mat[0] || null,
       emittente: emr.rows[0] || {},
@@ -1145,6 +1153,17 @@ router.post('/dashboard/scan-drive', requireCoach, express.json(), async (req, r
     const out = await scan.scanClientReports({ onlyClientId: (req.body && req.body.client_id) || undefined });
     res.json({ ok: true, ...out });
   } catch (err) { console.error('[scan-drive]', err); res.status(500).json({ error: err.message }); }
+});
+
+// Lancio MANUALE della lettura dei moduli (scheda anagrafica + contratto) su UN
+// cliente. L'automazione la fa già da sé alle 07/15/23: questa serve quando la
+// scheda è appena arrivata e non si vuole aspettare la passata successiva.
+// Il motore è lo stesso: onlyClientId era già previsto, mancava solo chi lo chiama.
+router.post('/dashboard/clients/:id/scan-moduli', requireCoach, express.json(), async (req, res) => {
+  try {
+    const out = await scanModuli.scanModuliClienti({ onlyClientId: req.params.id });
+    res.json({ ok: true, ...out });
+  } catch (err) { console.error('[scan-moduli-manuale]', err); res.status(500).json({ error: err.message }); }
 });
 
 // Reportistica A / mattone 3 — scan dei report di PROGETTO: legge le sottocartelle di fase
@@ -4584,6 +4603,23 @@ Germano`;
       </div>
     </div>`;
 
+  // ── Com'e messa DAVVERO l'anagrafica letta da Drive (26/08/2026) ─────────
+  // La frase qui sotto era TESTO FISSO: diceva «non ancora acquisita» a tutti i
+  // clienti, sempre, anche a chi la scheda l'aveva mandata due mesi prima. Ora
+  // guarda i fatti: i moduli che l'automazione ha davvero letto, e la proposta
+  // eventualmente ancora in attesa di approvazione.
+  const moduliLetti = (fatt && fatt.moduliLetti) || [];
+  const ultimoModulo = (t) => moduliLetti.filter(m => m.tipo === t)
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0] || null;
+  const modScheda = ultimoModulo('scheda');
+  const modContratto = ultimoModulo('contratto');
+  const rigaModulo = (m, fatto, manca) => m
+    ? `<span class="az-fatto">✓ ${fatto} il ${itDateTime(m.created_at)}</span>`
+    : `<strong style="color:var(--muted)">${manca}</strong>`;
+  const statoAnagrafica = bozza
+    ? `<strong style="color:#8a6d1e">C'è una proposta da controllare</strong>, qui sotto: l'Hub ha letto i moduli e aspetta il tuo via libera.`
+    : `${rigaModulo(modScheda, 'Scheda anagrafica letta', 'Scheda anagrafica non ancora arrivata')}<br>${rigaModulo(modContratto, 'Contratto letto', 'Contratto non ancora arrivato')}`;
+
   const azioniHtml = `
     <div class="az-bar">
       <div class="zona-tit">Azioni e collegamenti</div>
@@ -4593,10 +4629,11 @@ Germano`;
           <div class="az-nome">Aggiornamento dati</div>
           <div class="az-btns">
             <button onclick="openEdit()" class="btn btn-primary btn-sm">✎ Modifica dati</button>
-            <button class="btn btn-off btn-sm" disabled title="Funzione in arrivo: leggerà i dati dalla scheda anagrafica che il cliente ti rimanda compilata">⟳ Cerca la scheda su Drive</button>
-            <span class="az-arrivo">in arrivo</span>
+            ${client.drive_url
+              ? `<button id="scan-moduli-btn" onclick="scanModuliCliente()" class="btn btn-gold btn-sm" title="Legge subito la scheda anagrafica e il contratto dalla cartella Drive, senza aspettare la passata automatica delle 7, delle 15 e delle 23">⟳ Cerca la scheda su Drive</button>`
+              : `<button class="btn btn-off btn-sm" disabled title="Serve la cartella Drive del cliente: senza quella non c'è dove cercare">⟳ Cerca la scheda su Drive</button>`}
           </div>
-          <div class="az-stato">Scheda anagrafica del cliente: <strong style="color:var(--muted)">non ancora acquisita</strong>. Quando la salvi su Drive, l'Hub ne prenderà i dati.</div>
+          <div class="az-stato">${statoAnagrafica}</div>
         </div>
 
         <div class="az-gruppo">
@@ -5241,6 +5278,27 @@ Germano`;
           reset(); return;
         }
         alert(n + (n === 1 ? ' bozza creata' : ' bozze create') + '. La trovi qui sotto, evidenziata, da approvare.');
+        location.reload();
+      } catch (e) { alert('Errore di rete: ' + e.message); reset(); }
+    }
+    async function scanModuliCliente() {
+      const btn = document.getElementById('scan-moduli-btn');
+      if (btn) { btn.disabled = true; btn.textContent = '⟳ Leggo la scheda… (può volerci qualche secondo)'; }
+      const reset = () => { if (btn) { btn.disabled = false; btn.textContent = '⟳ Cerca la scheda su Drive'; } };
+      try {
+        const r = await fetch('/dashboard/clients/' + CID + '/scan-moduli', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        const d = await r.json();
+        if (!r.ok || d.error) { alert('Errore: ' + (d.error || r.status)); reset(); return; }
+        const errs = (d.errors || []).map(e => e.errore || e.err).join('; ');
+        // Un guasto NON è un «niente di nuovo»: se la lettura non è potuta partire
+        // (Drive non raggiungibile, cartella sbagliata) va detto, altrimenti sembra
+        // che abbia guardato e non abbia trovato nulla. Provato col pulsante, 26/08.
+        if (errs) { alert('Non sono riuscito a leggere la cartella Drive: ' + errs); reset(); return; }
+        if ((d.proposte || []).length === 0) {
+          alert('Niente di nuovo: nella cartella Drive non ci sono moduli compilati che non siano già stati letti.');
+          reset(); return;
+        }
+        alert('Letta. La proposta è qui sotto, da controllare e approvare.');
         location.reload();
       } catch (e) { alert('Errore di rete: ' + e.message); reset(); }
     }

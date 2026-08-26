@@ -67,8 +67,8 @@ db.init().then(() => {
       // A differenza dei report NON crea bozze: scrive in anagrafica, perché il
       // modulo è compilato dal cliente stesso e vince su quello che c'è.
       const outM = await scanModuli.scanModuliClienti();
-      console.log(`[scan-moduli] ${new Date().toISOString()} — aggiornati:${outM.aggiornati.length} letti:${outM.letti} vuoti-eliminati:${outM.eliminati} clienti:${outM.clients} errori:${outM.errors.length}`);
-      if (outM.aggiornati.length) console.log('[scan-moduli] dettaglio:', JSON.stringify(outM.aggiornati));
+      console.log(`[scan-moduli] ${new Date().toISOString()} — proposte:${outM.proposte.length} letti:${outM.letti} vuoti-eliminati:${outM.eliminati} clienti:${outM.clients} errori:${outM.errors.length}`);
+      if (outM.proposte.length) console.log('[scan-moduli] dettaglio:', JSON.stringify(outM.proposte));
       if (outM.errors.length) console.log('[scan-moduli] dettaglio errori:', JSON.stringify(outM.errors));
     } catch (e) {
       console.error('[scan] passata non eseguita:', e.message);
