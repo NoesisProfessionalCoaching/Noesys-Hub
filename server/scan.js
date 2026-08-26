@@ -8,7 +8,6 @@ const mammoth = require('mammoth');
 const db = require('./db');
 const drive = require('./google-drive');
 const claude = require('./claude');
-const docChiusura = require('./documento-chiusura');
 
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const TIPI = ['Intake', 'Ongoing', 'Final'];
@@ -197,22 +196,6 @@ async function scanClientReports({ onlyClientId } = {}) {
         done.add(rep.id);
         result.processed.push({ cliente: cliente.name, tipo: rep.tipo, file: rep.name, sid, riempita });
 
-        // ⭐ È ARRIVATO IL REPORT DELLA FINAL: se il documento di chiusura esiste,
-        // l'Hub prepara da sé la parte DA CONSEGNARE — le parole del Cliente prese
-        // da quel report. Nessun pulsante: il coach se la trova pronta da approvare
-        // (scelta di Germano, 22/08). Se non riesce, lo DICE e la passata va avanti:
-        // il lavoro vero di questa automazione è portare i report nella scheda.
-        if (rep.tipo === 'Final') {
-          try {
-            const gia = await docChiusura.caricaDocumento({ percorsoId: percorso.id });
-            if (gia && !gia.consegna) {
-              await docChiusura.generaConsegna({ percorsoId: percorso.id });
-              result.processed.push({ cliente: cliente.name, tipo: 'Documento', file: 'parte da consegnare preparata' });
-            }
-          } catch (e) {
-            result.errors.push({ cliente: cliente.name, file: 'documento da consegnare', err: e.message });
-          }
-        }
       } catch (e) {
         result.errors.push({ cliente: cliente.name, file: rep.name, err: e.message });
       }

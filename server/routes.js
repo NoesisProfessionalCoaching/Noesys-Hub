@@ -7,8 +7,6 @@ const { logoCompact, logoPicto } = require('./logo');
 const drive = require('./google-drive');
 const scan = require('./scan');
 const documenti = require('./documenti');
-const docChiusura = require('./documento-chiusura');   // il documento di chiusura del percorso
-const docHtml = require('./documento-html');           // la sua impaginazione
 const mailer = require('./mailer');
 const moduli = require('./moduli');
 const fiscale = require('./fiscale');
@@ -449,7 +447,7 @@ router.get('/dashboard/clients/:id', requireCoach, async (req, res) => {
     const cr = await db.query('SELECT * FROM clients WHERE id = $1', [req.params.id]);
     const client = cr.rows[0];
     if (!client) return res.redirect('/dashboard/individuali');
-    const [sr, pr, payr, sedr, docr, prjr, permr] = await Promise.all([
+    const [sr, pr, payr, sedr, prjr, permr] = await Promise.all([
       db.query('SELECT * FROM sessions WHERE client_id=$1 ORDER BY tool, created_at DESC', [req.params.id]),
       db.query(`SELECT p.*, prj.titolo AS progetto_titolo
                 FROM percorsi p LEFT JOIN progetti prj ON prj.id = p.progetto_id
@@ -458,9 +456,6 @@ router.get('/dashboard/clients/:id', requireCoach, async (req, res) => {
                 ORDER BY p.created_at ASC`, [req.params.id]),
       db.query('SELECT * FROM payments WHERE client_id=$1 ORDER BY created_at DESC', [req.params.id]),
       db.query('SELECT * FROM sedute WHERE client_id=$1 ORDER BY data ASC NULLS LAST, created_at ASC', [req.params.id]),
-      // Il documento di chiusura, se c'è: serve solo a dire com'è messo nel
-      // riquadro «Documenti al cliente» (bozza, approvato, non ancora preparato).
-      db.query("SELECT percorso_id, stato FROM documenti WHERE client_id=$1 AND tipo='chiusura'", [req.params.id]),
       // Progetti di cui il coachee fa parte: SOLA LETTURA, per riflettere la sua
       // quota business sulla scheda. Il pagamento vive sul progetto (payments non toccata).
       db.query(`SELECT pa.id AS part_id, pa.quota_coachee,
@@ -525,7 +520,6 @@ router.get('/dashboard/clients/:id', requireCoach, async (req, res) => {
                    AND (pc.client_id = $1 OR pa.client_id = $1)`, [req.params.id]),
     ]);
     res.send(clientDetailPage(client, sr.rows, pr.rows, payr.rows, sedr.rows, prjr.rows, permr.rows, req, {
-      documenti: docr.rows,
       proforme: pfr.rows,
       maturato: mat[0] || null,
       emittente: emr.rows[0] || {},
@@ -1068,117 +1062,6 @@ function sedutaFields(b) {
     prossima_ora: /^\d{1,2}:\d{2}$/.test(String((b.prossima_ora || '')).trim()) ? String(b.prossima_ora).trim() : null,
   };
 }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// IL DOCUMENTO DI CHIUSURA — la pagina dove il coach lo legge, corregge e approva.
-// Finché è vivo il documento è una PAGINA, non un file: così incorpora da sé la
-// ruota che arriva durante la Final. Diventa file solo con «Congela e consegna».
-// 🔴 L'Hub non approva e non consegna mai da solo.
-// ═══════════════════════════════════════════════════════════════════════════
-router.get('/dashboard/clients/:id/percorsi/:pid/documento', requireCoach, async (req, res) => {
-  try {
-    const cq = await db.query('SELECT id, name, nome FROM clients WHERE id=$1', [req.params.id]);
-    const cliente = cq.rows[0];
-    if (!cliente) return res.status(404).send('Cliente non trovato');
-    const doc = await docChiusura.caricaDocumento({ percorsoId: req.params.pid });
-    if (!doc) return res.send(paginaDocumentoDaFare(cliente, req.params.pid));
-
-    const materiale = await docChiusura.raccogliMateriale({ percorsoId: req.params.pid });
-    // ⭐ L'ORDINE CONTA: prima si posa sopra la parte venuta dal report della Final,
-    // poi le correzioni del coach. Una regola sola — quello che scrive lui sta
-    // sopra a tutto, sia al testo della macchina sia alle parole dal report.
-    const contenuti = docChiusura.unisci(
-      docChiusura.fondiConsegna(doc.generato, doc.consegna), doc.correzioni);
-    // I pulsanti in più della pagina dell'Hub (nel file da solo non ci sono: lì non
-    // c'è dove salvare). L'approvazione compare finché la bozza non è approvata.
-    const azioni = `<span class="sep"></span>
-      <button id="b-edit">Modifica</button>
-      <button id="b-salva" class="save">Salva le correzioni</button>
-      ${doc.consegna
-        ? (doc.consegna_approvata_at
-            ? '<span style="font-size:12px;color:#2e6b52;font-weight:800;padding:0 6px">✓ approvato da consegnare</span>'
-            : '<button id="b-approva-consegna">Approva il documento da consegnare</button>')
-        : (doc.stato === 'approvato'
-            ? '<span style="font-size:12px;color:#2e6b52;font-weight:800;padding:0 6px">✓ approvato</span>'
-            : '<button id="b-approva">Approva per la sessione</button>')}
-      <a class="torna" href="/dashboard/clients/${req.params.id}" style="margin-left:10px;font-size:12px">← scheda</a>`;
-    const corpo = docHtml.renderDocumento({ contenuti, cliente, ruote: materiale.ruote, soloCorpo: true,
-      modificabile: true, azioni, versione: doc.consegna ? 'consegna' : 'final' });
-    res.send(paginaDocumento(cliente, req.params.pid, doc, corpo));
-  } catch (err) { console.error('[documento]', err); res.status(500).send('Errore nel documento: ' + err.message); }
-});
-
-// Genera (o rigenera) la parte scritta dalla macchina. Le correzioni del coach
-// NON si toccano: stanno in un altro posto apposta.
-// 🔴 UNA VOLTA SOLA. Rigenerare vorrebbe dire riscrivere il testo che il coach ha
-// letto, corretto e approvato: anche tenendo le sue correzioni, tutto il resto
-// cambierebbe sotto le sue mani. Germano, 22/08: «Non voglio nessun rigenera.
-// Nessuno.» Quindi la bozza nasce una volta, e da lì in poi si tocca solo a mano.
-router.post('/dashboard/clients/:id/percorsi/:pid/documento/genera', requireCoach, async (req, res) => {
-  try {
-    const gia = await docChiusura.caricaDocumento({ percorsoId: req.params.pid });
-    if (gia) return res.status(409).json({ error: 'Il documento esiste già: non si rigenera. Le correzioni si fanno a mano sulla pagina.' });
-    const materiale = await docChiusura.raccogliMateriale({ percorsoId: req.params.pid });
-    const contenuti = await docChiusura.generaContenuti({ materiale });
-    const finale = (materiale.sedute || []).find(x => x.tipo === 'Final');
-    const id = await docChiusura.salvaGenerato({
-      percorsoId: req.params.pid, clientId: req.params.id,
-      sedutaId: finale ? finale.id : null, contenuti, ruote: materiale.ruote });
-    res.json({ ok: true, id });
-  } catch (err) { console.error('[documento/genera]', err); res.status(500).json({ error: err.message }); }
-});
-
-router.post('/dashboard/clients/:id/percorsi/:pid/documento/correzioni', requireCoach, express.json(), async (req, res) => {
-  try {
-    const doc = await docChiusura.caricaDocumento({ percorsoId: req.params.pid });
-    if (!doc) return res.status(404).json({ error: 'Documento non trovato' });
-    const quante = await docChiusura.salvaCorrezioni({ documentoId: doc.id, correzioni: req.body.correzioni });
-    res.json({ ok: true, quante });
-  } catch (err) { console.error('[documento/correzioni]', err); res.status(500).json({ error: 'Errore' }); }
-});
-
-// La SECONDA approvazione: quella del documento che andrà al Cliente.
-router.post('/dashboard/clients/:id/percorsi/:pid/documento/approva-consegna', requireCoach, async (req, res) => {
-  try {
-    await db.query("UPDATE documenti SET consegna_approvata_at=NOW(), updated_at=NOW() WHERE percorso_id=$1 AND tipo='chiusura'", [req.params.pid]);
-    res.json({ ok: true });
-  } catch (err) { console.error('[documento/approva-consegna]', err); res.status(500).json({ error: 'Errore' }); }
-});
-
-// L'approvazione PRIMA della sessione: è un gesto del coach, non della macchina.
-router.post('/dashboard/clients/:id/percorsi/:pid/documento/approva', requireCoach, async (req, res) => {
-  try {
-    await db.query("UPDATE documenti SET stato='approvato', approvato_at=NOW(), updated_at=NOW() WHERE percorso_id=$1 AND tipo='chiusura'", [req.params.pid]);
-    res.json({ ok: true });
-  } catch (err) { console.error('[documento/approva]', err); res.status(500).json({ error: 'Errore' }); }
-});
-
-// «Prepara Doc. Final» (21/08/2026) — un clic, nessuna maschera.
-// Il coach non deve compilare niente: obiettivo, argomenti e attività nascono dal
-// REPORT, e quando la Final si fissa quel report non esiste ancora. Qui si crea solo
-// la riga che ASPETTA il report della Final, ed è l'aggancio del Documento di chiusura.
-// ⭐ La data NON si chiede: vive già in agenda (regola «vince l'ultima notizia») e un
-// secondo ingresso vorrebbe dire due date che prima o poi divergono. Se in agenda non
-// c'è niente, il pulsante non inventa: lo dice e si ferma (scelta di Germano, 21/08).
-router.post('/dashboard/clients/:id/percorsi/:pid/prepara-final', requireCoach, express.json(), async (req, res) => {
-  try {
-    const gia = await db.query("SELECT id FROM sedute WHERE percorso_id=$1 AND tipo='Final'", [req.params.pid]);
-    if (gia.rows.length) return res.json({ ok: true, id: gia.rows[0].id, gia: true });
-
-    const righe = await appuntamenti.perCliente(req.params.id);
-    const mio = righe.find(r => r.percorso_id === req.params.pid);
-    const quando = mio && mio.scad ? String(mio.scad).slice(0, 10) : null;
-    if (!quando) return res.status(400).json({
-      error: "Non c'è nessun appuntamento fissato per questo percorso. Fissa prima la data della Final in home, poi torna qui." });
-
-    const sid = uuidv4();
-    await db.query(
-      `INSERT INTO sedute (id, percorso_id, client_id, tipo, data, ore, stato, origine)
-       VALUES ($1,$2,$3,'Final',$4,0,'bozza','manuale')`,
-      [sid, req.params.pid, req.params.id, quando]);
-    res.json({ ok: true, id: sid, data: quando });
-  } catch (err) { console.error('[prepara-final]', err); res.status(500).json({ error: 'Errore' }); }
-});
 
 // Crea una seduta (riga della Scheda Cliente)
 router.post('/dashboard/clients/:id/percorsi/:pid/sedute', requireCoach, express.json(), async (req, res) => {
@@ -4190,18 +4073,12 @@ Germano`;
   // In sospeso qui = ci sono sessioni in BOZZA da approvare. Prima nasceva
   // sempre aperta; dal 13/08 vale lo stesso criterio di tutte le altre.
   const bozzeDaApprovare = sedute.some(s => s.stato === 'bozza' && !isProgrammata(s));
-  // Il pulsante «Prepara Doc. Final» ha senso solo su un percorso ATTIVO che non ha
-  // ancora la sua Final: dove la Final c'è già (o il percorso è chiuso/interrotto) non
-  // compare proprio — «niente Final, niente documento», e una Final non si fa due volte.
-  const percorsoPerFinal = percorsi.find(p => p.stato === 'attivo'
-    && !sedute.some(s => s.percorso_id === p.id && s.tipo === 'Final'));
   const seduteHtml = `
     <div class="card">
       <details class="sec"${bozzeDaApprovare ? ' open' : ''}>
         <summary style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;cursor:pointer">
           <span style="display:flex;align-items:center;gap:8px"><span class="sec-caret">▸</span><h2 style="margin:0">Scheda Cliente <span style="font-weight:400;font-size:13px;color:#aaa">(${sedute.length} ${sedute.length === 1 ? 'sessione' : 'sessioni'}${oreConfermate > 0 ? ` · ${fmtOre(oreConfermate)} h` : ''})</span></h2></span>
           <span style="display:inline-flex;gap:8px;align-items:center">
-            ${percorsoPerFinal ? `<button onclick="event.stopPropagation();preparaFinal('${percorsoPerFinal.id}')" class="btn btn-neutral btn-sm" title="Crea la riga della Final che aspetta il suo report: è l'aggancio del Documento di chiusura. La data la prende dall'appuntamento in agenda.">📄 Prepara Doc. Final</button>` : ''}
             ${client.drive_url ? `<button id="scan-btn" onclick="event.stopPropagation();scanDrive()" class="btn btn-gold btn-sm" title="Legge i report Word nuovi dalla cartella Drive e ne aggiunge la riga in bozza">⟳ Cerca nuovi report</button>` : ''}
           </span>
         </summary>
@@ -4707,12 +4584,6 @@ Germano`;
       </div>
     </div>`;
 
-  // Il documento di chiusura vive sul percorso che ha la Final: è lì che appartiene.
-  const docRighe = (fatt && fatt.documenti) || [];
-  const percorsoConFinal = (percorsi.find(p => sedute.some(s => s.percorso_id === p.id && s.tipo === 'Final')) || {}).id || null;
-  const percorsoDocumento = (docRighe[0] && docRighe[0].percorso_id) || percorsoConFinal;
-  const docStato = (docRighe[0] && docRighe[0].stato) || null;
-
   const azioniHtml = `
     <div class="az-bar">
       <div class="zona-tit">Azioni e collegamenti</div>
@@ -4738,20 +4609,6 @@ Germano`;
             ${mail1SentTxt ? `<span class="az-fatto">✓ Mail 1 inviata il ${mail1SentTxt}</span>` : 'Mail 1 non inviata'} — lettera · scheda anagrafica · Codice ICF<br>
             ${mail2SentTxt ? `<span class="az-fatto">✓ Mail 2 inviata il ${mail2SentTxt}</span>` : 'Mail 2 non inviata'} — contratto · agenda
           </div>
-        </div>
-
-        <div class="az-gruppo">
-          <div class="az-nome">Documento di chiusura</div>
-          <div class="az-btns">
-            ${percorsoDocumento
-              ? `<a href="/dashboard/clients/${client.id}/percorsi/${percorsoDocumento}/documento" class="btn btn-primary btn-sm" style="text-decoration:none">📄 ${docStato ? 'Apri il documento' : 'Prepara il documento della Final'}</a>`
-              : `<button class="btn btn-off btn-sm" disabled title="Serve la riga della Final: si crea con «Prepara Doc. Final» nella Scheda Cliente">📄 Documento della Final</button>`}
-          </div>
-          <div class="az-stato">${percorsoDocumento
-            ? (docStato === 'approvato' ? '<span class="az-fatto">✓ approvato per la sessione</span> — resta modificabile'
-               : docStato ? 'Bozza da leggere, correggere e approvare.'
-               : 'Non ancora preparato: l\'Hub legge i report del percorso e ne fa la bozza.')
-            : 'Compare quando c\'è la sessione Final: niente Final, niente documento.'}</div>
         </div>
 
         <div class="az-gruppo">
@@ -5342,12 +5199,6 @@ Germano`;
       oreAuto();
       document.getElementById('s-ore').value = s.ore;
       document.getElementById('modal-seduta').style.display = 'flex';
-    }
-    async function preparaFinal(pid) {
-      const r = await fetch('/dashboard/clients/' + CID + '/percorsi/' + pid + '/prepara-final', { method: 'POST' });
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok) { alert(d.error || 'Non è riuscito'); return; }
-      location.reload();
     }
     async function saveSeduta() {
       const pid = document.getElementById('s-percorso').value;
@@ -8197,175 +8048,6 @@ function oggiIso() {
 // Si riconosce dalla data: nel futuro = deve ancora succedere.
 function isProgrammata(s) {
   return s && s.stato === 'bozza' && !!s.data && String(s.data).slice(0, 10) > oggiIso();
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-// LE DUE PAGINE DEL DOCUMENTO DI CHIUSURA
-// ═══════════════════════════════════════════════════════════════════════════
-
-// Quando il documento non c'è ancora: una pagina sola, con un pulsante solo.
-function paginaDocumentoDaFare(cliente, pid) {
-  return `<!DOCTYPE html><html lang="it"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Documento di chiusura — ${esc(cliente.name)}</title>${baseStyle()}</head><body>
-<div class="wrap" style="max-width:720px;margin:60px auto">
-  <div class="card" style="text-align:center;padding:40px">
-    <h2 style="margin-bottom:10px">Documento di chiusura</h2>
-    <p style="color:var(--muted);margin-bottom:6px">${esc(cliente.name)}</p>
-    <p style="color:var(--muted);font-size:14px;line-height:1.6;margin-bottom:22px">
-      L'Hub legge i report interi del percorso da Drive, le ruote dallo strumento e le sedute,
-      e prepara la bozza del documento. Ci mette un minuto o due.<br>
-      Poi lo leggi, lo correggi e lo approvi tu: <strong>l'Hub non consegna niente da solo</strong>.
-    </p>
-    <button id="gen" onclick="genera()" class="btn btn-primary">Prepara la bozza</button>
-    <div id="esito" style="margin-top:16px;font-size:13px;color:var(--muted)"></div>
-    <div style="margin-top:26px"><a href="/dashboard/clients/${cliente.id}" style="font-size:13px">← Torna alla scheda</a></div>
-  </div>
-</div>
-<script>
-async function genera(){
-  var b = document.getElementById('gen'), e = document.getElementById('esito');
-  b.disabled = true; b.textContent = 'Sto leggendo i report…';
-  e.textContent = 'Legge i report da Drive e chiede all&apos;IA i momenti che contano. Non chiudere la pagina.';
-  try {
-    var r = await fetch(location.pathname + '/genera', { method: 'POST' });
-    var d = await r.json();
-    if (!r.ok) throw new Error(d.error || 'non riuscito');
-    location.reload();
-  } catch (err) {
-    b.disabled = false; b.textContent = 'Riprova';
-    e.textContent = 'Non è riuscito: ' + err.message;
-  }
-}
-</script></body></html>`;
-}
-
-// Il documento vivo: si legge, si corregge, si approva.
-function paginaDocumento(cliente, pid, doc, corpo) {
-  const stato = doc.stato === 'approvato'
-    ? `<span class="badge" style="background:#e7f1ec;color:#2e6b52">approvato</span>`
-    : `<span class="badge" style="background:#fdf6e3;color:#8a6d1e">bozza</span>`;
-  return `<!DOCTYPE html><html lang="it"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${esc(cliente.name)} — chiusura del percorso</title>
-<style>${docHtml.CSS}
-  .barra .save{background:#2e6b52;color:#fff}
-  .barra .torna{margin-right:auto;color:#5b6672;text-decoration:none;font-weight:700}
-  [data-k].viva{outline:1px dashed #c9a63a;outline-offset:3px;border-radius:3px}
-  #avviso{position:fixed;left:50%;transform:translateX(-50%);bottom:18px;background:#223B6E;color:#fff;
-    padding:9px 16px;border-radius:20px;font-size:13px;display:none;z-index:9}
-</style></head>
-<body class="sessione fonti">
-${corpo}
-<div id="avviso"></div>
-<script>
-(function(){
-  var b = document.body;
-  var ses = document.getElementById('b-ses'), con = document.getElementById('b-con'), fon = document.getElementById('b-fon');
-  ses.onclick = function(){ b.classList.add('sessione'); b.classList.remove('consegna'); ses.classList.add('on'); con.classList.remove('on'); };
-  con.onclick = function(){ b.classList.add('consegna'); b.classList.remove('sessione'); con.classList.add('on'); ses.classList.remove('on'); };
-  fon.onclick = function(){ b.classList.toggle('fonti'); fon.classList.toggle('on'); };
-
-  // Le correzioni: si toccano solo i pezzi con la targa, e si salva per targa —
-  // mai per posizione (il 21/08 il salvataggio per posizione rimetteva i testi
-  // nelle caselle sbagliate al ricaricamento).
-  var pezzi = [].slice.call(document.querySelectorAll('[data-k]'));
-  var partenza = {};
-  pezzi.forEach(function(p){ partenza[p.getAttribute('data-k')] = p.innerText; });
-
-  // Gli elenchi: si leggono per intero, così «ho tolto un punto» e «ne ho aggiunto
-  // uno» arrivano fino al database. Una voce con dei campi dentro torna un oggetto,
-  // una voce sola torna il suo testo.
-  var liste = [].slice.call(document.querySelectorAll('[data-lista]'));
-  function leggiLista(l){
-    return [].slice.call(l.querySelectorAll('[data-voce]')).map(function(v){
-      var campi = [].slice.call(v.querySelectorAll('[data-campo]'));
-      var soloUno = campi.length === 1 && campi[0].getAttribute('data-campo') === '';
-      if (soloUno) return campi[0].innerText.trim();
-      var o = {};
-      campi.forEach(function(c){ var nome = c.getAttribute('data-campo'); if (nome) o[nome] = c.innerText.trim(); });
-      return o;
-    });
-  }
-  var listaPartenza = {};
-  liste.forEach(function(l){ listaPartenza[l.getAttribute('data-lista')] = JSON.stringify(leggiLista(l)); });
-
-  var mod = document.getElementById('b-edit'), salva = document.getElementById('b-salva');
-  var inModifica = false;
-  function scrivibili(){
-    return pezzi.concat([].slice.call(document.querySelectorAll('[data-campo]')));
-  }
-  mod.onclick = function(){
-    inModifica = !inModifica;
-    document.body.classList.toggle('correggo', inModifica);
-    scrivibili().forEach(function(p){ p.contentEditable = inModifica ? 'true' : 'false'; p.classList.toggle('viva', inModifica); });
-    mod.classList.toggle('on', inModifica);
-    mod.textContent = inModifica ? 'Ho finito di scrivere' : 'Modifica';
-  };
-
-  // Togli un punto · aggiungine uno (il nuovo nasce vuoto, sulla stessa forma degli altri)
-  document.addEventListener('click', function(e){
-    var t = e.target;
-    if (t.classList && t.classList.contains('togli')) {
-      var v = t.closest('[data-voce]');
-      if (v && confirm('Tolgo questo punto dal documento?')) v.remove();
-    }
-    if (t.classList && t.classList.contains('aggiungi')) {
-      var l = t.closest('[data-lista]');
-      var voci = l.querySelectorAll('[data-voce]');
-      if (!voci.length) return;
-      var nuova = voci[voci.length - 1].cloneNode(true);
-      [].slice.call(nuova.querySelectorAll('[data-campo]')).forEach(function(c){
-        c.innerText = ''; c.contentEditable = inModifica ? 'true' : 'false'; c.classList.toggle('viva', inModifica);
-      });
-      l.insertBefore(nuova, t);
-      var primo = nuova.querySelector('[data-campo]'); if (primo) primo.focus();
-    }
-  });
-
-  function dillo(t){ var a = document.getElementById('avviso'); a.textContent = t; a.style.display = 'block';
-    setTimeout(function(){ a.style.display = 'none'; }, 3500); }
-
-  salva.onclick = async function(){
-    var cambiate = {};
-    pezzi.forEach(function(p){
-      var k = p.getAttribute('data-k'), ora = p.innerText;
-      if (ora !== partenza[k]) cambiate[k] = ora;
-    });
-    liste.forEach(function(l){
-      var k = l.getAttribute('data-lista'), ora = leggiLista(l);
-      if (JSON.stringify(ora) !== listaPartenza[k]) cambiate[k] = ora;
-    });
-    if (!Object.keys(cambiate).length) { dillo('Non hai cambiato niente.'); return; }
-    salva.disabled = true;
-    try {
-      var r = await fetch(location.pathname + '/correzioni', { method: 'POST',
-        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ correzioni: cambiate }) });
-      var d = await r.json();
-      if (!r.ok) throw new Error(d.error || 'non riuscito');
-      Object.keys(cambiate).forEach(function(k){ partenza[k] = cambiate[k]; });
-      liste.forEach(function(l){ listaPartenza[l.getAttribute('data-lista')] = JSON.stringify(leggiLista(l)); });
-      dillo(d.quante === 1 ? 'Salvata 1 correzione.' : 'Salvate ' + d.quante + ' correzioni.');
-    } catch (err) { dillo('Non ho salvato: ' + err.message); }
-    salva.disabled = false;
-  };
-
-  var apprC = document.getElementById('b-approva-consegna');
-  if (apprC) apprC.onclick = async function(){
-    if (!confirm('Approvi il documento da consegnare? Resta modificabile: approvare vuol dire che va bene per il Cliente.')) return;
-    var r = await fetch(location.pathname + '/approva-consegna', { method: 'POST' });
-    if (r.ok) location.reload(); else dillo('Non è riuscito.');
-  };
-
-  var appr = document.getElementById('b-approva');
-  if (appr) appr.onclick = async function(){
-    if (!confirm('Approvi questa bozza per la sessione? Resta modificabile: approvare vuol dire che va bene per la Final.')) return;
-    var r = await fetch(location.pathname + '/approva', { method: 'POST' });
-    if (r.ok) location.reload(); else dillo('Non è riuscito.');
-  };
-
-})();
-</script></body></html>`;
 }
 
 function itDate(d) {
