@@ -90,6 +90,33 @@ try {
   }
 } catch (e) { dì(`\n📅 (mappa dei cantieri non leggibile: ${e.message})`); }
 
+// ── L'ETÀ DELLE FONTI VIVE (26/08/2026) ─────────────────────────────────────
+// 🔴 PERCHÉ ESISTE: il «NOESYS — Brief e Roadmap.md» era il documento che si
+// leggeva a ogni sessione e si aggiornava a ogni fine. È morto l'11/07/2026 e
+// NESSUNO se n'è accorto per 46 giorni — anzi, il 21/08 lo citavo ancora come
+// riferimento. Era morto di fame: un secondo sistema (le mappe vive in memoria)
+// aveva preso il suo posto, e niente guardava la sua data.
+// ⭐ Adesso la data la guarda una macchina. Un file vivo che smette di essere
+//    toccato si vede il giorno dopo, non dopo sei settimane.
+try {
+  const fonti = [
+    { nome: 'mappa dei cantieri', file: MAPPA, allarme: 10 },
+    { nome: 'regole di lavoro (CLAUDE.md)', file: '/Users/macbook12/.claude/CLAUDE.md', allarme: 90 },
+  ];
+  const righeFonti = [];
+  for (const f of fonti) {
+    if (!fs.existsSync(f.file)) { righeFonti.push(`   🔴 ${f.nome} — NON ESISTE PIÙ (${f.file})`); continue; }
+    const g = giorniFra(iso(new Date(fs.statSync(f.file).mtime)), iso(oggi));
+    const segno = g > f.allarme ? '🔴' : g > f.allarme / 2 ? '🟠' : '  ';
+    righeFonti.push(`   ${segno} ${f.nome} — aggiornata ${quanto(g)}`);
+  }
+  if (righeFonti.some(r => r.includes('🔴') || r.includes('🟠'))) {
+    dì('\n🗺️  FONTI VIVE');
+    righeFonti.forEach(dì);
+    dì('      Una fonte che non si tocca più sta morendo: o si aggiorna, o si dichiara archiviata.');
+  }
+} catch (_) { /* mai fermare l'avvio per questo */ }
+
 // ── I numeri veri, in sola lettura ──────────────────────────────────────────
 // «I numeri hanno una firma»: se non tornano con quello che ricordo, è cambiato
 // qualcosa fuori dalla conversazione — o sta girando una versione diversa.

@@ -1,0 +1,41 @@
+{
+  "agentPushNotifEnabled": true,
+  "inputNeededNotifEnabled": true,
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --env-file=/Users/macbook12/Developer/Noesys-Hub/.env.reale /Users/macbook12/Developer/Noesys-Hub/scripts/punto.js | python3 -c \"import sys,json; print(json.dumps({'hookSpecificOutput':{'hookEventName':'SessionStart','additionalContext':sys.stdin.read()}}))\"",
+            "timeout": 30,
+            "statusMessage": "Punto della situazione Noesys…"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /Users/macbook12/Developer/Noesys-Hub/scripts/ora.js",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /Users/macbook12/.claude/hooks/barriere.js",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
