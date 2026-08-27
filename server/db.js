@@ -177,6 +177,13 @@ async function init() {
   await query(`ALTER TABLE percorsi ADD COLUMN IF NOT EXISTS modalita TEXT DEFAULT 'Standard'`);
   await query(`ALTER TABLE percorsi ADD COLUMN IF NOT EXISTS ore_fatte NUMERIC(6,1) DEFAULT 0`);
   await query(`ALTER TABLE percorsi ADD COLUMN IF NOT EXISTS data_fine DATE`);
+  // Cosa il Cliente eroga in cambio, quando la modalità è «Scambio servizi».
+  // Nasce il 27/08/2026 da un difetto visto da Germano sul contratto vero di
+  // Alessandra Patti: il contratto lasciava quello spazio in bianco perché
+  // l'informazione NON ESISTEVA da nessuna parte nell'Hub. Sta sul percorso e
+  // non sul cliente: lo stesso cliente può avere uno scambio in un percorso e
+  // pagare in denaro in un altro.
+  await query(`ALTER TABLE percorsi ADD COLUMN IF NOT EXISTS prestazione_scambio TEXT`);
 
   // Diario sessioni di coaching (A8): una riga per seduta (Intake/Ongoing/Final),
   // con ore e "scheda" (riepilogo dei punti salienti, testo unico Markdown).

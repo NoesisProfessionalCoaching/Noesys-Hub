@@ -37,7 +37,7 @@ const PROFESSIONISTA = {
 const { euro } = require('./fiscale');
 
 /** Il punto 4, in quattro versioni. Ne esce UNA sola per contratto. */
-function compenso(modalita, prezzo, nSessioni) {
+function compenso(modalita, prezzo, nSessioni, prestazione) {
   const p = prezzo == null ? '……………' : '€ ' + euro(prezzo);
   const n = nSessioni == null ? '………' : String(nSessioni);
   const pagamento = {
@@ -59,7 +59,12 @@ function compenso(modalita, prezzo, nSessioni) {
     case 'Scambio servizi':
       return [
         { t: 'p', x: 'Il/la Cliente non corrisponde denaro. A fronte del percorso di coaching eroga al/la Professionista la seguente prestazione:' },
-        { t: 'campo', x: '', punti: 74 },
+        // Se la prestazione è scritta sul percorso, la si stampa. Se non c'è,
+        // restano i puntini e si riempie a penna: un contratto con uno spazio
+        // vuoto si firma lo stesso, uno con una frase inventata no.
+        (prestazione && String(prestazione).trim())
+          ? { t: 'forte', x: String(prestazione).trim() }
+          : { t: 'campo', x: '', punti: 74 },
         { t: 'p', x: 'Le due prestazioni restano operazioni autonome: ciascuna parte adempie per proprio conto agli obblighi fiscali e di fatturazione che la riguardano.' },
       ];
     case 'Pro bono':
@@ -136,7 +141,7 @@ function personaFisica({ cliente, percorso }) {
     { t: 'p', x: 'Il/la Cliente presta il proprio consenso a questo trattamento firmando l\'informativa che gli/le viene consegnata insieme al presente accordo, e può revocarlo in qualsiasi momento: da quel momento il/la Professionista prenderà appunti a mano.' },
 
     { t: 'h', x: '4. Compenso' },
-    ...compenso(modalita, percorso.prezzo, percorso.n_sessioni_previste),
+    ...compenso(modalita, percorso.prezzo, percorso.n_sessioni_previste, percorso.prestazione_scambio),
 
     { t: 'h', x: '5. I primi 14 giorni: il diritto di ripensamento' },
     { t: 'p', x: 'Se il/la Cliente è un consumatore — cioè agisce per scopi estranei alla propria attività professionale — e questo accordo è concluso a distanza o fuori dai locali del/la Professionista, ha diritto di ripensarci entro 14 giorni dalla firma, senza doversi giustificare e senza alcuna penale (artt. 52 e seguenti del Codice del Consumo).' },

@@ -788,6 +788,14 @@ router.delete('/dashboard/clients/:id', requireCoach, async (req, res) => {
 // da una modalità precedente verrebbe stampato su un contratto vero.
 const MODALITA_PERCORSO = ['Standard', 'Pacchetto', 'Scambio servizi', 'Pro bono'];
 const MODALITA_SENZA_PREZZO = ['Scambio servizi', 'Pro bono'];
+// La prestazione in cambio ha senso in UNA modalità sola. Fuori da quella si
+// azzera, per la stessa ragione per cui si azzera il prezzo: un valore orfano
+// finirebbe stampato su un contratto vero.
+function prestazionePerModalita(modalita, testo) {
+  if (modalita !== 'Scambio servizi') return null;
+  const s = (testo == null ? '' : String(testo)).trim();
+  return s || null;
+}
 function prezzoPerModalita(modalita, prezzo) {
   if (MODALITA_SENZA_PREZZO.includes(modalita)) return null;
   return (prezzo === '' || prezzo === undefined) ? null : prezzo;
@@ -797,14 +805,15 @@ router.post('/dashboard/clients/:id/percorsi', requireCoach, express.json(), asy
   const { tipo, n_sessioni_previste, n_sessioni_fatte, promo, sconto_note,
           data_inizio, data_fine, modalita, ore_fatte, stato, progetto_id } = req.body;
   const prezzo = prezzoPerModalita(modalita || 'Standard', req.body.prezzo);
+  const prestazione = prestazionePerModalita(modalita || 'Standard', req.body.prestazione_scambio);
   try {
     const pid = uuidv4();
     await db.query(
-      `INSERT INTO percorsi (id,client_id,tipo,n_sessioni_previste,n_sessioni_fatte,prezzo,promo,sconto_note,data_inizio,data_fine,modalita,ore_fatte,stato,progetto_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+      `INSERT INTO percorsi (id,client_id,tipo,n_sessioni_previste,n_sessioni_fatte,prezzo,promo,sconto_note,data_inizio,data_fine,modalita,ore_fatte,stato,progetto_id,prestazione_scambio)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
       [pid, req.params.id, tipo||'Individuale', n_sessioni_previste||8, n_sessioni_fatte||0,
        prezzo||null, promo||false, sconto_note||'', data_inizio||null, data_fine||null,
-       modalita||'Standard', ore_fatte||0, stato||'attivo', progetto_id||null]
+       modalita||'Standard', ore_fatte||0, stato||'attivo', progetto_id||null, prestazione]
     );
     // Cartelle Drive del percorso: Percorsi/{gg-mm-aaaa}/{Intake,Ongoing,Final}.
     // Servono: cartella cliente (drive_url) + data inizio. Se manca l'una o l'altra,
@@ -986,14 +995,15 @@ router.get('/dashboard/diag/modelli', requireCoach, async (req, res) => {
 router.post('/dashboard/clients/:id/percorsi/:pid', requireCoach, express.json(), async (req, res) => {
   const { tipo, n_sessioni_previste, promo, sconto_note, data_inizio, modalita } = req.body;
   const prezzo = prezzoPerModalita(modalita || 'Standard', req.body.prezzo);
+  const prestazione = prestazionePerModalita(modalita || 'Standard', req.body.prestazione_scambio);
   try {
     const r = await db.query(
       `UPDATE percorsi SET tipo=$3, n_sessioni_previste=$4, prezzo=$5, promo=$6,
-              sconto_note=$7, data_inizio=$8, modalita=$9
+              sconto_note=$7, data_inizio=$8, modalita=$9, prestazione_scambio=$10
          WHERE id=$1 AND client_id=$2`,
       [req.params.pid, req.params.id, tipo || 'Individuale', n_sessioni_previste || 8,
        prezzo, promo || false, sconto_note || '', data_inizio || null,
-       modalita || 'Standard']
+       modalita || 'Standard', prestazione]
     );
     if (!r.rowCount) return res.status(404).json({ error: 'Percorso non trovato' });
     res.json({ ok: true });
@@ -5070,6 +5080,7 @@ Germano`;
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
         <div class="form-group"><label>Sessioni previste</label><input id="p-sessioni" type="number" step="1" min="1" value="8"></div>
         <div class="form-group" id="p-prezzo-box"><label id="p-prezzo-label">Prezzo a sessione (€)</label><input id="p-prezzo" type="number" step="0.01" placeholder="es. 150"></div>
+        <div class="form-group" id="p-scambio-box" style="display:none"><label>Cosa eroga il Cliente in cambio</label><input id="p-scambio" type="text" placeholder="es. consulenza in ambito risorse umane"><div style="font-size:11px;color:#8a94a6;margin-top:4px">Finisce nel contratto, al punto sul compenso. Senza, quello spazio resta in bianco.</div></div>
       </div>
       <div class="form-group" id="p-ore-box"><label>Ore già svolte (percorsi iniziati prima dell'Hub)</label><input id="p-ore" type="number" step="0.5" min="0" value="0"></div>
       ${progetti.length ? `<div class="form-group"><label>Progetto (facoltativo)</label>
@@ -5275,7 +5286,7 @@ Germano`;
     const PERM_ORE = ${PERMESSO_ORE_SESSIONE};
     const SEDUTE = ${JSON.stringify(Object.fromEntries(sedute.map(s => [s.id, { id: s.id, percorso_id: s.percorso_id, tipo: s.tipo, data: s.data, ore: Number(s.ore), obiettivo: s.obiettivo || '', argomenti: s.argomenti || '', attivita: s.attivita || '', scadenza: s.scadenza || '', prossima_ora: s.prossima_ora || '', eseguita: s.eseguita || '', note: s.note || '' }]))).replace(/</g, '\\u003c')};
     // Dati dei percorsi per riempire la finestra quando si preme "Modifica".
-    const PERCORSI_DATI = ${JSON.stringify(Object.fromEntries(percorsi.map(p => [p.id, { id: p.id, tipo: p.tipo || 'Individuale', modalita: p.modalita || 'Standard', prezzo: p.prezzo === null || p.prezzo === undefined ? '' : String(p.prezzo), n_sessioni_previste: Number(p.n_sessioni_previste) || 8, promo: !!p.promo, sconto_note: p.sconto_note || '', data_inizio: p.data_inizio ? String(p.data_inizio).slice(0, 10) : '' }]))).replace(/</g, '\\u003c')};
+    const PERCORSI_DATI = ${JSON.stringify(Object.fromEntries(percorsi.map(p => [p.id, { id: p.id, tipo: p.tipo || 'Individuale', modalita: p.modalita || 'Standard', prezzo: p.prezzo === null || p.prezzo === undefined ? '' : String(p.prezzo), n_sessioni_previste: Number(p.n_sessioni_previste) || 8, promo: !!p.promo, sconto_note: p.sconto_note || '', data_inizio: p.data_inizio ? String(p.data_inizio).slice(0, 10) : '', prestazione_scambio: p.prestazione_scambio || '' }]))).replace(/</g, '\\u003c')};
     const ORE_TIPO = { Intake: 2, Ongoing: 1, Final: null };
     function oreAuto() {
       const t = document.getElementById('s-tipo').value;
@@ -5651,6 +5662,9 @@ Germano`;
       const box = document.getElementById('p-prezzo-box');
       const senzaPrezzo = (m === 'Scambio servizi' || m === 'Pro bono');
       box.style.display = senzaPrezzo ? 'none' : '';
+      // La prestazione in cambio esiste in una modalità sola: comparire altrove
+      // vorrebbe dire invitare a scrivere un dato che nessun contratto stamperà.
+      document.getElementById('p-scambio-box').style.display = (m === 'Scambio servizi') ? '' : 'none';
       if (!senzaPrezzo) {
         document.getElementById('p-prezzo-label').textContent =
           (m === 'Pacchetto') ? 'Prezzo del pacchetto (€)' : 'Prezzo a sessione (€)';
@@ -5664,6 +5678,7 @@ Germano`;
       document.getElementById('p-modalita').value = 'Standard';
       document.getElementById('p-sessioni').value = 8;
       document.getElementById('p-prezzo').value = '';
+      document.getElementById('p-scambio').value = '';
       document.getElementById('p-ore').value = 0;
       document.getElementById('p-promo').checked = false;
       document.getElementById('p-sconto').value = '';
@@ -5682,6 +5697,7 @@ Germano`;
       document.getElementById('p-modalita').value = p.modalita;
       document.getElementById('p-sessioni').value = p.n_sessioni_previste;
       document.getElementById('p-prezzo').value = p.prezzo;
+      document.getElementById('p-scambio').value = p.prestazione_scambio || '';
       document.getElementById('p-promo').checked = p.promo;
       document.getElementById('p-sconto').value = p.sconto_note;
       document.getElementById('p-data').value = p.data_inizio;
@@ -5700,6 +5716,7 @@ Germano`;
         modalita,
         n_sessioni_previste: document.getElementById('p-sessioni').value || 8,
         prezzo: document.getElementById('p-prezzo').value || null,
+        prestazione_scambio: document.getElementById('p-scambio').value || null,
         promo: document.getElementById('p-promo').checked,
         sconto_note: document.getElementById('p-sconto').value,
         data_inizio: document.getElementById('p-data').value || null,
