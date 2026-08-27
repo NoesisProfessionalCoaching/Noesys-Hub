@@ -7,6 +7,8 @@ const { logoCompact, logoPicto } = require('./logo');
 const drive = require('./google-drive');
 const scan = require('./scan');
 const scanModuli = require('./scan-moduli');
+const contratto = require('./contratto');            // l'impaginatore: disegna le pagine
+const contrattoTesti = require('./contratto-testi');  // le parole del contratto
 const documenti = require('./documenti');
 const mailer = require('./mailer');
 const moduli = require('./moduli');
@@ -1153,6 +1155,39 @@ router.post('/dashboard/scan-drive', requireCoach, express.json(), async (req, r
     const out = await scan.scanClientReports({ onlyClientId: (req.body && req.body.client_id) || undefined });
     res.json({ ok: true, ...out });
   } catch (err) { console.error('[scan-drive]', err); res.status(500).json({ error: err.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// IL CONTRATTO — l'Hub lo costruisce da zero e lo mostra. Non lo manda.
+//
+// ⭐ Germano (09/08): «il contratto è una VISTA sui dati dell'Hub, non un foglio
+//    da riempire». Quindi qui non si corregge niente: se un dato è sbagliato si
+//    corregge DOVE VIVE (anagrafica o percorso) e si rigenera. Un secondo posto
+//    dove scrivere il prezzo sarebbe un secondo posto dove sbagliarlo.
+// 🔴 Non c'è nessuna rotta che spedisca questo PDF: la Mail 2 è un altro passo,
+//    e finché la banda «BOZZA NON VALIDATA» è accesa non deve partire a nessuno.
+router.get('/dashboard/clients/:id/percorsi/:pid/contratto', requireCoach, async (req, res) => {
+  try {
+    const [cq, pq] = await Promise.all([
+      db.query('SELECT * FROM clients WHERE id=$1', [req.params.id]),
+      db.query('SELECT * FROM percorsi WHERE id=$1 AND client_id=$2', [req.params.pid, req.params.id]),
+    ]);
+    const cliente = cq.rows[0];
+    const percorso = pq.rows[0];
+    if (!cliente || !percorso) return res.status(404).send('Cliente o percorso non trovato');
+
+    const blocchi = contrattoTesti.personaFisica({ cliente, percorso });
+    const pdf = await contratto.costruisci(blocchi);
+    // inline: si apre nel browser, non si scarica. È un'anteprima, non un file
+    // da archiviare: il file nasce quando lo si manda, e quel passo non c'è ancora.
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition',
+      'inline; filename="Contratto ' + (cliente.name || 'cliente').replace(/[^\w ]/g, '') + '.pdf"');
+    res.send(pdf);
+  } catch (err) {
+    console.error('[contratto]', err);
+    res.status(500).send('Non sono riuscito a preparare il contratto: ' + err.message);
+  }
 });
 
 // Lancio MANUALE della lettura dei moduli (scheda anagrafica + contratto) su UN
@@ -4616,8 +4651,30 @@ Germano`;
   const rigaModulo = (m, fatto, manca) => m
     ? `<span class="az-fatto">✓ ${fatto} il ${itDateTime(m.created_at)}</span>`
     : `<strong style="color:var(--muted)">${manca}</strong>`;
+  // ── Il riquadro del contratto (27/08) ────────────────────────────────────
+  // Il contratto si fa su UN percorso: qui si prende quello attivo, e se non
+  // ce n'è nessuno l'ultimo creato. Il riquadro dice a quale si riferisce,
+  // perché un cliente può averne più di uno e sbagliare percorso vorrebbe dire
+  // mandargli il contratto di un altro pezzo del suo lavoro.
+  const percorsoContratto = percorsi.find(p => p.stato === 'attivo' && !p.progetto_id)
+    || percorsi.filter(p => !p.progetto_id).slice(-1)[0] || null;
+  // I campi che finirebbero a puntini nel documento. Non è un errore: un
+  // contratto con dei puntini si stampa lo stesso e si riempie a penna. Ma
+  // meglio saperlo PRIMA di mandarlo, che è il difetto che stiamo togliendo.
+  const CAMPI_CONTRATTO = [
+    ['codice_fiscale', 'codice fiscale'], ['via', 'indirizzo'], ['citta', 'città'],
+    ['provincia', 'provincia'], ['email', 'email'], ['telefono', 'cellulare'],
+  ];
+  const mancantiContratto = CAMPI_CONTRATTO
+    .filter(([col]) => !client[col] || !String(client[col]).trim())
+    .map(([, nome]) => nome);
+  const modalitaContratto = percorsoContratto && percorsoContratto.modalita;
+  const prezzoMancante = percorsoContratto
+    && ['Standard', 'Pacchetto'].includes(modalitaContratto)
+    && (percorsoContratto.prezzo == null || Number(percorsoContratto.prezzo) === 0);
+
   const statoAnagrafica = bozza
-    ? `<strong style="color:#8a6d1e">C'è una proposta da controllare</strong>, qui sotto: l'Hub ha letto i moduli e aspetta il tuo via libera.`
+    ? `<strong style="color:#8a6d1e">Scheda Anagrafica aggiornata da verificare</strong> — qui sotto, nel riquadro «Dati letti dai documenti».`
     : `${rigaModulo(modScheda, 'Scheda anagrafica letta', 'Scheda anagrafica non ancora arrivata')}<br>${rigaModulo(modContratto, 'Contratto letto', 'Contratto non ancora arrivato')}`;
 
   const azioniHtml = `
@@ -4634,6 +4691,23 @@ Germano`;
               : `<button class="btn btn-off btn-sm" disabled title="Serve la cartella Drive del cliente: senza quella non c'è dove cercare">⟳ Cerca la scheda su Drive</button>`}
           </div>
           <div class="az-stato">${statoAnagrafica}</div>
+        </div>
+
+        <div class="az-gruppo">
+          <div class="az-nome">Contratto</div>
+          <div class="az-btns">
+            ${percorsoContratto
+              ? `<a href="/dashboard/clients/${client.id}/percorsi/${percorsoContratto.id}/contratto" target="_blank" class="btn btn-primary btn-sm" style="text-decoration:none">📄 Prepara il contratto</a>`
+              : `<button class="btn btn-off btn-sm" disabled title="Serve un percorso individuale: il contratto prende da lì la modalità, il prezzo e il numero di sessioni">📄 Prepara il contratto</button>`}
+          </div>
+          <div class="az-stato">${!percorsoContratto
+            ? 'Compare quando il cliente ha un percorso individuale.'
+            : `Lo prepara sul percorso <strong>${esc(percorsoContratto.tipo || 'individuale')}</strong>, modalità <strong>${esc(modalitaContratto || '—')}</strong>.` +
+              (prezzoMancante ? ' <strong style="color:#a4342a">Il prezzo del percorso è vuoto: nel contratto resterà in bianco.</strong>' : '') +
+              (mancantiContratto.length
+                ? ` <span style="color:#8a6d1e">Verranno a puntini: ${mancantiContratto.join(', ')}.</span>`
+                : ' <span class="az-fatto">✓ i dati del cliente sono completi</span>')
+          }</div>
         </div>
 
         <div class="az-gruppo">
