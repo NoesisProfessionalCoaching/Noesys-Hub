@@ -178,7 +178,7 @@ function personaFisica({ cliente, percorso }) {
     { t: 'riga' },
     { t: 'firma', x: 'Luogo e data' },
     { t: 'firma', x: 'Firma del/la Cliente' },
-    { t: 'firma', x: 'Firma del/la Professionista' },
+    { t: 'firmaProf', x: 'Firma del/la Professionista' },
 
     { t: 'h', x: 'Approvazione specifica delle clausole' },
     { t: 'p', x: 'Ai sensi e per gli effetti degli artt. 1341 e 1342 c.c., il/la Cliente dichiara di aver preso visione dell\'intero testo e di approvare espressamente le clausole: 2 (natura del servizio e limiti di responsabilità), 3 (svolgimento e resoconto), 4 (compenso), 5 (avvio immediato), 6 (recesso), 7 (riservatezza), 8 (intelligenza artificiale).' },
@@ -432,7 +432,7 @@ function personaGiuridica({ committente, progetto, nPartecipanti }) {
     { t: 'riga' },
     { t: 'firma', x: 'Luogo e data' },
     { t: 'firma', x: 'Per il Committente' },
-    { t: 'firma', x: 'Il/la Professionista' },
+    { t: 'firmaProf', x: 'Il/la Professionista' },
 
     { t: 'h', x: 'Approvazione specifica delle clausole' },
     { t: 'p', x: 'Ai sensi e per gli effetti degli artt. 1341 e 1342 c.c., il Committente dichiara di approvare espressamente le clausole: 2 (natura del servizio e limiti di responsabilità), 4 (che cosa riceve il Committente), 5 (compenso), 6 (durata e recesso), 7 (riservatezza), 9 (foro competente).' },

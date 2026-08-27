@@ -46,6 +46,10 @@ const BLU = rgb(0.13, 0.23, 0.43);
 // La cartella `Modelli` su Drive e il nome ESATTO della carta intestata.
 const MODELLI = '1rzsYYD_rXejGfMSlIEe_sAW_1KcrqeqG';
 const CARTA = 'Carta Intestata OK.pdf';
+// La firma di Germano: PNG col tratto su sfondo TRASPARENTE, caricato da lui su
+// Drive il 27/08. ⛔ Sta su Drive e non nel repo di proposito: una firma dentro
+// GitHub è una firma che gira. Se il file cambia nome, cambia questa riga.
+const FIRMA = 'Firma_trasparente.png';
 
 // La carta intestata si scarica una volta per processo: è un file che cambia
 // una volta all'anno, e scaricarlo a ogni contratto vorrebbe dire far dipendere
@@ -58,6 +62,15 @@ async function cartaIntestata() {
   if (!f) throw new Error(`Sul Drive manca «${CARTA}» nella cartella Modelli`);
   cartaCache = await drive.downloadFileBuffer(f.id);
   return cartaCache;
+}
+
+let firmaCache = null;
+async function firmaGrafica() {
+  if (firmaCache) return firmaCache;
+  const f = await drive.findFileByName(MODELLI, FIRMA);
+  if (!f) throw new Error(`Sul Drive manca «${FIRMA}» nella cartella Modelli`);
+  firmaCache = await drive.downloadFileBuffer(f.id);
+  return firmaCache;
 }
 
 // ⚠️ Il Garamond GRASSETTO non esiste ancora: sul Mac e nel repo c'è solo il
@@ -148,13 +161,17 @@ function aCapo(testo, font, size, larg) {
  *   titolo · sottotitolo · h (numero d'articolo) · p · forte · li · campo ·
  *   nota · firma · riga · vuoto
  */
-async function costruisci(blocchi) {
+async function costruisci(blocchi, opzioni = {}) {
   const pdf = await PDFDocument.create();
   pdf.registerFontkit(fontkit);
   const ttf = fs.readFileSync(path.join(__dirname, 'assets', 'fonts', 'EBGaramond-Regular.ttf'));
   const font = await pdf.embedFont(ttf, { subset: true });
   const cartaPdf = await PDFDocument.load(await cartaIntestata());
   const [sfondo] = await pdf.embedPdf(cartaPdf, [0]);
+  // 🔴 LA FIRMA SI METTE SOLO SE QUALCUNO LA CHIEDE. Il valore normale è NIENTE
+  // firma: un'anteprima, una prova o una rigenerazione non devono produrre un
+  // file che porta la firma di Germano senza che lui l'abbia approvato.
+  const firmaPng = opzioni.firmato ? await pdf.embedPng(await firmaGrafica()) : null;
 
   const f = new Foglio(pdf, sfondo, font);
 
@@ -172,6 +189,26 @@ async function costruisci(blocchi) {
       case 'campo': f.scrivi(b.x + '  ' + '.'.repeat(Math.max(4, b.punti || 46))); f.vuoto(5); break;
       case 'nota': f.scrivi(b.x, { size: 9, colore: TENUE }); f.vuoto(6); break;
       case 'firma': f.vuoto(10); f.scrivi(b.x + '   ' + '_'.repeat(40)); f.vuoto(8); break;
+      // La riga della firma del Professionista. Se il contratto è firmato, il
+      // tratto si appoggia SOPRA la riga: la riga resta visibile, com'è giusto
+      // per una firma vera su un foglio.
+      case 'firmaProf': {
+        // ⚠️ Il tratto va SOPRA la riga, e la riga va abbassata per fargli posto.
+        // Alla prima prova (27/08) avevo disegnato la firma senza aprire lo
+        // spazio: finiva a cavallo della riga del Cliente, quella sopra.
+        const altFirma = firmaPng ? 44 : 0;
+        f.vuoto(10 + altFirma);
+        f.spazio(46 + altFirma);
+        const yRiga = f.y - CORPO;
+        f.scrivi(b.x + '   ' + '_'.repeat(40));
+        if (firmaPng) {
+          const larg = altFirma * (firmaPng.width / firmaPng.height);
+          const xEtichetta = MRG.sx + font.widthOfTextAtSize(b.x + '   ', CORPO);
+          f.pagina.drawImage(firmaPng, { x: xEtichetta + 8, y: yRiga + 2, width: larg, height: altFirma });
+        }
+        f.vuoto(8);
+        break;
+      }
       case 'riga': f.riga(); break;
       case 'vuoto': f.vuoto(b.x || 12); break;
       case 'pagina': f.nuovaPagina(); break;

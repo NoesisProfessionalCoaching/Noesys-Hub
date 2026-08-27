@@ -1177,7 +1177,11 @@ router.get('/dashboard/clients/:id/percorsi/:pid/contratto', requireCoach, async
     if (!cliente || !percorso) return res.status(404).send('Cliente o percorso non trovato');
 
     const blocchi = contrattoTesti.personaFisica({ cliente, percorso });
-    const pdf = await contratto.costruisci(blocchi);
+    // Il contratto esce GIÀ FIRMATO (Germano, 27/08). Non c'è un passo di
+    // approvazione da proteggere: questo PDF non si salva da nessuna parte —
+    // nasce alla richiesta, si apre nel browser e sparisce. Quando la Mail 2
+    // allegherà il contratto generato, LÌ servirà l'approvazione.
+    const pdf = await contratto.costruisci(blocchi, { firmato: true });
     // inline: si apre nel browser, non si scarica. È un'anteprima, non un file
     // da archiviare: il file nasce quando lo si manda, e quel passo non c'è ancora.
     res.setHeader('Content-Type', 'application/pdf');
