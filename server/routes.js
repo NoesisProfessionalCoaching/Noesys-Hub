@@ -2856,7 +2856,7 @@ router.get('/dashboard/progetti/:id', requireCoach, async (req, res) => {
     // uno per persona (client_id valorizzato); per team/group il percorso condiviso
     // (client_id NULL) con i partecipanti aggregati da percorso_partecipanti.
     const percorsi = await db.query(`
-      SELECT p.id, p.tipo, p.stato, p.n_sessioni_fatte, p.ore_fatte, p.client_id, p.drive_url,
+      SELECT p.id, p.tipo, p.stato, p.n_sessioni_fatte, p.n_sessioni_previste, p.ore_fatte, p.client_id, p.drive_url,
              cl.name AS client_name,
              (SELECT string_agg(c2.name, ', ' ORDER BY c2.cognome NULLS LAST, c2.nome)
                 FROM percorso_partecipanti pp JOIN clients c2 ON c2.id = pp.client_id
@@ -7157,6 +7157,126 @@ function progettiPage(progetti, committenti, req) {
 // ═══════════════════════════════════════════════════════
 // PAGINA DETTAGLIO PROGETTO (Fase 3a) — dati + coachee collegati
 // ═══════════════════════════════════════════════════════
+/**
+ * SPECIFICHE DI PROGETTO — Fetta 1: SOLA LETTURA.
+ *
+ * ⭐ Modello di Germano (28/08): il centro del progetto. «Un unico luogo» vuol
+ *    dire una sola SCHERMATA, non una seconda copia dei dati: qui non si scrive
+ *    niente e non nasce nessun archivio parallelo. Ogni riga dice dove si
+ *    corregge oggi.
+ * ⛔ Nessuna colonna nuova (è la Fetta 2), nessuna modifica all'Amministrazione
+ *    (è la Fetta 4).
+ *
+ * Lo STATO si RICAVA dai fatti invece di essere una colonna: se l'Intake col
+ * Committente è registrata, i numeri sono affidabili. È l'asse dato da Germano:
+ * provvisorio nelle Pre-Intake, valorizzato dopo l'Intake col Committente,
+ * definitivo dopo la firma — e il terzo gradino arriva con la Fetta 6, perché
+ * oggi l'Hub non sa se un contratto è stato firmato.
+ */
+function specificheCard({ p, coachee, percorsi, fasi, qTot, qComm, quoteGuaste }) {
+  // ⚠️ `eur` qui NON esiste: è un aiuto locale di progettoDettaglioPage, e questa
+  // funzione sta fuori. Alla prima prova la pagina rispondeva «Errore» proprio per
+  // questo — e `npm run prova` non l'ha visto, perché controlla il JS che gira nel
+  // BROWSER, non il codice del server che disegna la pagina.
+  const eur = fiscale.euro;
+  const TIPI = {
+    'individuale': 'Individuale', 'individuale-multiplo': 'Individuale per più Clienti',
+    'team': 'Team', 'group': 'Group',
+  };
+  const collettivo = p.tipo === 'team' || p.tipo === 'group';
+  const condiviso = (percorsi || []).find(x => !x.client_id) || null;
+  const individuali = (percorsi || []).filter(x => x.client_id);
+  const nPart = (coachee || []).length;
+
+  const intakeComm = (fasi || []).find(f => f.tipo === 'intake-sponsor');
+  const valorizzato = !!intakeComm;
+
+  // Che cosa manca perché i contratti si possano scrivere. Non è un elenco di
+  // desideri: sono le cose senza le quali un contratto esce con un buco.
+  const manca = [];
+  if (!nPart) manca.push('nessun partecipante');
+  if (qTot == null) manca.push('il valore del progetto');
+  if (collettivo && !condiviso) manca.push('il percorso condiviso');
+  if (condiviso && !condiviso.n_sessioni_previste) manca.push('il numero di sessioni del percorso');
+  if (!collettivo && !individuali.length) manca.push('i percorsi dei partecipanti');
+  if (quoteGuaste) manca.push('le quote non tornano');
+
+  const voce = (etichetta, valore, dove) => `<tr>
+    <td style="font-size:12px;color:var(--muted);white-space:nowrap;vertical-align:top;padding-right:14px">${etichetta}</td>
+    <td style="font-size:13px;vertical-align:top">${valore}</td>
+    <td style="text-align:right;white-space:nowrap;vertical-align:top">${dove || ''}</td>
+  </tr>`;
+  const vuoto = '<span style="color:#aaa">— non ancora indicato</span>';
+
+  const sessioni = condiviso
+    ? `<strong>${Number(condiviso.n_sessioni_previste) || '—'}</strong> previste · ${Number(condiviso.n_sessioni_fatte) || 0} fatte`
+    : individuali.length
+      ? `${individuali.length} ${individuali.length === 1 ? 'percorso individuale' : 'percorsi individuali'}`
+      : vuoto;
+
+  // Le fasi obbligatorie secondo le regole date da Germano il 28/08. Kick-Off e
+  // Chiusura Open sono facoltative e non entrano in questo conto.
+  const OBBLIGATORIE = [
+    ['intake-sponsor', 'Intake col Committente'],
+    ['chiusura-sponsor', 'Chiusura col Committente'],
+  ];
+  const faseFatte = OBBLIGATORIE.map(([t, label]) =>
+    (fasi || []).some(f => f.tipo === t)
+      ? `<span class="az-fatto">✓ ${label}</span>`
+      : `<span style="color:#aaa">${label} — non ancora</span>`).join(' · ');
+  const nPre = (fasi || []).filter(f => f.tipo === 'pre-intake').length;
+
+  return `
+    <div class="card" style="margin-bottom:18px;border-left:4px solid var(--gold)">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;flex-wrap:wrap;gap:8px">
+        <h2 style="margin:0">Specifiche di Progetto</h2>
+        <span class="badge" style="background:${valorizzato ? '#eaf5ee' : '#fdf6e3'};color:${valorizzato ? '#2f6b46' : '#8a6d1e'}">
+          ${valorizzato ? 'Valorizzato' : 'Provvisorio'}
+        </span>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:12px">
+        ${valorizzato
+          ? 'L\'Intake col Committente è registrata: da qui i numeri sono affidabili e si può redigere la bozza di contratto.'
+          : '<strong style="color:#8a6d1e">Finché l\'Intake col Committente non è registrata, questi numeri sono provvisori</strong> e non basta averli per redigere un contratto.'}
+      </div>
+
+      ${manca.length ? `<div class="flash-error" style="margin-bottom:12px">Perché i contratti escano completi manca ancora: <strong>${manca.map(esc).join(' · ')}</strong>.</div>` : ''}
+
+      <table style="width:100%">
+        <tbody>
+          ${voce('Tipologia', `<strong>${TIPI[p.tipo] || esc(p.tipo)}</strong>${collettivo ? ' <span style="color:var(--muted)">— sessioni con tutti insieme</span>' : ''}`,
+            `<a href="/dashboard/progetti" style="font-size:12px">si cambia dall'elenco progetti ↗</a>`)}
+          ${voce('Sessioni del percorso', sessioni, '<span style="font-size:12px;color:#aaa">card «Percorsi», qui sotto</span>')}
+          ${voce('Fasi col Committente', `${faseFatte}${nPre ? ` · <span style="color:var(--muted)">${nPre} Pre-Intake</span>` : ''}`,
+            '<span style="font-size:12px;color:#aaa">card «Fasi», in fondo</span>')}
+          ${voce('Partecipanti', nPart
+              ? `<strong>${nPart}</strong> — ${coachee.map(k => esc(k.name || '—')).join(' · ')}`
+              : vuoto,
+            `<button onclick="openAdd()" class="btn btn-neutral btn-sm">+ Aggiungi</button>`)}
+          ${voce('Valore del progetto', qTot != null ? `<strong>€ ${eur(qTot)}</strong>` : vuoto,
+            `<button onclick="apriPiano()" class="btn btn-neutral btn-sm">Modifica il piano</button>`)}
+          ${voce('Forma di pagamento', qTot == null || qComm == null ? vuoto
+              : (Number(qComm) >= Number(qTot)
+                  ? 'interamente a carico del Committente'
+                  : `co-finanziato — € ${eur(qComm)} il Committente, € ${eur(Number(qTot) - Number(qComm))} i partecipanti`), '')}
+          ${voce('Parametri di successo', p.parametri ? esc(String(p.parametri).slice(0, 160)) : vuoto,
+            '<span style="font-size:12px;color:#aaa">arrivano dall\'Intake</span>')}
+          ${voce('Termini', [
+              p.data_inizio ? 'inizio ' + itDate(p.data_inizio) : null,
+              p.data_meta ? 'meta ' + itDate(p.data_meta) : null,
+              p.data_fine ? 'fine ' + itDate(p.data_fine) : null,
+            ].filter(Boolean).join(' · ') || vuoto,
+            `<button onclick="apriPiano()" class="btn btn-neutral btn-sm">Modifica il piano</button>`)}
+        </tbody>
+      </table>
+
+      <div style="margin-top:12px;font-size:12px;color:var(--muted)">
+        Questa sezione per ora <strong>si legge soltanto</strong>: ogni dato si corregge dove nasce, e i pulsanti
+        qui a destra ti ci portano. Scriverci dentro è il passo successivo.
+      </div>
+    </div>`;
+}
+
 function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, seduteColl, piano, rateChieste) {
   // ⭐ C3 — l'insieme delle rate gia dentro una proforma viva: da qui esce lo
   // stato «Chiesta». Se non arriva, `statoDi` ripiega sulla colonna salvata.
@@ -7495,6 +7615,20 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
       ${p.parametri ? `<div style="margin-bottom:10px"><div class="field-label">Parametri di verifica del successo</div><div class="field-value" style="white-space:pre-wrap">${esc(p.parametri)}</div></div>` : ''}
       ${p.note ? `<div><div class="field-label">Note</div><div class="field-value" style="white-space:pre-wrap">${esc(p.note)}</div></div>` : ''}
     </div>` : ''}
+
+    ${/* ═══ SPECIFICHE DI PROGETTO — Fetta 1 (28/08/2026) ═══════════════════
+          ⭐ Il modello è di Germano: «un centro del progetto in cui le
+             informazioni vengono inserite e monitorate, e delle succursali che
+             quelle informazioni le ricevono e le utilizzano».
+          ⚠️ QUESTA È LA FETTA 1: SOLA LETTURA. Non si scrive niente da qui, non
+             c'è nessuna colonna nuova, non si tocca l'Amministrazione. Mostra
+             ciò che l'Hub SA GIÀ e, accanto a ogni voce, dove si corregge oggi.
+             Serve a far vedere a Germano cosa manca DAVVERO, invece di dedurlo
+             da una conversazione.
+          ⛔ «Un unico luogo» vuol dire UNA SOLA SCHERMATA, non una seconda copia
+             dei dati: qui non nasce nessun archivio parallelo.
+          Piano completo: iCloud/Noesys/Piattaforma/PIANO — Specifiche di Progetto.md */ ''}
+    ${specificheCard({ p, coachee, percorsi, fasi, qTot, qComm, tot4, quoteGuaste })}
 
     ${/* ═══ UNA SOLA TABELLA (12/08, secondo ripensamento) ═══════════════
           Germano, misurando: «dovrebbe potersi leggere tutta la scheda in
