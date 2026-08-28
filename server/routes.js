@@ -1204,6 +1204,109 @@ router.get('/dashboard/clients/:id/percorsi/:pid/contratto', requireCoach, async
   }
 });
 
+// ── I CONTRATTI DI UN PROGETTO ───────────────────────────────────────────
+// Legge progetto, committente e partecipazioni. Il contratto del Committente
+// sceglie da sé fra le due versioni confrontando quota_totale con
+// quota_committente: nessuno digita una percentuale.
+async function datiProgetto(progettoId) {
+  const [pq, paq] = await Promise.all([
+    db.query(`SELECT p.*, to_jsonb(c) AS committente
+                FROM progetti p JOIN committenti c ON c.id = p.committente_id
+               WHERE p.id = $1`, [progettoId]),
+    db.query(`SELECT pa.id AS part_id, pa.quota_coachee, cl.*
+                FROM partecipazioni pa JOIN clients cl ON cl.id = pa.client_id
+               WHERE pa.progetto_id = $1
+               ORDER BY cl.cognome NULLS LAST, cl.nome`, [progettoId]),
+  ]);
+  if (!pq.rows.length) return null;
+  const progetto = pq.rows[0];
+  const partecipanti = paq.rows;
+  const sommaCoachee = partecipanti.reduce((s, x) => s + (Number(x.quota_coachee) || 0), 0);
+  return { progetto, committente: progetto.committente || {}, partecipanti, sommaCoachee };
+}
+
+// 🔴 IL GUARDIANO DELLE QUOTE. Senza, si stampa al Committente un contratto che
+// dice «3.000 li mettono i partecipanti» e ai partecipanti contratti che ne
+// sommano 2.800: due documenti firmati che si contraddicono, e nessuno se ne
+// accorge finché non arriva la fattura. Il conto lo fa una funzione che
+// nell'Hub esiste già (`fiscale.quoteProgetto`): non se ne scrive una seconda.
+function quoteNonTornano(d) {
+  if (d.progetto.quota_totale == null) return 'Il valore del progetto non è ancora stato impostato.';
+  const q = fiscale.quoteProgetto({
+    quota_totale: d.progetto.quota_totale,
+    quota_committente: d.progetto.quota_committente,
+    somma_coachee: d.sommaCoachee,
+  });
+  if (q.quadra) return null;
+  return q.scarto > 0
+    ? `Le quote non tornano: mancano € ${fiscale.euro(q.scarto)} all'appello fra la quota del Committente e quelle dei partecipanti.`
+    : `Le quote non tornano: superano il valore del progetto di € ${fiscale.euro(-q.scarto)}.`;
+}
+
+router.get('/dashboard/progetti/:id/contratto', requireCoach, async (req, res) => {
+  try {
+    const d = await datiProgetto(req.params.id);
+    if (!d) return res.status(404).send('Progetto non trovato');
+    const guasto = quoteNonTornano(d);
+    if (guasto) return res.status(400).send(guasto + ' Il contratto non viene preparato: correggi il piano e riprova.');
+    const blocchi = contrattoTesti.personaGiuridica({
+      committente: d.committente, progetto: d.progetto, nPartecipanti: d.partecipanti.length,
+    });
+    const pdf = await contratto.costruisci(blocchi, { firmato: true });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'inline; filename="Contratto committente.pdf"');
+    res.send(pdf);
+  } catch (err) {
+    console.error('[contratto-committente]', err);
+    res.status(500).send('Non sono riuscito a preparare il contratto: ' + err.message);
+  }
+});
+
+// Il contratto del PARTECIPANTE: esiste solo se una quota ce l'ha. Se il
+// progetto è interamente a carico del Committente il partecipante non firma un
+// contratto, firma la liberatoria privacy (Germano, 27/08).
+router.get('/dashboard/progetti/:id/partecipanti/:partId/contratto', requireCoach, async (req, res) => {
+  try {
+    const d = await datiProgetto(req.params.id);
+    if (!d) return res.status(404).send('Progetto non trovato');
+    const pt = d.partecipanti.find(x => x.part_id === req.params.partId);
+    if (!pt) return res.status(404).send('Partecipante non trovato in questo progetto');
+    const quota = Number(pt.quota_coachee) || 0;
+    if (quota <= 0) return res.status(400).send('Questo partecipante non ha una quota a proprio carico: quello che firma è l\'informativa privacy, non un contratto.');
+    const guasto = quoteNonTornano(d);
+    if (guasto) return res.status(400).send(guasto + ' Il contratto non viene preparato: correggi il piano e riprova.');
+    const blocchi = contrattoTesti.partecipanteProgetto({
+      cliente: pt, progetto: d.progetto, committente: d.committente, quota,
+    });
+    const pdf = await contratto.costruisci(blocchi, { firmato: true });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'inline; filename="Contratto partecipante.pdf"');
+    res.send(pdf);
+  } catch (err) {
+    console.error('[contratto-partecipante]', err);
+    res.status(500).send('Non sono riuscito a preparare il contratto: ' + err.message);
+  }
+});
+
+router.get('/dashboard/progetti/:id/partecipanti/:partId/liberatoria', requireCoach, async (req, res) => {
+  try {
+    const d = await datiProgetto(req.params.id);
+    if (!d) return res.status(404).send('Progetto non trovato');
+    const pt = d.partecipanti.find(x => x.part_id === req.params.partId);
+    if (!pt) return res.status(404).send('Partecipante non trovato in questo progetto');
+    const blocchi = contrattoTesti.liberatoriaPartecipante({
+      progetto: d.progetto, committente: d.committente,
+    });
+    const pdf = await contratto.costruisci(blocchi, { firmato: true });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'inline; filename="Informativa privacy.pdf"');
+    res.send(pdf);
+  } catch (err) {
+    console.error('[liberatoria]', err);
+    res.status(500).send('Non sono riuscito a preparare l\'informativa: ' + err.message);
+  }
+});
+
 // Lancio MANUALE della lettura dei moduli (scheda anagrafica + contratto) su UN
 // cliente. L'automazione la fa già da sé alle 07/15/23: questa serve quando la
 // scheda è appena arrivata e non si vuole aspettare la passata successiva.
@@ -7249,6 +7352,19 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
   // Senza il valore del progetto non c'è niente da riepilogare: i quattro numeri
   // restano nascosti e la scheda lo dice.
   const ammQuoteSet = qTot != null && qTot > 0;
+  // 🔴 Le quote tornano? totale = quota del committente + somma dei partecipanti.
+  // Serve alla card dei contratti: finché non torna, i contratti non si preparano.
+  // Il conto lo fa `fiscale.quoteProgetto`, che nell'Hub esiste già: scriverne un
+  // secondo vorrebbe dire due risposte alla stessa domanda.
+  const quoteGuaste = (() => {
+    if (qTot == null) return 'Il valore del progetto non è ancora stato impostato.';
+    const somma = coachee.reduce((s, k) => s + (Number(k.quota_coachee) || 0), 0);
+    const q = fiscale.quoteProgetto({ quota_totale: qTot, quota_committente: qComm, somma_coachee: somma });
+    if (q.quadra) return null;
+    return q.scarto > 0
+      ? `Le quote non tornano: mancano € ${fiscale.euro(q.scarto)} all'appello.`
+      : `Le quote non tornano: superano il valore del progetto di € ${fiscale.euro(-q.scarto)}.`;
+  })();
   const eur = fiscale.euro;
 
   // ── IL PIANO DI PAGAMENTO DEL COMMITTENTE (12/08) ───────────────────────
@@ -7505,6 +7621,64 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
         }).join('')}</tbody>
       </table></div>`
       : `<div style="font-size:13px;color:var(--muted)">Nessun percorso ancora: si generano da soli quando aggiungi i clienti al progetto.</div>`}
+    </div>
+
+    ${/* ── I CONTRATTI DEL PROGETTO (28/08/2026) ────────────────────────────
+          Card NUOVA, accanto alle altre: non tocca la tabella dell'Amministrazione,
+          che è delicata (il 15/08 ogni tasto la ridisegnava e mangiava il campo in
+          cui stavi scrivendo). Qui non si scrive niente, si preme e basta.
+          ⭐ Regola di Germano (27/08): chi mette una quota firma un CONTRATTO;
+             chi non mette niente — progetto tutto a carico dell'azienda, il caso
+             più frequente — firma solo l'INFORMATIVA PRIVACY. */ ''}
+    <div class="card" style="margin-bottom:18px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+        <h2 style="margin:0">Contratti</h2>
+        <span style="font-size:12px;color:var(--muted)">si aprono in una scheda nuova · nessuno viene inviato</span>
+      </div>
+      ${quoteGuaste
+        ? `<div class="flash-error" style="margin-bottom:12px">${esc(quoteGuaste)} Finché non torna, i contratti non vengono preparati: un contratto al Committente e uno ai partecipanti che dicono cifre diverse sono due documenti firmati che si contraddicono.</div>`
+        : ''}
+      <div style="overflow-x:auto;margin:0 -4px">
+        <table style="min-width:460px">
+          <thead><tr>
+            <th style="text-align:left;font-size:12px;color:var(--muted)">Chi firma</th>
+            <th style="text-align:left;font-size:12px;color:var(--muted)">Quota a suo carico</th>
+            <th style="text-align:left;font-size:12px;color:var(--muted)">Che cosa firma</th>
+          </tr></thead>
+          <tbody>
+            <tr>
+              <td><strong>${esc(p.committente_nome || 'Committente')}</strong> <span class="badge" style="background:#eef1f5;color:#4a5568">committente</span></td>
+              <td style="white-space:nowrap">${qComm != null ? '€ ' + eur(qComm) : '<span style="color:#aaa">—</span>'}</td>
+              <td style="white-space:nowrap">${quoteGuaste
+                ? `<button class="btn btn-off btn-sm" disabled title="Prima devono tornare le quote">📄 Contratto</button>`
+                : `<a href="/dashboard/progetti/${p.id}/contratto" target="_blank" class="btn btn-primary btn-sm" style="text-decoration:none">📄 Contratto</a>`}</td>
+            </tr>
+            ${coachee.map(k => {
+              const q = k.quota_coachee != null ? Number(k.quota_coachee) : 0;
+              const paga = q > 0;
+              return `<tr>
+              <td>${esc(k.name || '—')}</td>
+              <td style="white-space:nowrap">${paga ? '€ ' + eur(Math.round(q)) : '<span style="color:#aaa">nessuna</span>'}</td>
+              ${/* ⚠️ L'informativa privacy la firmano TUTTI, anche chi paga una
+                    quota: i suoi dati li tratto io in ogni caso. Il contratto
+                    invece lo firma solo chi mette dei soldi. Al primo giro
+                    l'informativa l'avevo messa solo a chi non paga — visto
+                    premendo il pulsante, non leggendo il codice. */ ''}
+              <td style="white-space:nowrap">${paga
+                ? (quoteGuaste
+                    ? `<button class="btn btn-off btn-sm" disabled title="Prima devono tornare le quote">📄 Contratto</button>`
+                    : `<a href="/dashboard/progetti/${p.id}/partecipanti/${k.part_id}/contratto" target="_blank" class="btn btn-primary btn-sm" style="text-decoration:none">📄 Contratto</a>`) + ' '
+                : ''}<a href="/dashboard/progetti/${p.id}/partecipanti/${k.part_id}/liberatoria" target="_blank" class="btn btn-neutral btn-sm" style="text-decoration:none">📄 Informativa privacy</a></td>
+            </tr>`; }).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div style="margin-top:10px;font-size:12px;color:var(--muted)">
+        L'informativa privacy la firmano tutti i partecipanti, anche quelli che non pagano nulla: i loro dati
+        li tratti tu in ogni caso, e quel documento è dove sta scritto che al Committente vanno
+        <strong>solo date, presenze e ore</strong> — mai i contenuti delle sessioni.
+        Il contratto invece lo firma solo chi ha una quota a proprio carico.
+      </div>
     </div>
 
     ${collCard}

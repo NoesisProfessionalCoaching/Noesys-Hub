@@ -36,6 +36,77 @@ const PROFESSIONISTA = {
 // tutti, e usarla vuol dire che se un giorno cambia il formato cambia ovunque.
 const { euro } = require('./fiscale');
 
+// ═══════════════════════════════════════════════════════════════════════════
+// I PARAGRAFI CHE I CONTRATTI HANNO IN COMUNE — scritti UNA volta sola.
+// Il contratto del cliente individuale e quello del partecipante a un progetto
+// dicono le stesse cose su cos'è il coaching, su come si svolgono le sessioni,
+// sul ripensamento e sull'intelligenza artificiale. Se fossero due copie, prima
+// o poi una verrebbe corretta e l'altra no, e due clienti si troverebbero due
+// promesse diverse sulla stessa cosa.
+// ⚠️ La NUMERAZIONE degli articoli resta scritta in ciascun contratto: è
+//    l'unica cosa che cambia davvero fra i due, e nasconderla in una funzione
+//    renderebbe illeggibile il testo qui dentro.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const COSA_E_IL_COACHING = [
+  { t: 'p', x: 'Il coaching è un processo di collaborazione in cui il/la Cliente, guidato/a dal Coach, mette a fuoco i propri obiettivi e le strade per raggiungerli.' },
+  { t: 'p', x: 'Non è una terapia psicologica, una consulenza specialistica né un intervento di counseling. Il Coach non formula diagnosi e non cura disturbi: se durante il percorso emergono situazioni che richiedono un professionista sanitario, il Coach lo segnala e il percorso può essere sospeso.' },
+  { t: 'p', x: 'Il coaching è una prestazione d\'opera intellettuale: il Coach si impegna sui mezzi, non sul risultato. Le decisioni e le azioni restano del/la Cliente, che ne è l\'unico/a responsabile. Il Coach non risponde del mancato raggiungimento degli obiettivi né delle conseguenze delle scelte compiute dal/la Cliente durante o dopo il percorso.' },
+];
+
+const COME_SI_SVOLGONO = [
+  { t: 'p', x: 'Le sessioni si tengono negli orari concordati fra le parti, in videochiamata oppure di persona, secondo quanto stabilito di volta in volta. In entrambi i casi si svolgono in un luogo riservato, senza altre persone presenti se non dichiarate.' },
+  { t: 'forte', x: 'Disdette.' },
+  { t: 'p', x: 'Chi non può presentarsi avvisa l\'altra parte almeno 24 ore prima. Una sessione disdetta oltre quel termine si considera erogata.' },
+  { t: 'forte', x: 'Le sessioni non vengono registrate.' },
+  { t: 'p', x: 'Non viene creato né conservato alcun file audio o video della sessione. È una regola che discende dal Codice Etico di ICF, a cui il/la Professionista aderisce. Una registrazione può essere effettuata solo con il consenso esplicito e preventivo del/la Cliente, prestato per iscritto e per una finalità determinata — ad esempio la presentazione di una sessione ai fini delle credenziali ICF del/la Professionista. In quel caso il/la Cliente viene informato/a prima della sessione dello scopo, di chi avrà accesso alla registrazione e per quanto tempo verrà conservata, e può negare il consenso senza alcuna conseguenza sul percorso.' },
+  { t: 'forte', x: 'Resoconto della sessione.' },
+  { t: 'p', x: 'Al termine di ogni sessione il/la Professionista redige un resoconto scritto. Per prepararlo si avvale di uno strumento automatico che ascolta la sessione e ne riassume per iscritto i punti principali, senza che la sessione venga registrata. Il/la Professionista rilegge, corregge e integra quel testo, e ne risponde: il resoconto così approvato è l\'unico documento che viene conservato. Il riassunto grezzo prodotto dallo strumento viene cancellato una volta salvato il resoconto approvato.' },
+  { t: 'p', x: 'Il/la Cliente presta il proprio consenso a questo trattamento firmando l\'informativa che gli/le viene consegnata insieme al presente accordo, e può revocarlo in qualsiasi momento: da quel momento il/la Professionista prenderà appunti a mano.' },
+];
+
+const INTELLIGENZA_ARTIFICIALE = [
+  { t: 'nota', x: 'Informativa resa ai sensi dell\'art. 13 della Legge 23 settembre 2025, n. 132.' },
+  { t: 'p', x: 'Nello svolgimento della propria attività il/la Professionista si avvale di strumenti di intelligenza artificiale, con funzione di supporto organizzativo e documentale: per predisporre i resoconti delle sessioni, per ordinare e conservare le informazioni del percorso, per preparare materiali di lavoro e di restituzione al/la Cliente, e all\'interno degli strumenti digitali messi a disposizione del/la Cliente stesso/a.' },
+  { t: 'p', x: 'Qualunque sia lo strumento utilizzato — e il/la Professionista può cambiarlo o affiancarne altri nel tempo — valgono sempre queste regole:' },
+  { t: 'li', x: 'l\'intelligenza artificiale propone, il/la Professionista decide: nessun risultato viene utilizzato o consegnato al/la Cliente senza la sua revisione;' },
+  { t: 'li', x: 'la responsabilità della prestazione resta interamente del/la Professionista, che non la delega ad alcuno strumento;' },
+  { t: 'li', x: 'nessuno strumento viene impiegato per analizzare o dedurre lo stato emotivo o psicologico del/la Cliente, né per formulare valutazioni sulla sua persona;' },
+  { t: 'li', x: 'i dati del/la Cliente non vengono utilizzati per addestrare sistemi di intelligenza artificiale.' },
+  { t: 'p', x: 'Il/la Cliente può chiedere in qualsiasi momento quali strumenti il/la Professionista stia utilizzando.' },
+];
+
+// ⚠️ I 14 giorni valgono per ogni PERSONA FISICA che firma da consumatore —
+// compreso il partecipante a un progetto, anche se la maggior parte del
+// compenso la paga la sua azienda. Quello che firma lui è un contratto suo.
+function ripensamento14Giorni() {
+  return [
+    { t: 'p', x: 'Se il/la Cliente è un consumatore — cioè agisce per scopi estranei alla propria attività professionale — e questo accordo è concluso a distanza o fuori dai locali del/la Professionista, ha diritto di ripensarci entro 14 giorni dalla firma, senza doversi giustificare e senza alcuna penale (artt. 52 e seguenti del Codice del Consumo).' },
+    { t: 'p', x: `Per farlo basta comunicarlo per iscritto, anche via email a ${PROFESSIONISTA.email}, oppure usare il modulo allegato in fondo a questo accordo.` },
+    { t: 'p', x: 'Se il percorso deve cominciare prima che i 14 giorni siano trascorsi, serve una richiesta espressa del/la Cliente:' },
+    { t: 'p', x: '☐  Chiedo che il percorso cominci subito, prima della scadenza dei 14 giorni. Sono consapevole che, se poi decidessi di ripensarci, dovrò comunque il compenso per le sessioni già svolte fino a quel momento, in proporzione.' },
+    { t: 'firma', x: 'Firma per l\'avvio immediato' },
+    { t: 'nota', x: 'Senza questa richiesta firmata, le sessioni non cominciano prima del quindicesimo giorno.' },
+  ];
+}
+
+function allegatoRecesso() {
+  return [
+    { t: 'pagina' },
+    { t: 'titolo', x: 'Allegato A — Modulo di recesso' },
+    { t: 'nota', x: 'Da compilare e restituire solo se si desidera recedere entro i 14 giorni.' },
+    { t: 'vuoto', x: 8 },
+    { t: 'p', x: `Destinatario: ${PROFESSIONISTA.nome} — ${PROFESSIONISTA.email}` },
+    { t: 'vuoto', x: 6 },
+    { t: 'campo', x: 'Con la presente comunico il recesso dall\'accordo per servizi di coaching sottoscritto in data', punti: 20 },
+    { t: 'vuoto', x: 6 },
+    { t: 'campo', x: 'Nome e Cognome:' },
+    { t: 'campo', x: 'Indirizzo:' },
+    { t: 'firma', x: 'Data' },
+    { t: 'firma', x: 'Firma' },
+  ];
+}
+
 /** Il punto 4, in quattro versioni. Ne esce UNA sola per contratto. */
 function compenso(modalita, prezzo, nSessioni, prestazione) {
   const p = prezzo == null ? '……………' : '€ ' + euro(prezzo);
@@ -126,30 +197,16 @@ function personaFisica({ cliente, percorso }) {
     { t: 'p', x: 'Il/la Professionista si impegna a erogare al/la Cliente un percorso di coaching, articolato in sessioni individuali concordate fra le parti.' },
 
     { t: 'h', x: '2. Che cos\'è il coaching, e che cosa non è' },
-    { t: 'p', x: 'Il coaching è un processo di collaborazione in cui il/la Cliente, guidato/a dal Coach, mette a fuoco i propri obiettivi e le strade per raggiungerli.' },
-    { t: 'p', x: 'Non è una terapia psicologica, una consulenza specialistica né un intervento di counseling. Il Coach non formula diagnosi e non cura disturbi: se durante il percorso emergono situazioni che richiedono un professionista sanitario, il Coach lo segnala e il percorso può essere sospeso.' },
-    { t: 'p', x: 'Il coaching è una prestazione d\'opera intellettuale: il Coach si impegna sui mezzi, non sul risultato. Le decisioni e le azioni restano del/la Cliente, che ne è l\'unico/a responsabile. Il Coach non risponde del mancato raggiungimento degli obiettivi né delle conseguenze delle scelte compiute dal/la Cliente durante o dopo il percorso.' },
+    ...COSA_E_IL_COACHING,
 
     { t: 'h', x: '3. Come si svolgono le sessioni' },
-    { t: 'p', x: 'Le sessioni si tengono negli orari concordati fra le parti, in videochiamata oppure di persona, secondo quanto stabilito di volta in volta. In entrambi i casi si svolgono in un luogo riservato, senza altre persone presenti se non dichiarate.' },
-    { t: 'forte', x: 'Disdette.' },
-    { t: 'p', x: 'Chi non può presentarsi avvisa l\'altra parte almeno 24 ore prima. Una sessione disdetta oltre quel termine si considera erogata.' },
-    { t: 'forte', x: 'Le sessioni non vengono registrate.' },
-    { t: 'p', x: 'Non viene creato né conservato alcun file audio o video della sessione. È una regola che discende dal Codice Etico di ICF, a cui il/la Professionista aderisce. Una registrazione può essere effettuata solo con il consenso esplicito e preventivo del/la Cliente, prestato per iscritto e per una finalità determinata — ad esempio la presentazione di una sessione ai fini delle credenziali ICF del/la Professionista. In quel caso il/la Cliente viene informato/a prima della sessione dello scopo, di chi avrà accesso alla registrazione e per quanto tempo verrà conservata, e può negare il consenso senza alcuna conseguenza sul percorso.' },
-    { t: 'forte', x: 'Resoconto della sessione.' },
-    { t: 'p', x: 'Al termine di ogni sessione il/la Professionista redige un resoconto scritto. Per prepararlo si avvale di uno strumento automatico che ascolta la sessione e ne riassume per iscritto i punti principali, senza che la sessione venga registrata. Il/la Professionista rilegge, corregge e integra quel testo, e ne risponde: il resoconto così approvato è l\'unico documento che viene conservato. Il riassunto grezzo prodotto dallo strumento viene cancellato una volta salvato il resoconto approvato.' },
-    { t: 'p', x: 'Il/la Cliente presta il proprio consenso a questo trattamento firmando l\'informativa che gli/le viene consegnata insieme al presente accordo, e può revocarlo in qualsiasi momento: da quel momento il/la Professionista prenderà appunti a mano.' },
+    ...COME_SI_SVOLGONO,
 
     { t: 'h', x: '4. Compenso' },
     ...compenso(modalita, percorso.prezzo, percorso.n_sessioni_previste, percorso.prestazione_scambio),
 
     { t: 'h', x: '5. I primi 14 giorni: il diritto di ripensamento' },
-    { t: 'p', x: 'Se il/la Cliente è un consumatore — cioè agisce per scopi estranei alla propria attività professionale — e questo accordo è concluso a distanza o fuori dai locali del/la Professionista, ha diritto di ripensarci entro 14 giorni dalla firma, senza doversi giustificare e senza alcuna penale (artt. 52 e seguenti del Codice del Consumo).' },
-    { t: 'p', x: `Per farlo basta comunicarlo per iscritto, anche via email a ${PROFESSIONISTA.email}, oppure usare il modulo allegato in fondo a questo accordo.` },
-    { t: 'p', x: 'Se il percorso deve cominciare prima che i 14 giorni siano trascorsi, serve una richiesta espressa del/la Cliente:' },
-    { t: 'p', x: '☐  Chiedo che il percorso cominci subito, prima della scadenza dei 14 giorni. Sono consapevole che, se poi decidessi di ripensarci, dovrò comunque il compenso per le sessioni già svolte fino a quel momento, in proporzione.' },
-    { t: 'firma', x: 'Firma per l\'avvio immediato' },
-    { t: 'nota', x: 'Senza questa richiesta firmata, le sessioni non cominciano prima del quindicesimo giorno.' },
+    ...ripensamento14Giorni(),
 
     { t: 'h', x: '6. Recesso' },
     { t: 'p', x: 'Ai sensi dell\'art. 2237 c.c. entrambe le parti possono recedere in qualsiasi momento, con preavviso scritto.' },
@@ -165,14 +222,7 @@ function personaFisica({ cliente, percorso }) {
     { t: 'li', x: 'situazioni in cui emerga un pericolo grave e attuale per l\'incolumità di qualcuno.' },
 
     { t: 'h', x: '8. Strumenti di intelligenza artificiale' },
-    { t: 'nota', x: 'Informativa resa ai sensi dell\'art. 13 della Legge 23 settembre 2025, n. 132.' },
-    { t: 'p', x: 'Nello svolgimento della propria attività il/la Professionista si avvale di strumenti di intelligenza artificiale, con funzione di supporto organizzativo e documentale: per predisporre i resoconti delle sessioni, per ordinare e conservare le informazioni del percorso, per preparare materiali di lavoro e di restituzione al/la Cliente, e all\'interno degli strumenti digitali messi a disposizione del/la Cliente stesso/a.' },
-    { t: 'p', x: 'Qualunque sia lo strumento utilizzato — e il/la Professionista può cambiarlo o affiancarne altri nel tempo — valgono sempre queste regole:' },
-    { t: 'li', x: 'l\'intelligenza artificiale propone, il/la Professionista decide: nessun risultato viene utilizzato o consegnato al/la Cliente senza la sua revisione;' },
-    { t: 'li', x: 'la responsabilità della prestazione resta interamente del/la Professionista, che non la delega ad alcuno strumento;' },
-    { t: 'li', x: 'nessuno strumento viene impiegato per analizzare o dedurre lo stato emotivo o psicologico del/la Cliente, né per formulare valutazioni sulla sua persona;' },
-    { t: 'li', x: 'i dati del/la Cliente non vengono utilizzati per addestrare sistemi di intelligenza artificiale.' },
-    { t: 'p', x: 'Il/la Cliente può chiedere in qualsiasi momento quali strumenti il/la Professionista stia utilizzando.' },
+    ...INTELLIGENZA_ARTIFICIALE,
 
     { t: 'h', x: '9. Controversie e Foro competente' },
     { t: 'p', x: 'Per ogni controversia inerente il presente accordo è competente il Foro del luogo di residenza o di domicilio elettivo del/la Cliente, quando questi è un consumatore.' },
@@ -190,18 +240,7 @@ function personaFisica({ cliente, percorso }) {
     { t: 'firma', x: 'Luogo e data' },
     { t: 'firma', x: 'Firma del/la Cliente' },
 
-    { t: 'pagina' },
-    { t: 'titolo', x: 'Allegato A — Modulo di recesso' },
-    { t: 'nota', x: 'Da compilare e restituire solo se si desidera recedere entro i 14 giorni.' },
-    { t: 'vuoto', x: 8 },
-    { t: 'p', x: `Destinatario: ${PROFESSIONISTA.nome} — ${PROFESSIONISTA.email}` },
-    { t: 'vuoto', x: 6 },
-    { t: 'campo', x: 'Con la presente comunico il recesso dall\'accordo per servizi di coaching sottoscritto in data', punti: 20 },
-    { t: 'vuoto', x: 6 },
-    { t: 'campo', x: 'Nome e Cognome:' },
-    { t: 'campo', x: 'Indirizzo:' },
-    { t: 'firma', x: 'Data' },
-    { t: 'firma', x: 'Firma' },
+    ...allegatoRecesso(),
   ];
 }
 
@@ -453,7 +492,120 @@ function dataIt(d) {
   return `${g}/${m}/${a}`;
 }
 
+/**
+ * IL CONTRATTO DEL PARTECIPANTE A UN PROGETTO CO-FINANZIATO.
+ *
+ * ⭐ Regola di Germano (27/08): «nel contratto dei partecipanti a un progetto
+ *    farei esplicitamente riferimento al Progetto stesso e quindi ai suoi
+ *    contenuti e durata — sono tutte informazioni che vengono acquisite nelle
+ *    fasi antecedenti il kick off meeting».
+ * ➜ Il PERIMETRO non si ripete qui: lo definisce il progetto, e l'art. 1 ci
+ *   rimanda nominandolo. Scriverlo due volte vorrebbe dire due perimetri che
+ *   prima o poi divergono.
+ *
+ * ⚠️ Non nasce da un percorso, come quello del cliente individuale: i
+ *    partecipanti a un progetto NON hanno un percorso collegato (verificato sui
+ *    dati veri il 27/08). Nasce dalla PARTECIPAZIONE, che è dove vive la quota.
+ *
+ * ⚠️ Il partecipante è una persona fisica che firma da consumatore, anche se la
+ *    maggior parte la paga la sua azienda: i 14 giorni e il foro del consumatore
+ *    valgono per lui esattamente come per un cliente individuale.
+ */
+function partecipanteProgetto({ cliente, progetto, committente, quota }) {
+  const p = progetto || {};
+  const nomeProgetto = (p.titolo && String(p.titolo).trim()) || '……………………';
+  const nomeCommittente = (committente && committente.denominazione) || '……………………';
+  const obiettivo = (p.obiettivo_smarter && String(p.obiettivo_smarter).trim())
+    || (p.obiettivi && String(p.obiettivi).trim()) || null;
+  const dal = p.data_inizio ? dataIt(p.data_inizio) : null;
+  const al = p.data_fine ? dataIt(p.data_fine) : (p.data_meta ? dataIt(p.data_meta) : null);
+
+  // Contenuti e durata: si stampano se il progetto li ha. Se non li ha, il
+  // contratto NON inventa un perimetro — dice dove sta scritto e chi lo comunica.
+  const perimetro = [];
+  if (obiettivo) {
+    perimetro.push({ t: 'forte', x: 'Obiettivo del progetto' });
+    perimetro.push({ t: 'p', x: obiettivo });
+  }
+  if (dal) {
+    perimetro.push({ t: 'forte', x: 'Periodo' });
+    perimetro.push({ t: 'p', x: al ? `Dal ${dal} al ${al}.` : `Dal ${dal}.` });
+  }
+  if (!perimetro.length) {
+    perimetro.push({ t: 'p', x: 'Contenuti, obiettivi e durata del percorso sono quelli definiti dal progetto nelle fasi che precedono l\'incontro di avvio, e vengono comunicati al/la Cliente prima della prima sessione.' });
+  }
+
+  return [
+    { t: 'titolo', x: 'Accordo per servizi di coaching' },
+    { t: 'sottotitolo', x: 'ai sensi degli artt. 2229 e seguenti del Codice Civile e della Legge 14 gennaio 2013, n. 4' },
+    { t: 'riga' },
+    ...boxProfessionista(),
+    { t: 'vuoto', x: 8 },
+    ...boxCliente(cliente),
+    { t: 'vuoto', x: 6 },
+    { t: 'p', x: `Il/la sottoscritto/a (di seguito il/la Cliente) partecipa al progetto «${nomeProgetto}», promosso da ${nomeCommittente}, e affida a Noesys Professional Coaching, nella persona di Germano Guerriero (di seguito il/la Professionista o il Coach), il proprio percorso di coaching all'interno di quel progetto, secondo modalità conformi agli standard e al Codice Etico di ICF – International Coaching Federation.` },
+    { t: 'riga' },
+
+    { t: 'h', x: '1. Oggetto: il percorso previsto dal progetto' },
+    { t: 'p', x: `Il/la Professionista si impegna a erogare al/la Cliente il percorso di coaching individuale previsto dal progetto «${nomeProgetto}».` },
+    { t: 'p', x: 'Contenuti, obiettivi e durata del percorso sono quelli del progetto: non vengono ridefiniti in questo accordo, che ne segue il perimetro.' },
+    ...perimetro,
+
+    { t: 'h', x: '2. Che cos\'è il coaching, e che cosa non è' },
+    ...COSA_E_IL_COACHING,
+    { t: 'p', x: 'Il coaching non è uno strumento di valutazione del personale: il/la Professionista non esprime giudizi sul/la Cliente e non fornisce al Committente elementi utilizzabili a fini di valutazione, selezione o provvedimenti disciplinari.' },
+
+    { t: 'h', x: '3. Come si svolgono le sessioni' },
+    ...COME_SI_SVOLGONO,
+
+    { t: 'h', x: '4. Compenso' },
+    { t: 'p', x: `La quota a carico del/la Cliente è di € ${quota == null ? '……………' : euro(quota)} + IVA 22% per l'intero percorso previsto dal progetto.` },
+    { t: 'p', x: `La restante parte del compenso è a carico di ${nomeCommittente}, secondo l'accordo separato stipulato fra il/la Professionista e il Committente. Il/la Cliente non risponde di quella parte.` },
+    { t: 'p', x: 'Il compenso si salda entro 15 giorni dalla data della fattura, con bonifico sul conto indicato in fattura. Il compenso non è in alcun modo condizionato all\'esito del percorso.' },
+
+    { t: 'h', x: '5. I primi 14 giorni: il diritto di ripensamento' },
+    ...ripensamento14Giorni(),
+
+    { t: 'h', x: '6. Recesso' },
+    { t: 'p', x: 'Ai sensi dell\'art. 2237 c.c. entrambe le parti possono recedere in qualsiasi momento, con preavviso scritto.' },
+    { t: 'li', x: 'Se recede il/la Cliente, deve la parte di quota corrispondente alle sessioni già svolte.' },
+    { t: 'li', x: 'Se recede il/la Professionista, il/la Cliente non deve nulla per le sessioni non svolte e non ha diritto ad alcun risarcimento.' },
+    { t: 'p', x: 'La conclusione del progetto da parte del Committente non priva il/la Cliente delle sessioni già concordate e non ancora svolte, salvo diverso accordo scritto fra le parti.' },
+
+    { t: 'h', x: '7. Riservatezza: che cosa vede l\'azienda, e che cosa no' },
+    { t: 'forte', x: 'Al Committente vengono comunicati soltanto le date delle sessioni, la presenza e le ore svolte.' },
+    { t: 'p', x: 'Non vengono comunicati i contenuti delle sessioni, gli obiettivi personali del/la Cliente, ciò che dice o scrive durante il percorso, né alcuna valutazione sulla sua persona o sul suo modo di lavorare.' },
+    { t: 'p', x: 'Per il resto vale la riservatezza piena: il Coach non rivela ad alcuno quanto emerge nelle sessioni e non lo usa per fini propri, salvo:' },
+    { t: 'li', x: 'consenso scritto del/la Cliente;' },
+    { t: 'li', x: 'obblighi di legge o richieste dell\'Autorità;' },
+    { t: 'li', x: 'verifiche di ICF sull\'effettivo svolgimento delle sessioni, ai fini delle credenziali del Coach (data, durata e nominativo: mai i contenuti);' },
+    { t: 'li', x: 'situazioni in cui emerga un pericolo grave e attuale per l\'incolumità di qualcuno.' },
+
+    { t: 'h', x: '8. Strumenti di intelligenza artificiale' },
+    ...INTELLIGENZA_ARTIFICIALE,
+
+    { t: 'h', x: '9. Controversie e Foro competente' },
+    { t: 'p', x: 'Per ogni controversia inerente il presente accordo è competente il Foro del luogo di residenza o di domicilio elettivo del/la Cliente, quando questi è un consumatore.' },
+
+    { t: 'h', x: '10. Disposizioni finali' },
+    { t: 'p', x: `Il presente accordo riguarda il solo rapporto fra il/la Cliente e il/la Professionista. L'accordo fra il/la Professionista e ${nomeCommittente} è separato e non attribuisce al/la Cliente obblighi ulteriori rispetto a quelli qui indicati. Le modifiche sono valide solo se scritte e sottoscritte da entrambe le parti. Per quanto non previsto si rinvia agli artt. 2229–2238 c.c. L'informativa sul trattamento dei dati personali, consegnata insieme a questo accordo, ne è parte integrante.` },
+
+    { t: 'riga' },
+    { t: 'firma', x: 'Luogo e data' },
+    { t: 'firma', x: 'Firma del/la Cliente' },
+    { t: 'firmaProf', x: 'Firma del/la Professionista' },
+
+    { t: 'h', x: 'Approvazione specifica delle clausole' },
+    { t: 'p', x: 'Ai sensi e per gli effetti degli artt. 1341 e 1342 c.c., il/la Cliente dichiara di aver preso visione dell\'intero testo e di approvare espressamente le clausole: 2 (natura del servizio e limiti di responsabilità), 3 (svolgimento e resoconto), 4 (compenso), 5 (avvio immediato), 6 (recesso), 7 (riservatezza), 8 (intelligenza artificiale).' },
+    { t: 'firma', x: 'Luogo e data' },
+    { t: 'firma', x: 'Firma del/la Cliente' },
+
+    ...allegatoRecesso(),
+  ];
+}
+
 module.exports = {
-  personaFisica, personaGiuridica, letteraPrivacy, liberatoriaPartecipante,
+  personaFisica, personaGiuridica, partecipanteProgetto,
+  letteraPrivacy, liberatoriaPartecipante,
   compenso, PROFESSIONISTA,
 };
