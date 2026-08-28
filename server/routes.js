@@ -7208,7 +7208,10 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
     // "Sponsor". I `tipo` nel database restano quelli di prima (intake-sponsor,
     // chiusura-sponsor): cambia solo la parola che si legge.
     { tipo:'intake-sponsor',   label:'Intake con il Committente',   opt:false },
-    { tipo:'kick-off',         label:'Kick-Off',                    opt:false },
+    // Il Kick-Off è FACOLTATIVO, e si decide se farlo entro l'Intake col
+    // Committente (Germano, 28/08). Era segnato obbligatorio: l'etichetta diceva
+    // il falso su una cosa che il coach decide caso per caso.
+    { tipo:'kick-off',         label:'Kick-Off',                    opt:true  },
     { tipo:'chiusura-open',    label:'Chiusura Open',               opt:true  },
     { tipo:'chiusura-sponsor', label:'Chiusura con il Committente', opt:false },
   ];

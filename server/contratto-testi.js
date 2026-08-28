@@ -107,6 +107,29 @@ function allegatoRecesso() {
   ];
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// LA TIPOLOGIA DEL PERCORSO DI UN PROGETTO — le quattro di Germano.
+// 🔴 Nasce da un difetto trovato da lui il 28/08: i contratti di Flamingo
+//    dicevano «percorso individuale» mentre il progetto è di tipo TEAM. Il dato
+//    c'era in `progetti.tipo` fin dall'inizio: quella parola l'avevo scritta a
+//    mano invece di andarla a prendere.
+// ⚠️ Un tipo sconosciuto NON diventa «individuale» per ripiego: si ferma. Un
+//    contratto che sbaglia la natura del percorso è peggio di un contratto che
+//    non esce.
+// ═══════════════════════════════════════════════════════════════════════════
+const PERCORSI_PROGETTO = {
+  'individuale':          { agg: 'individuale', collettivo: false },
+  'individuale-multiplo': { agg: 'individuale', collettivo: false },
+  'team':                 { agg: 'di team',     collettivo: true  },
+  'group':                { agg: 'di gruppo',   collettivo: true  },
+};
+
+function tipoPercorso(tipo) {
+  const t = PERCORSI_PROGETTO[String(tipo || '').trim()];
+  if (!t) throw new Error(`Tipologia di progetto sconosciuta: «${tipo}». Le quattro previste sono individuale, individuale-multiplo, team, group.`);
+  return t;
+}
+
 /** Il punto 4, in quattro versioni. Ne esce UNA sola per contratto. */
 function compenso(modalita, prezzo, nSessioni, prestazione) {
   const p = prezzo == null ? '……………' : '€ ' + euro(prezzo);
@@ -390,6 +413,7 @@ function personaGiuridica({ committente, progetto, nPartecipanti }) {
   const v = (x) => (x && String(x).trim() ? String(x).trim() : null);
   const riga = (et, val) => (val ? { t: 'p', x: `${et} ${val}` } : { t: 'campo', x: et });
 
+  const tp = tipoPercorso(p.tipo);
   const totale = p.quota_totale == null ? null : Number(p.quota_totale);
   const dalCommittente = p.quota_committente == null ? null : Number(p.quota_committente);
   const daiPartecipanti = (totale != null && dalCommittente != null) ? totale - dalCommittente : null;
@@ -425,7 +449,9 @@ function personaGiuridica({ committente, progetto, nPartecipanti }) {
     { t: 'riga' },
 
     { t: 'h', x: '1. Oggetto' },
-    { t: 'p', x: `Il/la Professionista si impegna a erogare un percorso di coaching a ${n} partecipanti indicati dal Committente, articolato in sessioni concordate con ciascuno di essi.` },
+    { t: 'p', x: tp.collettivo
+      ? `Il/la Professionista si impegna a erogare un percorso di coaching ${tp.agg}, rivolto a ${n} partecipanti indicati dal Committente, articolato in sessioni che si svolgono con tutti i partecipanti insieme.`
+      : `Il/la Professionista si impegna a erogare un percorso di coaching ${tp.agg} a ${n} partecipanti indicati dal Committente, articolato in sessioni concordate con ciascuno di essi.` },
     { t: 'p', x: 'Il Committente comunica al/la Professionista i nominativi dei partecipanti e garantisce di averli informati della propria adesione al progetto.' },
 
     { t: 'h', x: '2. Che cos\'è il coaching, e che cosa non è' },
@@ -434,7 +460,9 @@ function personaGiuridica({ committente, progetto, nPartecipanti }) {
     { t: 'p', x: 'Il coaching è una prestazione d\'opera intellettuale: il Coach si impegna sui mezzi, non sul risultato. Le decisioni e le azioni restano dei partecipanti e del Committente, che ne sono responsabili.' },
 
     { t: 'h', x: '3. Come si svolgono le sessioni' },
-    { t: 'p', x: 'Le sessioni si tengono negli orari concordati con ciascun partecipante, in videochiamata oppure di persona. In entrambi i casi si svolgono in un luogo riservato, senza altre persone presenti se non dichiarate.' },
+    { t: 'p', x: tp.collettivo
+      ? 'Le sessioni si tengono negli orari concordati fra il/la Professionista, il Committente e i partecipanti, in videochiamata oppure di persona, e si svolgono con tutti i partecipanti insieme. In entrambi i casi si svolgono in un luogo riservato, senza altre persone presenti se non dichiarate.'
+      : 'Le sessioni si tengono negli orari concordati con ciascun partecipante, in videochiamata oppure di persona. In entrambi i casi si svolgono in un luogo riservato, senza altre persone presenti se non dichiarate.' },
     { t: 'p', x: 'Chi non può presentarsi avvisa almeno 24 ore prima. Una sessione disdetta oltre quel termine si considera erogata.' },
     { t: 'p', x: 'Le sessioni non vengono registrate: non viene creato né conservato alcun file audio o video. È una regola che discende dal Codice Etico di ICF.' },
 
@@ -513,6 +541,7 @@ function dataIt(d) {
  */
 function partecipanteProgetto({ cliente, progetto, committente, quota }) {
   const p = progetto || {};
+  const tp = tipoPercorso(p.tipo);
   const nomeProgetto = (p.titolo && String(p.titolo).trim()) || '……………………';
   const nomeCommittente = (committente && committente.denominazione) || '……………………';
   const obiettivo = (p.obiettivo_smarter && String(p.obiettivo_smarter).trim())
@@ -547,7 +576,9 @@ function partecipanteProgetto({ cliente, progetto, committente, quota }) {
     { t: 'riga' },
 
     { t: 'h', x: '1. Oggetto: il percorso previsto dal progetto' },
-    { t: 'p', x: `Il/la Professionista si impegna a erogare al/la Cliente il percorso di coaching individuale previsto dal progetto «${nomeProgetto}».` },
+    { t: 'p', x: tp.collettivo
+      ? `Il/la Professionista si impegna a erogare il percorso di coaching ${tp.agg} previsto dal progetto «${nomeProgetto}», di cui il/la Cliente è partecipante. Le sessioni si svolgono con tutti i partecipanti insieme.`
+      : `Il/la Professionista si impegna a erogare al/la Cliente il percorso di coaching ${tp.agg} previsto dal progetto «${nomeProgetto}».` },
     { t: 'p', x: 'Contenuti, obiettivi e durata del percorso sono quelli del progetto: non vengono ridefiniti in questo accordo, che ne segue il perimetro.' },
     ...perimetro,
 
@@ -575,7 +606,21 @@ function partecipanteProgetto({ cliente, progetto, committente, quota }) {
     { t: 'h', x: '7. Riservatezza: che cosa vede l\'azienda, e che cosa no' },
     { t: 'forte', x: 'Al Committente vengono comunicati soltanto le date delle sessioni, la presenza e le ore svolte.' },
     { t: 'p', x: 'Non vengono comunicati i contenuti delle sessioni, gli obiettivi personali del/la Cliente, ciò che dice o scrive durante il percorso, né alcuna valutazione sulla sua persona o sul suo modo di lavorare.' },
-    { t: 'p', x: 'Per il resto vale la riservatezza piena: il Coach non rivela ad alcuno quanto emerge nelle sessioni e non lo usa per fini propri, salvo:' },
+    // 🔴 IN UN PERCORSO COLLETTIVO LA RISERVATEZZA PIENA NON ESISTE, e prometterla
+    // sarebbe una frase falsa in un contratto: quello che uno dice in sessione lo
+    // sentono gli altri. Qui si dice il fatto e si chiede agli altri di tacere
+    // verso l'esterno.
+    // ⚠️ QUESTE PAROLE SONO MIE, NON DI GERMANO. Sono una toppa onesta messa il
+    //    28/08 per non lasciare in piedi una bugia; il testo definitivo lo decide
+    //    lui alla Fetta 5 del piano «Specifiche di Progetto» — è una regola del
+    //    suo mestiere, non del codice.
+    ...(tp.collettivo ? [
+      { t: 'forte', x: 'Le sessioni di questo percorso sono collettive.' },
+      { t: 'p', x: 'Quanto il/la Cliente condivide durante una sessione è pertanto noto agli altri partecipanti. Ciascun partecipante si impegna a non riferire all\'esterno del gruppo quanto emerge nelle sessioni, e il/la Professionista lo ricorda all\'avvio del percorso.' },
+    ] : []),
+    { t: 'p', x: tp.collettivo
+      ? 'Per quanto riguarda il/la Professionista vale la riservatezza piena: non rivela ad alcuno quanto emerge nelle sessioni e non lo usa per fini propri, salvo:'
+      : 'Per il resto vale la riservatezza piena: il Coach non rivela ad alcuno quanto emerge nelle sessioni e non lo usa per fini propri, salvo:' },
     { t: 'li', x: 'consenso scritto del/la Cliente;' },
     { t: 'li', x: 'obblighi di legge o richieste dell\'Autorità;' },
     { t: 'li', x: 'verifiche di ICF sull\'effettivo svolgimento delle sessioni, ai fini delle credenziali del Coach (data, durata e nominativo: mai i contenuti);' },
