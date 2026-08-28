@@ -3126,7 +3126,11 @@ router.post('/dashboard/progetti/:id/coachee/:partId/pagamento', requireCoach, e
 // Fase 3a — fasi del progetto. Un'unica POST fa create-o-update: senza `fid` crea una
 // nuova tappa (ritorna l'id, per i pre-intake ripetibili e per la prima volta di una
 // tappa singola); con `fid` aggiorna quella esistente. tipo accettato solo tra i 5.
-const FASI_TIPI = ['pre-intake','intake-sponsor','kick-off','chiusura-open','chiusura-sponsor'];
+// ⭐ Il sesto tipo nasce il 28/08 da una richiesta di Germano: «dovrà essere
+// prevista la possibilità di inserire ulteriori sessioni intermedie con il
+// Committente». Era l'unica delle sue sessioni che non aveva un tipo, e senza
+// un tipo la rotta la rifiutava.
+const FASI_TIPI = ['pre-intake','intake-sponsor','kick-off','sessione-committente','chiusura-open','chiusura-sponsor'];
 router.post('/dashboard/progetti/:id/fasi', requireCoach, express.json(), async (req, res) => {
   try {
     const { fid, tipo } = req.body;
@@ -7188,7 +7192,17 @@ function specificheCard({ p, coachee, percorsi, fasi, qTot, qComm, quoteGuaste }
   const individuali = (percorsi || []).filter(x => x.client_id);
   const nPart = (coachee || []).length;
 
-  const intakeComm = (fasi || []).find(f => f.tipo === 'intake-sponsor');
+  // 🔴 UNA FASE REGISTRATA NON È UNA FASE AVVENUTA. Le fasi si scrivono anche in
+  // anticipo — data futura, «fatta» non spuntato — ed è così che si pianifica.
+  // Alla prima stesura contavo la sola esistenza della riga: un Intake soltanto
+  // PREVISTO faceva passare il progetto a «Valorizzato», cioè l'Hub diceva che si
+  // poteva redigere il contratto prima ancora di aver fatto l'incontro.
+  // Non l'avevo visto perché nel progetto di prova l'Intake l'avevo registrata già
+  // spuntata come fatta: la prova non toccava mai il caso «prevista».
+  // ⚠️ Una fase in BOZZA non conta: è una proposta dell'automazione che aspetta il
+  //    coach, non un fatto.
+  const avvenuta = (f) => !!f && !!f.fatta && f.stato !== 'bozza';
+  const intakeComm = (fasi || []).find(f => f.tipo === 'intake-sponsor' && avvenuta(f));
   const valorizzato = !!intakeComm;
 
   // Che cosa manca perché i contratti si possano scrivere. Non è un elenco di
@@ -7220,11 +7234,16 @@ function specificheCard({ p, coachee, percorsi, fasi, qTot, qComm, quoteGuaste }
     ['intake-sponsor', 'Intake col Committente'],
     ['chiusura-sponsor', 'Chiusura col Committente'],
   ];
-  const faseFatte = OBBLIGATORIE.map(([t, label]) =>
-    (fasi || []).some(f => f.tipo === t)
-      ? `<span class="az-fatto">✓ ${label}</span>`
-      : `<span style="color:#aaa">${label} — non ancora</span>`).join(' · ');
-  const nPre = (fasi || []).filter(f => f.tipo === 'pre-intake').length;
+  const faseFatte = OBBLIGATORIE.map(([tp, label]) => {
+    const righe = (fasi || []).filter(f => f.tipo === tp);
+    if (righe.some(avvenuta)) return `<span class="az-fatto">✓ ${label}</span>`;
+    const prevista = righe.find(f => f.data);
+    if (prevista) return `<span style="color:#8a6d1e">${label} — prevista il ${itDate(prevista.data)}</span>`;
+    if (righe.length) return `<span style="color:#8a6d1e">${label} — prevista</span>`;
+    return `<span style="color:#aaa">${label} — non ancora</span>`;
+  }).join(' · ');
+  const nPre = (fasi || []).filter(f => f.tipo === 'pre-intake' && avvenuta(f)).length;
+  const nSessComm = (fasi || []).filter(f => f.tipo === 'sessione-committente').length;
 
   return `
     <div class="card" style="margin-bottom:18px;border-left:4px solid var(--gold)">
@@ -7247,7 +7266,7 @@ function specificheCard({ p, coachee, percorsi, fasi, qTot, qComm, quoteGuaste }
           ${voce('Tipologia', `<strong>${TIPI[p.tipo] || esc(p.tipo)}</strong>${collettivo ? ' <span style="color:var(--muted)">— sessioni con tutti insieme</span>' : ''}`,
             `<a href="/dashboard/progetti" style="font-size:12px">si cambia dall'elenco progetti ↗</a>`)}
           ${voce('Sessioni del percorso', sessioni, '<span style="font-size:12px;color:#aaa">card «Percorsi», qui sotto</span>')}
-          ${voce('Fasi col Committente', `${faseFatte}${nPre ? ` · <span style="color:var(--muted)">${nPre} Pre-Intake</span>` : ''}`,
+          ${voce('Fasi col Committente', `${faseFatte}${nPre ? ` · <span style="color:var(--muted)">${nPre} Pre-Intake</span>` : ''}${nSessComm ? ` · <span style="color:var(--muted)">${nSessComm} ${nSessComm === 1 ? 'sessione intermedia' : 'sessioni intermedie'}</span>` : ''}`,
             '<span style="font-size:12px;color:#aaa">card «Fasi», in fondo</span>')}
           ${voce('Partecipanti', nPart
               ? `<strong>${nPart}</strong> — ${coachee.map(k => esc(k.name || '—')).join(' · ')}`
@@ -7332,6 +7351,9 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
     // Committente (Germano, 28/08). Era segnato obbligatorio: l'etichetta diceva
     // il falso su una cosa che il coach decide caso per caso.
     { tipo:'kick-off',         label:'Kick-Off',                    opt:true  },
+    // Facoltativa e RIPETIBILE: se ne registrano quante ne servono, come per il
+    // Pre-Intake. Nessun vincolo nel database lo impedisce.
+    { tipo:'sessione-committente', label:'Sessione col Committente', opt:true },
     { tipo:'chiusura-open',    label:'Chiusura Open',               opt:true  },
     { tipo:'chiusura-sponsor', label:'Chiusura con il Committente', opt:false },
   ];
@@ -7356,6 +7378,13 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
       { key:'argomenti', label:'Argomenti discussi' },
       { key:'obiettivo_smarter', label:'Obiettivo di progetto (SMARTER)', proj:'obiettivo_smarter' },
       { key:'parametri', label:'Parametri di verifica del successo', proj:'parametri' },
+      { key:'next_steps', label:'Next steps' },
+      { key:'note', label:'Note' },
+    ],
+    'sessione-committente': [
+      { key:'partecipanti', label:"Partecipanti all'incontro" },
+      { key:'argomenti', label:'Argomenti discussi' },
+      { key:'decisioni', label:'Decisioni prese' },
       { key:'next_steps', label:'Next steps' },
       { key:'note', label:'Note' },
     ],
