@@ -1406,6 +1406,40 @@ router.post('/dashboard/progetti/:id/percorsi/:pid/chiudi', requireCoach, expres
   } catch (err) { console.error(err); res.status(500).json({ error: 'Errore' }); }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// QUANTE SESSIONI PREVEDE IL PERCORSO CONDIVISO — Fetta 4, punto 1 (29/08).
+//
+// 🔴 IL BUCO CHE CHIUDE. Il percorso condiviso di un progetto team/group nasce
+//    così: `INSERT INTO percorsi (id, client_id, tipo, area, progetto_id, stato)`
+//    — `n_sessioni_previste` non viene nemmeno passato, quindi prende il valore
+//    di riserva del database, che è 8. E le uniche due righe che lo scrivevano
+//    dopo stanno sotto /dashboard/clients/:id/… e finiscono con `AND client_id
+//    = $2`, che su un percorso condiviso (client_id vuoto) non è mai vera.
+//    ➜ Risultato in produzione: Flamingo dice «8 sessioni» non perché qualcuno
+//      l'abbia deciso, ma perché nessuno l'ha mai potuto scegliere.
+//    È la terza delle sette variabili di Germano, ed è il numero che alla Fetta
+//    5b finisce dentro la frase del contratto: «un percorso di N sessioni».
+//
+// ⚠️ TOCCA UN CAMPO SOLO. `n_sessioni_fatte` e `ore_fatte` non si sfiorano: li
+//    ricalcolano le sedute, e riscriverli da qui cancellerebbe ore vere. È la
+//    stessa avvertenza che sta sulla rotta gemella dei percorsi individuali.
+// ⚠️ Il filtro è quello già usato da «chiudi»: id + progetto + client_id VUOTO.
+//    Così questa rotta non può toccare per sbaglio il percorso di un cliente.
+// ═══════════════════════════════════════════════════════════════════════════
+router.post('/dashboard/progetti/:id/percorsi/:pid/previste', requireCoach, express.json(), async (req, res) => {
+  const n = Number(req.body && req.body.n_sessioni_previste);
+  if (!Number.isInteger(n) || n < 1 || n > 100) {
+    return res.status(400).json({ error: 'Il numero di sessioni previste dev\'essere un intero fra 1 e 100.' });
+  }
+  try {
+    const r = await db.query(
+      'UPDATE percorsi SET n_sessioni_previste=$3 WHERE id=$1 AND progetto_id=$2 AND client_id IS NULL',
+      [req.params.pid, req.params.id, n]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Percorso condiviso non trovato in questo progetto.' });
+    res.json({ ok: true });
+  } catch (err) { console.error('[previste]', err); res.status(500).json({ error: 'Errore' }); }
+});
+
 // Gancio per l'automazione (report → scheda). Disattivo finché AUTOMATION_SECRET
 // non è configurato: è il canale che userà il flusso automatico (Parte 2 / OAuth).
 router.post('/api/sedute', express.json(), async (req, res) => {
@@ -7269,7 +7303,14 @@ function specificheCard({ p, coachee, percorsi, fasi, qTot, qComm, quoteGuaste }
         <tbody>
           ${voce('Tipologia', `<strong>${TIPI[p.tipo] || esc(p.tipo)}</strong>${collettivo ? ' <span style="color:var(--muted)">— sessioni con tutti insieme</span>' : ''}`,
             `<a href="/dashboard/progetti" style="font-size:12px">si cambia dall'elenco progetti ↗</a>`)}
-          ${voce('Sessioni del percorso', sessioni, '<span style="font-size:12px;color:#aaa">card «Percorsi», qui sotto</span>')}
+          ${voce('Sessioni del percorso', sessioni, condiviso
+            ? `<span style="white-space:nowrap">
+                 <input id="sp-previste" type="number" min="1" max="100" step="1"
+                        value="${Number(condiviso.n_sessioni_previste) || ''}"
+                        style="width:64px;padding:4px 6px;font-size:13px;text-align:right">
+                 <button onclick="salvaPreviste()" class="btn btn-neutral btn-sm">Salva</button>
+               </span>`
+            : '<span style="font-size:12px;color:#aaa">card «Percorsi», qui sotto</span>')}
           ${voce('Fasi col Committente', `${faseFatte}${nPre ? ` · <span style="color:var(--muted)">${nPre} Pre-Intake</span>` : ''}${nSessComm ? ` · <span style="color:var(--muted)">${nSessComm} ${nSessComm === 1 ? 'sessione intermedia' : 'sessioni intermedie'}</span>` : ''}`,
             '<span style="font-size:12px;color:#aaa">card «Fasi», in fondo</span>')}
           ${voce('Partecipanti', nPart
@@ -7294,8 +7335,8 @@ function specificheCard({ p, coachee, percorsi, fasi, qTot, qComm, quoteGuaste }
       </table>
 
       <div style="margin-top:12px;font-size:12px;color:var(--muted)">
-        Questa sezione per ora <strong>si legge soltanto</strong>: ogni dato si corregge dove nasce, e i pulsanti
-        qui a destra ti ci portano. Scriverci dentro è il passo successivo.
+        Da qui si scrive quello che ha un campo o un pulsante qui a destra; il resto si corregge dove nasce,
+        e i pulsanti ti ci portano. ${condiviso ? 'Il numero di sessioni previste si cambia direttamente qui: prima non si poteva cambiare da nessuna parte.' : ''}
       </div>
     </div>`;
 }
@@ -8020,6 +8061,24 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
       if (!confirm(msg)) return;
       await fetch('/dashboard/progetti/' + PID + '/percorsi/' + COLL_PID + '/chiudi',
         { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data_fine: COLL_FINE_ISO || null }) });
+      ricaricaConservando();
+    }
+    // Fetta 4 — quante sessioni prevede il percorso condiviso. Fino al 29/08
+    // quel numero non si poteva cambiare da nessuna schermata: nasceva a 8 (il
+    // valore di riserva del database) e restava 8 per sempre.
+    async function salvaPreviste() {
+      const campo = document.getElementById('sp-previste');
+      if (!campo) return;
+      const n = parseInt(campo.value, 10);
+      if (!Number.isInteger(n) || n < 1 || n > 100) {
+        alert("Il numero di sessioni previste dev'essere un intero fra 1 e 100.");
+        campo.focus(); return;
+      }
+      const r = await fetch('/dashboard/progetti/' + PID + '/percorsi/' + COLL_PID + '/previste',
+        { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ n_sessioni_previste: n }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || d.error) { alert('Errore: ' + (d.error || r.status)); return; }
       ricaricaConservando();
     }
     async function scanCollettivo() {
