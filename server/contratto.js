@@ -196,20 +196,53 @@ async function costruisci(blocchi, opzioni = {}) {
         // ⚠️ Il tratto va SOPRA la riga, e la riga va abbassata per fargli posto.
         // Alla prima prova (27/08) avevo disegnato la firma senza aprire lo
         // spazio: finiva a cavallo della riga del Cliente, quella sopra.
+        // 🔴 CORRETTO IL 29/08 — difetto visto da Germano su TUTTI i documenti:
+        //    la firma galleggiava sopra la riga invece di appoggiarcisi.
+        //    MISURATO sul PDF renderizzato (989×1400 px), non a occhio: la riga
+        //    cadeva a 577,9 pt e l'inchiostro si fermava a 586,9 pt — nove punti
+        //    di aria. Il PNG non c'entrava: ha appena il 5% di margine
+        //    trasparente sotto l'inchiostro. Il colpevole era il punto di
+        //    appoggio: `yRiga + 2` tiene l'immagine tutta SOPRA la base del
+        //    testo, mentre la riga che si vede — il carattere «_» — cade circa
+        //    un punto SOTTO quella base.
+        // 🔴 SECONDA CORREZIONE, 29/08 — al primo tentativo avevo appoggiato
+        //    sulla riga il BORDO BASSO dell'immagine, e Germano l'ha rivista
+        //    ancora troppo in alto. Aveva ragione, e il motivo è nel disegno:
+        //    la firma ha due code lunghissime che scendono fin quasi al bordo,
+        //    mentre i corpi delle lettere finiscono molto più su. MISURATO sul
+        //    PNG (1888×824): l'inchiostro fitto si ferma alla riga 480, cioè al
+        //    58,3% dell'altezza. Portata a 44pt, la RIGA DI SCRITTURA della
+        //    firma sta 18,4pt sopra il bordo basso, e le code arrivano a 2,5pt.
+        //    ➜ Sulla riga va appoggiata la riga di scrittura, non il bordo:
+        //      allineare il bordo lascia per forza la firma a mezz'aria.
         const altFirma = firmaPng ? 44 : 0;
-        f.vuoto(10 + altFirma);
+        // Quanto l'immagine scende SOTTO la base del testo: 18,4 (la riga di
+        // scrittura) + 1,2 (di quanto il carattere «_» cade sotto la base) ≈ 22.
+        // Lo stesso valore si toglie dallo spazio aperto sopra, così il disegno
+        // resta dov'era rispetto alla pagina e a scendere è solo la riga.
+        const SOTTO = firmaPng ? 22 : 0;
+        f.vuoto(10 + altFirma - SOTTO);
         f.spazio(46 + altFirma);
         const yRiga = f.y - CORPO;
         f.scrivi(b.x + '   ' + '_'.repeat(40));
         if (firmaPng) {
           const larg = altFirma * (firmaPng.width / firmaPng.height);
           const xEtichetta = MRG.sx + font.widthOfTextAtSize(b.x + '   ', CORPO);
-          f.pagina.drawImage(firmaPng, { x: xEtichetta + 8, y: yRiga + 2, width: larg, height: altFirma });
+          f.pagina.drawImage(firmaPng, { x: xEtichetta + 8, y: yRiga + 2 - SOTTO, width: larg, height: altFirma });
         }
-        f.vuoto(8);
+        // Le code ora scendono ~17pt sotto la riga: senza questo spazio andrebbero
+        // a finire dentro il titolo del blocco successivo.
+        f.vuoto(firmaPng ? 26 : 8);
         break;
       }
       case 'riga': f.riga(); break;
+      // TIENI INSIEME — chiede `x` punti liberi: se non ci sono, gira pagina
+      // PRIMA di cominciare il blocco. Nasce il 29/08 da un rilievo di Germano:
+      // nel contratto del partecipante la pagina 5 si apriva con le sole firme,
+      // perché l'art. 10 stava sulla 4 e il resto non ci entrava più. Una pagina
+      // che comincia con una riga da firmare sembra un foglio staccato.
+      // ⚠️ Non spezza niente: se lo spazio c'è, non fa assolutamente nulla.
+      case 'tieni': f.spazio(b.x || 200); break;
       case 'vuoto': f.vuoto(b.x || 12); break;
       case 'pagina': f.nuovaPagina(); break;
       default: throw new Error('Blocco sconosciuto: ' + b.t);

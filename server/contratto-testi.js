@@ -374,23 +374,56 @@ function letteraPrivacy() {
  * 🔴 LA RIGA CHE CONTA È «g)»: al Committente non va MAI un contenuto di
  *    sessione, e mai una valutazione sulla persona. Non è una cortesia: è la
  *    riservatezza ICF del contratto e il divieto dell'AI Act sulle emozioni.
+ *
+ * ⭐ DUE VERSIONI, e l'asse è INDIVIDUALE ↔ COLLETTIVO (Germano, 29/08).
+ *    Un partecipante a un progetto `individuale`/`individuale-multiplo` ha un
+ *    percorso individuale anche se sta dentro un progetto strutturato: per lui
+ *    non cambia niente. In un `team`/`group` cambiano DUE cose insieme:
+ *      1. al Committente NON vanno solo date, presenze e ore: vanno anche i
+ *         RISULTATI del percorso — «soltanto» lì sarebbe una frase falsa;
+ *      2. il partecipante non è solo tutelato, è anche OBBLIGATO: quello che
+ *         sente dagli altri non esce dal gruppo.
+ *    ➜ Per questo la versione collettiva cambia titolo: non è più una sola
+ *      informativa, porta dentro delle regole che vincolano chi firma.
  */
 function liberatoriaPartecipante({ progetto, committente } = {}) {
+  const tp = tipoPercorso(progetto && progetto.tipo);
   const nomeProgetto = (progetto && progetto.titolo) || '……………………………………';
   const nomeCommittente = (committente && committente.denominazione) || '……………………………………';
   return [
-    ...intestazionePrivacy('Informativa e consenso al trattamento dei dati personali'),
-    { t: 'p', x: `Partecipi a un percorso di coaching all'interno del progetto «${nomeProgetto}», promosso da ${nomeCommittente}. Il percorso è a carico dell'azienda, ma il coaching lo fai con me: questa lettera ti spiega quali tuoi dati tratto, perché, per quanto tempo, e che cosa l'azienda vede e che cosa no.` },
+    ...intestazionePrivacy(tp.collettivo
+      ? 'Informativa Privacy e Regole di Riservatezza'
+      : 'Informativa e consenso al trattamento dei dati personali'),
+    { t: 'p', x: tp.collettivo
+      ? `Partecipi a un percorso di coaching ${tp.agg} all'interno del progetto «${nomeProgetto}», promosso da ${nomeCommittente}. Il percorso è a carico dell'azienda, ma il coaching lo fai con me: questa lettera ti spiega quali tuoi dati tratto, perché, per quanto tempo, che cosa l'azienda vede e che cosa no, e quali sono le regole di riservatezza che valgono per tutti i partecipanti.`
+      : `Partecipi a un percorso di coaching all'interno del progetto «${nomeProgetto}», promosso da ${nomeCommittente}. Il percorso è a carico dell'azienda, ma il coaching lo fai con me: questa lettera ti spiega quali tuoi dati tratto, perché, per quanto tempo, e che cosa l'azienda vede e che cosa no.` },
     { t: 'riga' },
     ...puntiPrivacy({ perEsteso: true }),
     { t: 'h', x: 'g) Che cosa vede l\'azienda, e che cosa no' },
-    { t: 'forte', x: `A ${nomeCommittente} comunico soltanto l'andamento formale della partecipazione: le date delle sessioni, la presenza e le ore svolte.` },
-    { t: 'p', x: 'Non comunico i contenuti delle sessioni, i tuoi obiettivi personali, quello che dici o scrivi durante il percorso, né alcuna valutazione sulla tua persona o sul tuo modo di lavorare.' },
+    ...(tp.collettivo ? [
+      { t: 'forte', x: `A ${nomeCommittente} comunico l'andamento formale della partecipazione — le date delle sessioni, la presenza e le ore svolte — e i risultati del percorso.` },
+      { t: 'p', x: 'I risultati sono presentati quale esito del lavoro del gruppo e senza riferimento ai singoli partecipanti: non le posizioni individuali, non quello che ciascuno dice o scrive, né alcuna valutazione sulla persona o sul modo di lavorare. Un maggiore livello di dettaglio richiede un accordo specifico, preventivamente approvato dai partecipanti interessati.' },
+    ] : [
+      { t: 'forte', x: `A ${nomeCommittente} comunico soltanto l'andamento formale della partecipazione: le date delle sessioni, la presenza e le ore svolte.` },
+      { t: 'p', x: 'Non comunico i contenuti delle sessioni, i tuoi obiettivi personali, quello che dici o scrivi durante il percorso, né alcuna valutazione sulla tua persona o sul tuo modo di lavorare.' },
+    ]),
     { t: 'p', x: 'Nessuno strumento — mio o automatico — viene impiegato per analizzare o dedurre il tuo stato emotivo o psicologico, e nulla del genere viene riferito a chi finanzia il percorso.' },
     { t: 'p', x: 'Gli altri destinatari sono: i collaboratori e fornitori che mi supportano (gestionale, posta elettronica, archiviazione documenti), che trattano i dati per mio conto; ICF – International Coaching Federation, per le verifiche sull\'effettivo svolgimento delle sessioni ai fini delle mie credenziali (data, durata e nominativo: mai i contenuti); l\'Autorità Giudiziaria, quando la legge lo impone.' },
     ...DIRITTI,
+    // ⚠️ QUI LA VOCE CAMBIA, ED È VOLUTO: la lettera spiega dandoti del «tu», il
+    //    riquadro vincola e parla in forma impersonale. Non è una svista di
+    //    stile: è la differenza fra ciò che ti racconto e ciò che ti impegna.
+    ...(tp.collettivo ? [
+      { t: 'riga' },
+      { t: 'h', x: 'Le regole di riservatezza del percorso' },
+      { t: 'p', x: 'Le sessioni si svolgono in forma collettiva: quanto ciascuno condivide è noto agli altri partecipanti.' },
+      { t: 'forte', x: 'Quanto emerge nelle sessioni non è divulgabile all\'esterno del gruppo, se non quale risultato del lavoro del gruppo. L\'obbligo di riservatezza grava su tutti i partecipanti e permane dopo la conclusione del percorso.' },
+      { t: 'p', x: 'Al Committente sono presentati i risultati del percorso, quale esito del lavoro del gruppo e senza riferimento ai singoli partecipanti. Un maggiore livello di dettaglio richiede accordo specifico, preventivamente approvato dai partecipanti interessati.' },
+    ] : []),
     { t: 'riga' },
-    { t: 'p', x: 'Ho letto e compreso questa informativa, e acconsento al trattamento dei miei dati nei termini qui descritti, compreso l\'uso di uno strumento automatico che ascolta la sessione per prepararne il resoconto scritto, senza che la sessione venga registrata.' },
+    { t: 'p', x: tp.collettivo
+      ? 'Ho letto e compreso questa informativa, acconsento al trattamento dei miei dati nei termini qui descritti, compreso l\'uso di uno strumento automatico che ascolta la sessione per prepararne il resoconto scritto, senza che la sessione venga registrata, e mi impegno a osservare le regole di riservatezza del percorso sopra indicate.'
+      : 'Ho letto e compreso questa informativa, e acconsento al trattamento dei miei dati nei termini qui descritti, compreso l\'uso di uno strumento automatico che ascolta la sessione per prepararne il resoconto scritto, senza che la sessione venga registrata.' },
     { t: 'campo', x: 'Nome e Cognome:' },
     { t: 'firma', x: 'Luogo e data' },
     { t: 'firma', x: 'Firma' },
@@ -467,10 +500,29 @@ function personaGiuridica({ committente, progetto, nPartecipanti }) {
     { t: 'p', x: 'Le sessioni non vengono registrate: non viene creato né conservato alcun file audio o video. È una regola che discende dal Codice Etico di ICF.' },
 
     { t: 'h', x: '4. Che cosa riceve il Committente' },
-    { t: 'forte', x: 'Il Committente riceve l\'andamento formale del progetto: le date delle sessioni, le presenze e le ore erogate.' },
-    { t: 'p', x: 'Non riceve i contenuti delle sessioni, gli obiettivi personali dei partecipanti, ciò che essi dicono o scrivono durante il percorso, né alcuna valutazione sulla loro persona o sul loro modo di lavorare.' },
+    // ⭐ LE DUE FACCE, e le separa `collettivo` (Germano, 29/08).
+    //    In un progetto individuale/individuale-multiplo non esiste un risultato
+    //    di gruppo: al Committente vanno soltanto date, presenze e ore, ed è
+    //    quello che questo articolo ha sempre detto.
+    //    In un team/group un output del gruppo esiste, e presentarlo È il
+    //    servizio: dire «soltanto date, presenze e ore» sarebbe falso, e la
+    //    stessa bugia starebbe anche nell'art. 7 del contratto del partecipante
+    //    e nel punto g) della sua informativa. Le tre frasi si muovono insieme.
+    ...(tp.collettivo ? [
+      { t: 'forte', x: 'Il Committente riceve l\'andamento formale del progetto — le date delle sessioni, le presenze e le ore erogate — e i risultati del percorso.' },
+      { t: 'p', x: 'I risultati sono presentati quale esito del lavoro del gruppo e senza riferimento ai singoli partecipanti: non le posizioni individuali, non ciò che ciascuno dice o scrive, né alcuna valutazione sulla loro persona o sul loro modo di lavorare. Un maggiore livello di dettaglio richiede accordo specifico, preventivamente approvato dai partecipanti interessati.' },
+    ] : [
+      { t: 'forte', x: 'Il Committente riceve l\'andamento formale del progetto: le date delle sessioni, le presenze e le ore erogate.' },
+      { t: 'p', x: 'Non riceve i contenuti delle sessioni, gli obiettivi personali dei partecipanti, ciò che essi dicono o scrivono durante il percorso, né alcuna valutazione sulla loro persona o sul loro modo di lavorare.' },
+      // ⚠️ QUESTA FRASE STA SOLO NEL RAMO INDIVIDUALE, e il motivo è sostanziale.
+      //    Dice che le restituzioni sono «eventuali» e «concordate»: giusto dove
+      //    il servizio sono le sessioni e una restituzione è un di più. In un
+      //    team i risultati NON sono eventuali — sono ciò che il Committente
+      //    compra — e lasciarla lì li farebbe tornare facoltativi, svuotando il
+      //    paragrafo appena scritto sopra.
+      { t: 'p', x: 'Eventuali restituzioni al Committente sull\'andamento complessivo del progetto sono concordate preventivamente e riguardano il progetto, non le singole persone.' },
+    ]),
     { t: 'p', x: 'Nessuno strumento viene impiegato per analizzare o dedurre lo stato emotivo o psicologico dei partecipanti, e nulla del genere viene riferito al Committente.' },
-    { t: 'p', x: 'Eventuali restituzioni al Committente sull\'andamento complessivo del progetto sono concordate preventivamente e riguardano il progetto, non le singole persone.' },
 
     { t: 'h', x: '5. Compenso' },
     ...compensoBlocchi,
@@ -498,6 +550,9 @@ function personaGiuridica({ committente, progetto, nPartecipanti }) {
     { t: 'h', x: '9. Controversie e Foro competente' },
     { t: 'p', x: 'Per ogni controversia inerente il presente accordo è competente in via esclusiva il Foro di Como.' },
 
+    // Stesso difetto trovato dal vivo il 29/08 sul contratto del partecipante:
+    // qui l'ultima pagina si apriva con la sola riga della firma. Vedi 'tieni'.
+    { t: 'tieni', x: 380 },
     { t: 'h', x: '10. Disposizioni finali' },
     { t: 'p', x: 'Il presente accordo sostituisce ogni intesa precedente, scritta o verbale, fra le parti in materia di coaching. Le modifiche sono valide solo se scritte e sottoscritte da entrambe le parti. Per quanto non previsto si rinvia agli artt. 2229–2238 c.c.' },
 
@@ -604,20 +659,27 @@ function partecipanteProgetto({ cliente, progetto, committente, quota }) {
     { t: 'p', x: 'La conclusione del progetto da parte del Committente non priva il/la Cliente delle sessioni già concordate e non ancora svolte, salvo diverso accordo scritto fra le parti.' },
 
     { t: 'h', x: '7. Riservatezza: che cosa vede l\'azienda, e che cosa no' },
-    { t: 'forte', x: 'Al Committente vengono comunicati soltanto le date delle sessioni, la presenza e le ore svolte.' },
-    { t: 'p', x: 'Non vengono comunicati i contenuti delle sessioni, gli obiettivi personali del/la Cliente, ciò che dice o scrive durante il percorso, né alcuna valutazione sulla sua persona o sul suo modo di lavorare.' },
     // 🔴 IN UN PERCORSO COLLETTIVO LA RISERVATEZZA PIENA NON ESISTE, e prometterla
     // sarebbe una frase falsa in un contratto: quello che uno dice in sessione lo
-    // sentono gli altri. Qui si dice il fatto e si chiede agli altri di tacere
-    // verso l'esterno.
-    // ⚠️ QUESTE PAROLE SONO MIE, NON DI GERMANO. Sono una toppa onesta messa il
-    //    28/08 per non lasciare in piedi una bugia; il testo definitivo lo decide
-    //    lui alla Fetta 5 del piano «Specifiche di Progetto» — è una regola del
-    //    suo mestiere, non del codice.
+    // sentono gli altri. E non è falsa solo quella: era falso anche il «soltanto
+    // date, presenze e ore», perché in un team al Committente i RISULTATI del
+    // percorso si presentano — è il senso stesso del team coaching.
+    // ✅ TESTO DATO DA GERMANO IL 29/08 (era una toppa mia del 28/08). Tre punti,
+    //    nelle sue parole: quanto emerge in sessione non esce dalle sessioni se
+    //    non come output del gruppo · al Committente i risultati vanno sempre
+    //    senza entrare nello specifico dei singoli, salvo accordi presi di volta
+    //    in volta e approvati dai partecipanti · l'obbligo vale anche per loro.
+    // ⚠️ Registro LEGALE, non esortativo: la prima stesura diceva al partecipante
+    //    «devi poterti esprimere liberamente» e Germano l'ha bocciata — quella è
+    //    la RAGIONE della clausola, non la clausola.
     ...(tp.collettivo ? [
-      { t: 'forte', x: 'Le sessioni di questo percorso sono collettive.' },
-      { t: 'p', x: 'Quanto il/la Cliente condivide durante una sessione è pertanto noto agli altri partecipanti. Ciascun partecipante si impegna a non riferire all\'esterno del gruppo quanto emerge nelle sessioni, e il/la Professionista lo ricorda all\'avvio del percorso.' },
-    ] : []),
+      { t: 'p', x: 'Le sessioni di questo percorso si svolgono in forma collettiva. Quanto il/la Cliente condivide durante una sessione è pertanto noto agli altri partecipanti.' },
+      { t: 'forte', x: 'Quanto emerge nelle sessioni non è divulgabile all\'esterno del gruppo, se non quale risultato del lavoro del gruppo. L\'obbligo di riservatezza grava su tutti i partecipanti e permane dopo la conclusione del percorso.' },
+      { t: 'p', x: 'Al Committente sono presentati i risultati del percorso, quale esito del lavoro del gruppo e senza riferimento ai singoli partecipanti: non le posizioni individuali, non ciò che ciascuno dice o scrive, né alcuna valutazione sulla persona o sul modo di lavorare. Un maggiore livello di dettaglio richiede accordo specifico, preventivamente approvato dai partecipanti interessati.' },
+    ] : [
+      { t: 'forte', x: 'Al Committente vengono comunicati soltanto le date delle sessioni, la presenza e le ore svolte.' },
+      { t: 'p', x: 'Non vengono comunicati i contenuti delle sessioni, gli obiettivi personali del/la Cliente, ciò che dice o scrive durante il percorso, né alcuna valutazione sulla sua persona o sul suo modo di lavorare.' },
+    ]),
     { t: 'p', x: tp.collettivo
       ? 'Per quanto riguarda il/la Professionista vale la riservatezza piena: non rivela ad alcuno quanto emerge nelle sessioni e non lo usa per fini propri, salvo:'
       : 'Per il resto vale la riservatezza piena: il Coach non rivela ad alcuno quanto emerge nelle sessioni e non lo usa per fini propri, salvo:' },
@@ -632,6 +694,9 @@ function partecipanteProgetto({ cliente, progetto, committente, quota }) {
     { t: 'h', x: '9. Controversie e Foro competente' },
     { t: 'p', x: 'Per ogni controversia inerente il presente accordo è competente il Foro del luogo di residenza o di domicilio elettivo del/la Cliente, quando questi è un consumatore.' },
 
+    // Germano, 29/08: la pagina 5 si apriva con le sole firme. L'art. 10 e tutto
+    // ciò che segue viaggiano insieme: o ci stanno, o cominciano da pagina nuova.
+    { t: 'tieni', x: 380 },
     { t: 'h', x: '10. Disposizioni finali' },
     { t: 'p', x: `Il presente accordo riguarda il solo rapporto fra il/la Cliente e il/la Professionista. L'accordo fra il/la Professionista e ${nomeCommittente} è separato e non attribuisce al/la Cliente obblighi ulteriori rispetto a quelli qui indicati. Le modifiche sono valide solo se scritte e sottoscritte da entrambe le parti. Per quanto non previsto si rinvia agli artt. 2229–2238 c.c. L'informativa sul trattamento dei dati personali, consegnata insieme a questo accordo, ne è parte integrante.` },
 

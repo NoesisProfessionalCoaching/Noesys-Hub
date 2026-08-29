@@ -1298,8 +1298,12 @@ router.get('/dashboard/progetti/:id/partecipanti/:partId/liberatoria', requireCo
       progetto: d.progetto, committente: d.committente,
     });
     const pdf = await contratto.costruisci(blocchi, { firmato: true });
+    // Il nome del file segue il documento: in un team/group non è più soltanto
+    // un'informativa privacy, porta dentro le regole di riservatezza del gruppo.
+    const collettivo = ['team', 'group'].includes(String(d.progetto.tipo || '').trim());
+    const nomeFile = collettivo ? 'Informativa Privacy e Regole di Riservatezza.pdf' : 'Informativa privacy.pdf';
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', 'inline; filename="Informativa privacy.pdf"');
+    res.setHeader('Content-Disposition', `inline; filename="${nomeFile}"`);
     res.send(pdf);
   } catch (err) {
     console.error('[liberatoria]', err);
@@ -7834,15 +7838,20 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
                 ? (quoteGuaste
                     ? `<button class="btn btn-off btn-sm" disabled title="Prima devono tornare le quote">📄 Contratto</button>`
                     : `<a href="/dashboard/progetti/${p.id}/partecipanti/${k.part_id}/contratto" target="_blank" class="btn btn-primary btn-sm" style="text-decoration:none">📄 Contratto</a>`) + ' '
-                : ''}<a href="/dashboard/progetti/${p.id}/partecipanti/${k.part_id}/liberatoria" target="_blank" class="btn btn-neutral btn-sm" style="text-decoration:none">📄 Informativa privacy</a></td>
+                : ''}<a href="/dashboard/progetti/${p.id}/partecipanti/${k.part_id}/liberatoria" target="_blank" class="btn btn-neutral btn-sm" style="text-decoration:none">📄 ${p.tipo === 'team' || p.tipo === 'group' ? 'Informativa e Regole' : 'Informativa privacy'}</a></td>
             </tr>`; }).join('')}
           </tbody>
         </table>
       </div>
       <div style="margin-top:10px;font-size:12px;color:var(--muted)">
-        L'informativa privacy la firmano tutti i partecipanti, anche quelli che non pagano nulla: i loro dati
-        li tratti tu in ogni caso, e quel documento è dove sta scritto che al Committente vanno
-        <strong>solo date, presenze e ore</strong> — mai i contenuti delle sessioni.
+        ${p.tipo === 'team' || p.tipo === 'group'
+          ? `In un percorso collettivo quel documento si chiama <strong>«Informativa Privacy e Regole di Riservatezza»</strong> e
+             lo firmano tutti i partecipanti, anche quelli che non pagano nulla. Oltre alla privacy porta dentro le regole del
+             gruppo: quello che emerge in sessione <strong>non esce dal gruppo</strong>, e al Committente vanno
+             <strong>i risultati del percorso</strong> — sempre come esito del lavoro del gruppo, mai entrando nel merito dei singoli.`
+          : `L'informativa privacy la firmano tutti i partecipanti, anche quelli che non pagano nulla: i loro dati
+             li tratti tu in ogni caso, e quel documento è dove sta scritto che al Committente vanno
+             <strong>solo date, presenze e ore</strong> — mai i contenuti delle sessioni.`}
         Il contratto invece lo firma solo chi ha una quota a proprio carico.
       </div>
     </div>
