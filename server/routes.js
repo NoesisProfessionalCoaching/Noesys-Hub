@@ -1209,7 +1209,7 @@ router.get('/dashboard/clients/:id/percorsi/:pid/contratto', requireCoach, async
 // sceglie da sé fra le due versioni confrontando quota_totale con
 // quota_committente: nessuno digita una percentuale.
 async function datiProgetto(progettoId) {
-  const [pq, paq] = await Promise.all([
+  const [pq, paq, peq] = await Promise.all([
     db.query(`SELECT p.*, to_jsonb(c) AS committente
                 FROM progetti p JOIN committenti c ON c.id = p.committente_id
                WHERE p.id = $1`, [progettoId]),
@@ -1217,12 +1217,36 @@ async function datiProgetto(progettoId) {
                 FROM partecipazioni pa JOIN clients cl ON cl.id = pa.client_id
                WHERE pa.progetto_id = $1
                ORDER BY cl.cognome NULLS LAST, cl.nome`, [progettoId]),
+    // Fetta 5b — quante sessioni prevede il percorso. Serve ai contratti, che
+    // fino al 29/08 non lo dicevano: il Committente leggeva «per un percorso
+    // rivolto a 4 partecipanti» senza sapere di quante sedute.
+    db.query(`SELECT pe.id, pe.client_id, pe.n_sessioni_previste,
+                     cl.name, cl.nome, cl.cognome
+                FROM percorsi pe LEFT JOIN clients cl ON cl.id = pe.client_id
+               WHERE pe.progetto_id = $1
+               ORDER BY cl.cognome NULLS LAST, cl.nome`, [progettoId]),
   ]);
   if (!pq.rows.length) return null;
   const progetto = pq.rows[0];
   const partecipanti = paq.rows;
+  const percorsi = peq.rows;
   const sommaCoachee = partecipanti.reduce((s, x) => s + (Number(x.quota_coachee) || 0), 0);
-  return { progetto, committente: progetto.committente || {}, partecipanti, sommaCoachee };
+
+  // ⭐ DUE FORME, e le separa la stessa cosa che separa tutto il resto: il
+  //    percorso è UNO e condiviso (team/group), oppure è UNO PER PERSONA
+  //    (individuale, individuale-multiplo). Il contratto le racconta diverse.
+  // ⚠️ `null` quando il numero non c'è: un contratto non inventa un perimetro.
+  const cond = percorsi.find(x => !x.client_id);
+  const intero = (v) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : null);
+  const sessioni = cond
+    ? { condivise: intero(cond.n_sessioni_previste) }
+    : { individuali: percorsi.filter(x => x.client_id).map(x => ({
+        client_id: x.client_id,
+        nome: (x.name || [x.nome, x.cognome].filter(Boolean).join(' ') || '').trim(),
+        n: intero(x.n_sessioni_previste),
+      })) };
+
+  return { progetto, committente: progetto.committente || {}, partecipanti, sommaCoachee, percorsi, sessioni };
 }
 
 // 🔴 IL GUARDIANO DELLE QUOTE. Senza, si stampa al Committente un contratto che
@@ -1251,6 +1275,7 @@ router.get('/dashboard/progetti/:id/contratto', requireCoach, async (req, res) =
     if (guasto) return res.status(400).send(guasto + ' Il contratto non viene preparato: correggi il piano e riprova.');
     const blocchi = contrattoTesti.personaGiuridica({
       committente: d.committente, progetto: d.progetto, nPartecipanti: d.partecipanti.length,
+      sessioni: d.sessioni,
     });
     const pdf = await contratto.costruisci(blocchi, { firmato: true });
     res.setHeader('Content-Type', 'application/pdf');
@@ -1275,8 +1300,12 @@ router.get('/dashboard/progetti/:id/partecipanti/:partId/contratto', requireCoac
     if (quota <= 0) return res.status(400).send('Questo partecipante non ha una quota a proprio carico: quello che firma è l\'informativa privacy, non un contratto.');
     const guasto = quoteNonTornano(d);
     if (guasto) return res.status(400).send(guasto + ' Il contratto non viene preparato: correggi il piano e riprova.');
+    // Quante sedute vede QUESTA persona: quelle del percorso condiviso se il
+    // progetto è di gruppo, altrimenti quelle del suo percorso individuale.
+    const suo = (d.sessioni.individuali || []).find(x => x.client_id === pt.id);
+    const nSessioni = d.sessioni.condivise != null ? d.sessioni.condivise : (suo ? suo.n : null);
     const blocchi = contrattoTesti.partecipanteProgetto({
-      cliente: pt, progetto: d.progetto, committente: d.committente, quota,
+      cliente: pt, progetto: d.progetto, committente: d.committente, quota, nSessioni,
     });
     const pdf = await contratto.costruisci(blocchi, { firmato: true });
     res.setHeader('Content-Type', 'application/pdf');

@@ -130,6 +130,43 @@ function tipoPercorso(tipo) {
   return t;
 }
 
+/**
+ * IL NUMERATORE DEGLI ARTICOLI — perché dal 29/08 un articolo può non esserci.
+ *
+ * I parametri di successo entrano nel contratto del Committente **solo se il
+ * Committente li ha definiti** (regola di Germano: «un committente può
+ * benissimo far fare un percorso senza determinare parametri di successo»).
+ * Un articolo che compare o sparisce fa scalare tutti quelli sotto — e i numeri
+ * erano scritti a mano, **anche dentro la clausola 1341/1342**, che li cita uno
+ * per uno. Due elenchi scritti a mano divergono sempre: qui sarebbe successo la
+ * prima volta che un progetto arrivava senza parametri, e il contratto avrebbe
+ * mandato ad approvare «la clausola 7» che nel frattempo era diventata la 6.
+ *
+ * ➜ `h(chiave, titolo)` registra l'articolo e restituisce il suo titolo già
+ *   numerato; `n(chiave)` restituisce il numero, per citarlo dove serve.
+ * ⚠️ Funziona perché gli elementi di un array letterale si valutano in ordine:
+ *    quando si costruisce la clausola finale, tutti gli articoli sono passati.
+ */
+function numeratore() {
+  let n = 0;
+  const num = {};
+  return {
+    h: (chiave, titolo) => { num[chiave] = ++n; return { t: 'h', x: `${n}. ${titolo}` }; },
+    n: (chiave) => num[chiave],
+  };
+}
+
+/**
+ * Un testo libero scritto dal coach (o estratto dal report dell'Intake) diventa
+ * blocchi. Le righe che cominciano con «- » diventano punti elenco: è la forma
+ * in cui l'automazione scrive i parametri di successo (vedi `claude.js`).
+ */
+function testoLibero(testo) {
+  return String(testo || '').split('\n').map(r => r.trim()).filter(Boolean).map(r => (
+    /^[-•*]\s+/.test(r) ? { t: 'li', x: r.replace(/^[-•*]\s+/, '') } : { t: 'p', x: r }
+  ));
+}
+
 /** Il punto 4, in quattro versioni. Ne esce UNA sola per contratto. */
 function compenso(modalita, prezzo, nSessioni, prestazione) {
   const p = prezzo == null ? '……………' : '€ ' + euro(prezzo);
@@ -440,7 +477,7 @@ function liberatoriaPartecipante({ progetto, committente } = {}) {
 // ⚠️ Qui NON c'è il recesso a 14 giorni e il Foro è quello del Professionista:
 //    valgono solo verso un consumatore, e un'azienda non lo è.
 // ═══════════════════════════════════════════════════════════════════════════
-function personaGiuridica({ committente, progetto, nPartecipanti }) {
+function personaGiuridica({ committente, progetto, nPartecipanti, sessioni }) {
   const c = committente || {};
   const p = progetto || {};
   const v = (x) => (x && String(x).trim() ? String(x).trim() : null);
@@ -453,14 +490,51 @@ function personaGiuridica({ committente, progetto, nPartecipanti }) {
   const cofinanziato = daiPartecipanti != null && daiPartecipanti > 0;
   const n = nPartecipanti == null ? '………' : String(nPartecipanti);
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // QUANTE SEDUTE — Fetta 5b (29/08). Fino a ieri il contratto del Committente
+  // diceva «per un percorso rivolto a 4 partecipanti» e basta: quante sedute
+  // fossero, chi firmava non lo leggeva da nessuna parte.
+  // Tre casi, e nessuno dei tre inventa un numero:
+  //  · percorso CONDIVISO (team/group) → uno solo, e si stampa;
+  //  · percorsi INDIVIDUALI tutti uguali → «N sessioni per ciascun partecipante»;
+  //  · percorsi individuali DIVERSI fra loro → si ELENCANO uno per uno.
+  //    ⭐ Regola di Germano, 29/08: «anche in questo caso i numeri delle sessioni
+  //      dovrebbero essere definiti nel contratto con il committente».
+  //      Niente media, niente «secondo i singoli accordi»: i numeri, tutti.
+  //  · numero mancante → non si scrive nulla. ⛔ Mai puntini al posto di un
+  //    perimetro: un contratto che non sa quante sedute prevede non lo dice.
+  // ═══════════════════════════════════════════════════════════════════════════
+  const A = numeratore();
+  // I parametri di successo, se il Committente li ha definiti. Vuoti = non esistono.
+  const parametri = (p.parametri && String(p.parametri).trim()) || null;
+
+  const s = sessioni || {};
+  const individuali = (s.individuali || []).filter(x => x.n != null);
+  const tutteUguali = individuali.length > 0
+    && individuali.length === (s.individuali || []).length
+    && individuali.every(x => x.n === individuali[0].n);
+  const codaSedute = s.condivise != null
+    ? `, articolato in ${s.condivise} ${s.condivise === 1 ? 'sessione' : 'sessioni'}`
+    : tutteUguali
+      ? `, articolato in ${individuali[0].n} ${individuali[0].n === 1 ? 'sessione' : 'sessioni'} per ciascun partecipante`
+      : '';
+  // L'elenco esce solo quando i numeri differiscono: se sono uguali sta già
+  // nella frase sopra, e ripeterlo sarebbe una seconda verità da tenere allineata.
+  const elencoSedute = (!tutteUguali && individuali.length)
+    ? [{ t: 'p', x: 'Le sessioni previste per ciascun partecipante sono:' },
+       ...individuali.map(x => ({ t: 'li', x: `${x.nome || '……………'} — ${x.n} ${x.n === 1 ? 'sessione' : 'sessioni'}` }))]
+    : [];
+
   const compensoBlocchi = cofinanziato
     ? [
-        { t: 'p', x: `Il compenso complessivo per l'intero progetto è di € ${euro(totale)} + IVA 22%, per un percorso rivolto a ${n} partecipanti.` },
+        { t: 'p', x: `Il compenso complessivo per l'intero progetto è di € ${euro(totale)} + IVA 22%, per un percorso rivolto a ${n} partecipanti${codaSedute}.` },
+        ...elencoSedute,
         { t: 'p', x: `Di questo importo, € ${euro(dalCommittente)} + IVA 22% sono a carico del Committente e € ${euro(daiPartecipanti)} + IVA 22% sono a carico dei partecipanti, che li corrispondono direttamente al/la Professionista secondo quanto stabilito nei rispettivi accordi individuali.` },
         { t: 'p', x: 'Il Committente risponde della sola quota a proprio carico. Il mancato pagamento della quota di un partecipante non incide sugli obblighi del Committente né su quelli degli altri partecipanti.' },
       ]
     : [
-        { t: 'p', x: `Il compenso complessivo per l'intero progetto è di € ${totale == null ? '……………' : euro(totale)} + IVA 22%, per un percorso rivolto a ${n} partecipanti, ed è interamente a carico del Committente.` },
+        { t: 'p', x: `Il compenso complessivo per l'intero progetto è di € ${totale == null ? '……………' : euro(totale)} + IVA 22%, per un percorso rivolto a ${n} partecipanti${codaSedute}, ed è interamente a carico del Committente.` },
+        ...elencoSedute,
         { t: 'p', x: 'Nessun corrispettivo è dovuto dai partecipanti.' },
       ];
 
@@ -481,25 +555,25 @@ function personaGiuridica({ committente, progetto, nPartecipanti }) {
     { t: 'p', x: `Il Committente affida a Noesys Professional Coaching, nella persona di Germano Guerriero (di seguito il/la Professionista o il Coach), un percorso di coaching rivolto ai propri collaboratori nell'ambito del progetto «${v(p.titolo) || '……………………'}», secondo modalità conformi agli standard e al Codice Etico di ICF – International Coaching Federation.` },
     { t: 'riga' },
 
-    { t: 'h', x: '1. Oggetto' },
+    A.h('oggetto', 'Oggetto'),
     { t: 'p', x: tp.collettivo
       ? `Il/la Professionista si impegna a erogare un percorso di coaching ${tp.agg}, rivolto a ${n} partecipanti indicati dal Committente, articolato in sessioni che si svolgono con tutti i partecipanti insieme.`
       : `Il/la Professionista si impegna a erogare un percorso di coaching ${tp.agg} a ${n} partecipanti indicati dal Committente, articolato in sessioni concordate con ciascuno di essi.` },
     { t: 'p', x: 'Il Committente comunica al/la Professionista i nominativi dei partecipanti e garantisce di averli informati della propria adesione al progetto.' },
 
-    { t: 'h', x: '2. Che cos\'è il coaching, e che cosa non è' },
+    A.h('natura', 'Che cos\'è il coaching, e che cosa non è'),
     { t: 'p', x: 'Il coaching è un processo di collaborazione in cui il partecipante, guidato dal Coach, mette a fuoco i propri obiettivi e le strade per raggiungerli.' },
     { t: 'p', x: 'Non è una terapia psicologica, una consulenza specialistica né un intervento di counseling. Non è uno strumento di valutazione del personale: il/la Professionista non esprime giudizi sui partecipanti e non fornisce al Committente elementi utilizzabili a fini di valutazione, selezione o provvedimenti disciplinari.' },
     { t: 'p', x: 'Il coaching è una prestazione d\'opera intellettuale: il Coach si impegna sui mezzi, non sul risultato. Le decisioni e le azioni restano dei partecipanti e del Committente, che ne sono responsabili.' },
 
-    { t: 'h', x: '3. Come si svolgono le sessioni' },
+    A.h('svolgimento', 'Come si svolgono le sessioni'),
     { t: 'p', x: tp.collettivo
       ? 'Le sessioni si tengono negli orari concordati fra il/la Professionista, il Committente e i partecipanti, in videochiamata oppure di persona, e si svolgono con tutti i partecipanti insieme. In entrambi i casi si svolgono in un luogo riservato, senza altre persone presenti se non dichiarate.'
       : 'Le sessioni si tengono negli orari concordati con ciascun partecipante, in videochiamata oppure di persona. In entrambi i casi si svolgono in un luogo riservato, senza altre persone presenti se non dichiarate.' },
     { t: 'p', x: 'Chi non può presentarsi avvisa almeno 24 ore prima. Una sessione disdetta oltre quel termine si considera erogata.' },
     { t: 'p', x: 'Le sessioni non vengono registrate: non viene creato né conservato alcun file audio o video. È una regola che discende dal Codice Etico di ICF.' },
 
-    { t: 'h', x: '4. Che cosa riceve il Committente' },
+    A.h('riceve', 'Che cosa riceve il Committente'),
     // ⭐ LE DUE FACCE, e le separa `collettivo` (Germano, 29/08).
     //    In un progetto individuale/individuale-multiplo non esiste un risultato
     //    di gruppo: al Committente vanno soltanto date, presenze e ore, ed è
@@ -524,22 +598,34 @@ function personaGiuridica({ committente, progetto, nPartecipanti }) {
     ]),
     { t: 'p', x: 'Nessuno strumento viene impiegato per analizzare o dedurre lo stato emotivo o psicologico dei partecipanti, e nulla del genere viene riferito al Committente.' },
 
-    { t: 'h', x: '5. Compenso' },
+    // ⭐ ARTICOLO CONDIZIONATO (Germano, 29/08): i parametri di successo entrano
+    //    SOLO nel contratto del Committente e SOLO se sono stati definiti — «un
+    //    committente può benissimo far fare un percorso senza determinare
+    //    parametri di successo». Se non ci sono, l'articolo non esiste: niente
+    //    puntini, e la numerazione scala da sé (vedi `numeratore`).
+    ...(parametri ? [
+      A.h('parametri', 'Come si misura il successo del progetto'),
+      { t: 'p', x: 'Il Committente e il/la Professionista hanno concordato i seguenti parametri di verifica del successo del progetto:' },
+      ...testoLibero(parametri),
+      { t: 'p', x: 'I parametri riguardano il progetto nel suo insieme e non costituiscono valutazione dei singoli partecipanti, né condizione del compenso.' },
+    ] : []),
+
+    A.h('compenso', 'Compenso'),
     ...compensoBlocchi,
     { t: 'p', x: 'Il compenso si salda entro 15 giorni dalla data della fattura, con bonifico sul conto indicato in fattura. Il compenso non è in alcun modo condizionato all\'esito del percorso.' },
 
-    { t: 'h', x: '6. Durata e recesso' },
+    A.h('durata', 'Durata e recesso'),
     { t: 'p', x: `Il progetto ha inizio il ${p.data_inizio ? dataIt(p.data_inizio) : '………………'} e si considera concluso al termine delle sessioni previste.` },
     { t: 'p', x: 'Ai sensi dell\'art. 2237 c.c. entrambe le parti possono recedere in qualsiasi momento, con preavviso scritto.' },
     { t: 'li', x: 'Se recede il Committente, deve il compenso per le sessioni già erogate e le spese sostenute.' },
     { t: 'li', x: 'Se recede il/la Professionista, il Committente non deve nulla per le sessioni non erogate e non ha diritto ad alcun risarcimento.' },
     { t: 'p', x: 'Il/la Professionista può proporre di interrompere il percorso di un singolo partecipante quando ritiene che non stia portando beneficio: in tal caso il compenso è dovuto in proporzione alle sessioni erogate.' },
 
-    { t: 'h', x: '7. Riservatezza e trattamento dei dati' },
+    A.h('riservatezza', 'Riservatezza e trattamento dei dati'),
     { t: 'p', x: 'Tutto ciò che i partecipanti condividono durante il percorso è riservato, nei termini dell\'art. 4.' },
     { t: 'p', x: 'Rispetto ai dati personali dei partecipanti il/la Professionista agisce come titolare autonomo del trattamento: consegna a ciascun partecipante la propria informativa e ne raccoglie i consensi. Il Committente si impegna a consentire ai partecipanti di ricevere e sottoscrivere tale informativa prima della prima sessione.' },
 
-    { t: 'h', x: '8. Strumenti di intelligenza artificiale' },
+    A.h('ia', 'Strumenti di intelligenza artificiale'),
     { t: 'nota', x: 'Informativa resa ai sensi dell\'art. 13 della Legge 23 settembre 2025, n. 132.' },
     { t: 'p', x: 'Il/la Professionista si avvale di strumenti di intelligenza artificiale con funzione di supporto organizzativo e documentale. Qualunque sia lo strumento utilizzato valgono sempre queste regole:' },
     { t: 'li', x: 'l\'intelligenza artificiale propone, il/la Professionista decide: nessun risultato viene utilizzato o consegnato senza la sua revisione;' },
@@ -547,13 +633,13 @@ function personaGiuridica({ committente, progetto, nPartecipanti }) {
     { t: 'li', x: 'nessuno strumento viene impiegato per analizzare o dedurre lo stato emotivo o psicologico dei partecipanti, né per formulare valutazioni sulle persone;' },
     { t: 'li', x: 'i dati non vengono utilizzati per addestrare sistemi di intelligenza artificiale.' },
 
-    { t: 'h', x: '9. Controversie e Foro competente' },
+    A.h('foro', 'Controversie e Foro competente'),
     { t: 'p', x: 'Per ogni controversia inerente il presente accordo è competente in via esclusiva il Foro di Como.' },
 
     // Stesso difetto trovato dal vivo il 29/08 sul contratto del partecipante:
     // qui l'ultima pagina si apriva con la sola riga della firma. Vedi 'tieni'.
     { t: 'tieni', x: 380 },
-    { t: 'h', x: '10. Disposizioni finali' },
+    A.h('finali', 'Disposizioni finali'),
     { t: 'p', x: 'Il presente accordo sostituisce ogni intesa precedente, scritta o verbale, fra le parti in materia di coaching. Le modifiche sono valide solo se scritte e sottoscritte da entrambe le parti. Per quanto non previsto si rinvia agli artt. 2229–2238 c.c.' },
 
     { t: 'riga' },
@@ -562,7 +648,10 @@ function personaGiuridica({ committente, progetto, nPartecipanti }) {
     { t: 'firmaProf', x: 'Il/la Professionista' },
 
     { t: 'h', x: 'Approvazione specifica delle clausole' },
-    { t: 'p', x: 'Ai sensi e per gli effetti degli artt. 1341 e 1342 c.c., il Committente dichiara di approvare espressamente le clausole: 2 (natura del servizio e limiti di responsabilità), 4 (che cosa riceve il Committente), 5 (compenso), 6 (durata e recesso), 7 (riservatezza), 9 (foro competente).' },
+    // 🔴 I NUMERI QUI DENTRO SI CHIEDONO AL NUMERATORE, non si scrivono. Prima
+    //    erano a mano, e sarebbero diventati falsi il primo giorno che un
+    //    progetto arrivava senza parametri di successo.
+    { t: 'p', x: `Ai sensi e per gli effetti degli artt. 1341 e 1342 c.c., il Committente dichiara di approvare espressamente le clausole: ${A.n('natura')} (natura del servizio e limiti di responsabilità), ${A.n('riceve')} (che cosa riceve il Committente), ${A.n('compenso')} (compenso), ${A.n('durata')} (durata e recesso), ${A.n('riservatezza')} (riservatezza), ${A.n('foro')} (foro competente).` },
     { t: 'firma', x: 'Luogo e data' },
     { t: 'firma', x: 'Per il Committente' },
   ];
@@ -590,11 +679,18 @@ function dataIt(d) {
  *    partecipanti a un progetto NON hanno un percorso collegato (verificato sui
  *    dati veri il 27/08). Nasce dalla PARTECIPAZIONE, che è dove vive la quota.
  *
+ * 🔴 CORREZIONE DEL 29/08 alla riga qui sopra: quella verifica guardava L'UNICO
+ *    progetto esistente in produzione, che è un TEAM — e da un caso solo avevo
+ *    tratto una regola generale. È vera per team e group, dove il percorso è uno
+ *    e condiviso; in un `individuale-multiplo` ogni partecipante il suo percorso
+ *    ce l'ha eccome (lo crea `autoCreaPercorsoProgetto`). ⭐ Un caso solo non fa
+ *    una regola: è la stessa trappola dei dati di collaudo.
+ *
  * ⚠️ Il partecipante è una persona fisica che firma da consumatore, anche se la
  *    maggior parte la paga la sua azienda: i 14 giorni e il foro del consumatore
  *    valgono per lui esattamente come per un cliente individuale.
  */
-function partecipanteProgetto({ cliente, progetto, committente, quota }) {
+function partecipanteProgetto({ cliente, progetto, committente, quota, nSessioni }) {
   const p = progetto || {};
   const tp = tipoPercorso(p.tipo);
   const nomeProgetto = (p.titolo && String(p.titolo).trim()) || '……………………';
@@ -645,7 +741,11 @@ function partecipanteProgetto({ cliente, progetto, committente, quota }) {
     ...COME_SI_SVOLGONO,
 
     { t: 'h', x: '4. Compenso' },
-    { t: 'p', x: `La quota a carico del/la Cliente è di € ${quota == null ? '……………' : euro(quota)} + IVA 22% per l'intero percorso previsto dal progetto.` },
+    // Fetta 5b — quante sedute. `nSessioni` è quello del percorso condiviso in un
+    // team/group, o quello del percorso individuale di QUESTA persona in un
+    // individuale-multiplo. ⛔ Se non c'è, la frase resta com'era: un contratto
+    // non mette puntini al posto di un perimetro.
+    { t: 'p', x: `La quota a carico del/la Cliente è di € ${quota == null ? '……………' : euro(quota)} + IVA 22% per l'intero percorso previsto dal progetto${nSessioni ? `, di ${nSessioni} ${nSessioni === 1 ? 'sessione' : 'sessioni'}` : ''}.` },
     { t: 'p', x: `La restante parte del compenso è a carico di ${nomeCommittente}, secondo l'accordo separato stipulato fra il/la Professionista e il Committente. Il/la Cliente non risponde di quella parte.` },
     { t: 'p', x: 'Il compenso si salda entro 15 giorni dalla data della fattura, con bonifico sul conto indicato in fattura. Il compenso non è in alcun modo condizionato all\'esito del percorso.' },
 
