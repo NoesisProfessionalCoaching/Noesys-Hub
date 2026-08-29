@@ -43,6 +43,29 @@ const INCHIOSTRO = rgb(0.13, 0.14, 0.16);
 const TENUE = rgb(0.42, 0.45, 0.49);
 const BLU = rgb(0.13, 0.23, 0.43);
 
+// ═══════════════════════════════════════════════════════════════════════════
+// LE DUE TINTE DELLE BOZZE PER IL COMMERCIALISTA (Germano, 29/08).
+// Lui le stampa in BIANCO E NERO, e vuole distinguere a colpo d'occhio ciò che
+// è uguale in tutte le versioni di un documento da ciò che cambia:
+//   · quello che è comune a tutte le versioni → GRIGIO MEDIO (si riconosce, non
+//     si rilegge la quinta volta);
+//   · quello che CAMBIA da una versione all'altra → NERO PIENO (è la roba da
+//     leggere davvero).
+// ⛔ Vale SOLO con `opzioni.evidenziaVarianti`. Un contratto vero, quello che va
+//    a un cliente, non è mai grigio: l'interruttore è spento di default e non lo
+//    accende nessuna rotta dell'Hub.
+// ⚠️ Un documento che esiste in UNA SOLA versione non si stampa in grigio: non
+//    ha varianti, quindi non c'è niente da saltare e va letto tutto. Chi lo
+//    genera semplicemente non accende l'interruttore.
+// ═══════════════════════════════════════════════════════════════════════════
+const GRIGIO       = rgb(0.50, 0.50, 0.50);
+// ⚠️ Le note piccole restano più chiare del corpo, ma non troppo: a occhio sullo
+//    schermo il 64% andava bene, STAMPATO in bianco e nero spariva — e lì dentro
+//    ci sono cose che si leggono, per esempio l'articolo di legge sotto il
+//    titolo. Misurato sulla pagina renderizzata: era 163 su 255.
+const GRIGIO_TENUE = rgb(0.58, 0.58, 0.58);
+const NERO         = rgb(0, 0, 0);
+
 // La cartella `Modelli` su Drive e il nome ESATTO della carta intestata.
 const MODELLI = '1rzsYYD_rXejGfMSlIEe_sAW_1KcrqeqG';
 const CARTA = 'Carta Intestata OK.pdf';
@@ -176,19 +199,26 @@ async function costruisci(blocchi, opzioni = {}) {
   const f = new Foglio(pdf, sfondo, font);
 
   for (const b of blocchi) {
+    // La tinta vera del blocco. Fuori dalle bozze restituisce quella prevista e
+    // non cambia niente; dentro, riporta tutto su due soli livelli.
+    const tinta = (previsto) => {
+      if (!opzioni.evidenziaVarianti) return previsto;
+      if (b.variante) return NERO;
+      return previsto === TENUE ? GRIGIO_TENUE : GRIGIO;
+    };
     switch (b.t) {
       case 'titolo':
-        f.vuoto(4); f.scrivi(b.x, { size: 17, forte: true, colore: BLU }); f.vuoto(3); break;
+        f.vuoto(4); f.scrivi(b.x, { size: 17, forte: true, colore: tinta(BLU) }); f.vuoto(3); break;
       case 'sottotitolo':
-        f.scrivi(b.x, { size: 9, colore: TENUE }); f.vuoto(10); break;
+        f.scrivi(b.x, { size: 9, colore: tinta(TENUE) }); f.vuoto(10); break;
       case 'h':
-        f.vuoto(9); f.spazio(46); f.scrivi(b.x, { size: 11.5, forte: true, colore: BLU }); f.vuoto(3); break;
-      case 'p':   f.scrivi(b.x); f.vuoto(6); break;
-      case 'forte': f.scrivi(b.x, { forte: true }); f.vuoto(6); break;
-      case 'li':  f.scrivi('•  ' + b.x, { rientro: 12 }); f.vuoto(4); break;
-      case 'campo': f.scrivi(b.x + '  ' + '.'.repeat(Math.max(4, b.punti || 46))); f.vuoto(5); break;
-      case 'nota': f.scrivi(b.x, { size: 9, colore: TENUE }); f.vuoto(6); break;
-      case 'firma': f.vuoto(10); f.scrivi(b.x + '   ' + '_'.repeat(40)); f.vuoto(8); break;
+        f.vuoto(9); f.spazio(46); f.scrivi(b.x, { size: 11.5, forte: true, colore: tinta(BLU) }); f.vuoto(3); break;
+      case 'p':   f.scrivi(b.x, { colore: tinta(INCHIOSTRO) }); f.vuoto(6); break;
+      case 'forte': f.scrivi(b.x, { forte: true, colore: tinta(INCHIOSTRO) }); f.vuoto(6); break;
+      case 'li':  f.scrivi('•  ' + b.x, { rientro: 12, colore: tinta(INCHIOSTRO) }); f.vuoto(4); break;
+      case 'campo': f.scrivi(b.x + '  ' + '.'.repeat(Math.max(4, b.punti || 46)), { colore: tinta(INCHIOSTRO) }); f.vuoto(5); break;
+      case 'nota': f.scrivi(b.x, { size: 9, colore: tinta(TENUE) }); f.vuoto(6); break;
+      case 'firma': f.vuoto(10); f.scrivi(b.x + '   ' + '_'.repeat(40), { colore: tinta(INCHIOSTRO) }); f.vuoto(8); break;
       // La riga della firma del Professionista. Se il contratto è firmato, il
       // tratto si appoggia SOPRA la riga: la riga resta visibile, com'è giusto
       // per una firma vera su un foglio.
@@ -224,7 +254,7 @@ async function costruisci(blocchi, opzioni = {}) {
         f.vuoto(10 + altFirma - SOTTO);
         f.spazio(46 + altFirma);
         const yRiga = f.y - CORPO;
-        f.scrivi(b.x + '   ' + '_'.repeat(40));
+        f.scrivi(b.x + '   ' + '_'.repeat(40), { colore: tinta(INCHIOSTRO) });
         if (firmaPng) {
           const larg = altFirma * (firmaPng.width / firmaPng.height);
           const xEtichetta = MRG.sx + font.widthOfTextAtSize(b.x + '   ', CORPO);
