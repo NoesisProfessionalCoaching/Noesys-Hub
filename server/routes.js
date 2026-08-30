@@ -1484,6 +1484,43 @@ router.post('/dashboard/contratti/stato', requireCoach, express.json(), async (r
   } catch (err) { console.error('[contratti/stato]', err); res.status(500).json({ error: 'Errore' }); }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// IL CONGELAMENTO — Fetta 6b (30/08). Parole di Germano: «la firma del contratto
+// congela tutte le caratteristiche del Progetto».
+//
+// ⭐ A congelare è SOLO il contratto del COMMITTENTE, e solo quando è
+//    «approvata» — che vuol dire firmata dalla controparte, non approvata dal
+//    coach. I contratti dei partecipanti hanno il loro stato e non bloccano
+//    niente. Nei percorsi individuali il congelamento non esiste.
+//
+// 🔒 CHE COSA SI CONGELA: quello che finisce SCRITTO nel contratto — tipologia,
+//    partecipanti, sessioni previste, valore e quote, parametri, data d'inizio,
+//    e il piano delle tranche (Germano, 30/08: «deve essere nel contratto; se non
+//    c'è è un errore» — il testo va ancora scritto, ma il dato è già suo).
+// ✅ CHE COSA NON SI CONGELA: i FATTI. Registrare una seduta avvenuta, una fase
+//    fatta, un pagamento ricevuto resta sempre possibile — quelli non cambiano
+//    l'accordo, lo raccontano.
+//
+// ⛔ IL LUCCHETTO STA QUI, NON SUI PULSANTI. Nascondere un bottone lasciando
+//    aperta la rotta non è un blocco: è un blocco per chi guarda.
+// ↩️ Si riapre con «Modifica contratto approvato», che riporta a «da inviare».
+// ═══════════════════════════════════════════════════════════════════════════
+async function progettoCongelato(progettoId) {
+  const r = await db.query(
+    "SELECT 1 FROM contratti WHERE tipo='committente' AND progetto_id=$1 AND stato='approvata'", [progettoId]);
+  return r.rows.length > 0;
+}
+
+/**
+ * Risponde 409 e restituisce true se il progetto è congelato.
+ * Chi la chiama deve fermarsi: `if (await bloccaSeCongelato(id, res)) return;`
+ */
+async function bloccaSeCongelato(progettoId, res) {
+  if (!await progettoCongelato(progettoId)) return false;
+  res.status(409).json({ error: 'Il contratto del Committente è firmato: le specifiche del progetto sono congelate. Per cambiarle usa «Modifica contratto approvato» nella card Contratti.' });
+  return true;
+}
+
 /** Gli stati dei contratti di un progetto, pronti da mettere in pagina. */
 async function statiContrattiProgetto(progettoId) {
   const r = await db.query(
@@ -1494,6 +1531,42 @@ async function statiContrattiProgetto(progettoId) {
   for (const c of r.rows) mappa.set(c.tipo + ':' + (c.progetto_id || c.partecipazione_id), c.stato);
   return mappa;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LA TIPOLOGIA DEL PROGETTO — Fetta 6b (30/08). Prima si cambiava solo
+// dall'elenco progetti, un link lontano dalla pagina dove si lavora.
+//
+// 🔒 DUE LUCCHETTI, e il secondo è più severo del primo:
+//  1. il CONGELAMENTO: contratto del Committente firmato → non si tocca più;
+//  2. le SEDUTE: se ne esiste anche una sola, la tipologia è chiusa per sempre.
+//     ⭐ Regola di Germano, 30/08: «non si può modificare da collettivo a
+//       individuale un percorso già cominciato: è un caso impossibile».
+//     Non è una cautela: cambiare tipologia cambia la STRUTTURA dei percorsi —
+//     un team ha UN percorso condiviso con dentro le sedute, un
+//     individuale-multiplo ne ha uno per persona. Lasciar passare il cambio
+//     significherebbe abbandonare le sedute su un percorso che nessuno guarda
+//     più. Le sedute sono lavoro vero: non si perdono.
+// ⚠️ Il buco esisteva GIÀ, aperto, dall'elenco progetti: questa rotta e il
+//    guardiano sulla rotta generale lo chiudono da tutte e due le parti.
+// ═══════════════════════════════════════════════════════════════════════════
+router.post('/dashboard/progetti/:id/tipo', requireCoach, express.json(), async (req, res) => {
+  const tipo = String((req.body && req.body.tipo) || '').trim();
+  if (!TIPI_PROGETTO.includes(tipo)) return res.status(400).json({ error: 'Tipologia sconosciuta.' });
+  try {
+    if (await bloccaSeCongelato(req.params.id, res)) return;
+    const pr = await db.query('SELECT tipo FROM progetti WHERE id=$1', [req.params.id]);
+    if (!pr.rows.length) return res.status(404).json({ error: 'Progetto non trovato' });
+    if (pr.rows[0].tipo === tipo) return res.json({ ok: true, invariato: true });
+    const sed = await db.query(
+      `SELECT count(*)::int AS n FROM sedute s
+         JOIN percorsi p ON p.id = s.percorso_id WHERE p.progetto_id = $1`, [req.params.id]);
+    if (sed.rows[0].n > 0) {
+      return res.status(409).json({ error: `Il percorso è già cominciato: ci sono ${sed.rows[0].n} ${sed.rows[0].n === 1 ? 'sessione registrata' : 'sessioni registrate'}. La tipologia non si cambia più — cambierebbe la struttura dei percorsi e le sessioni resterebbero senza casa.` });
+    }
+    await db.query('UPDATE progetti SET tipo=$1, updated_at=NOW() WHERE id=$2', [tipo, req.params.id]);
+    res.json({ ok: true });
+  } catch (err) { console.error('[progetti/tipo]', err); res.status(500).json({ error: 'Errore' }); }
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // QUANTE SESSIONI PREVEDE IL PERCORSO CONDIVISO — Fetta 4, punto 1 (29/08).
@@ -1521,6 +1594,7 @@ router.post('/dashboard/progetti/:id/percorsi/:pid/previste', requireCoach, expr
     return res.status(400).json({ error: 'Il numero di sessioni previste dev\'essere un intero fra 1 e 100.' });
   }
   try {
+    if (await bloccaSeCongelato(req.params.id, res)) return;
     const r = await db.query(
       'UPDATE percorsi SET n_sessioni_previste=$3 WHERE id=$1 AND progetto_id=$2 AND client_id IS NULL',
       [req.params.pid, req.params.id, n]);
@@ -2217,6 +2291,7 @@ router.get('/dashboard/proforma/:id/pdf', requireCoach, async (req, res) => {
 // vorrebbe dire lasciare il piano in stati che non tornano.
 router.post('/dashboard/progetti/:id/piano', requireCoach, express.json(), async (req, res) => {
   try {
+    if (await bloccaSeCongelato(req.params.id, res)) return;
     const b = req.body || {};
     const pr = await db.query('SELECT id, quota_committente FROM progetti WHERE id = $1', [req.params.id]);
     if (!pr.rows.length) return res.status(404).json({ error: 'Progetto non trovato' });
@@ -2366,6 +2441,8 @@ router.post('/dashboard/percorsi/:id/piano', requireCoach, express.json(), async
 // soltanto **in quante volte** si paga.
 router.post('/dashboard/partecipazioni/:id/piano', requireCoach, express.json(), async (req, res) => {
   try {
+    const suoProg = await db.query('SELECT progetto_id FROM partecipazioni WHERE id=$1', [req.params.id]);
+    if (suoProg.rows.length && await bloccaSeCongelato(suoProg.rows[0].progetto_id, res)) return;
     const pa = await db.query(
       'SELECT id, progetto_id, quota_coachee FROM partecipazioni WHERE id = $1', [req.params.id]);
     if (!pa.rows.length) return res.status(404).json({ error: 'Partecipazione non trovata' });
@@ -2973,6 +3050,8 @@ router.post('/dashboard/progetti/:id/percorsi/:pid/drive-folders', requireCoach,
 });
 
 router.post('/dashboard/progetti/:id', requireCoach, express.json(), async (req, res) => {
+  // ⚠️ Questa rotta scrive tipologia e data d'inizio, che stanno nel contratto.
+  if (await bloccaSeCongelato(req.params.id, res)) return;
   const { committente_id, titolo, area, tipo, stato, obiettivi, note, data_inizio,
           referente_modo, referente_nome, referente_ruolo, referente_email } = req.body;
   if (!committente_id) return res.status(400).json({ error: 'Committente obbligatorio' });
@@ -3132,6 +3211,7 @@ async function autoCreaPercorsoProgetto(progettoId, clientId, area, tipo) {
 // il cliente nuovo nasce col suo token/link piattaforma, drive_url resta vuoto.
 router.post('/dashboard/progetti/:id/coachee', requireCoach, express.json(), async (req, res) => {
   try {
+    if (await bloccaSeCongelato(req.params.id, res)) return;
     const pr = await db.query('SELECT area, tipo FROM progetti WHERE id=$1', [req.params.id]);
     if (!pr.rows.length) return res.status(404).json({ error: 'Progetto non trovato' });
     const pArea = pr.rows[0].area || 'Business';
@@ -3190,6 +3270,7 @@ router.post('/dashboard/progetti/:id/coachee', requireCoach, express.json(), asy
 // eliminerà di proposito dalla sua scheda.
 router.delete('/dashboard/progetti/:id/coachee/:partId', requireCoach, async (req, res) => {
   try {
+    if (await bloccaSeCongelato(req.params.id, res)) return;
     const pr = await db.query('SELECT client_id FROM partecipazioni WHERE id=$1 AND progetto_id=$2', [req.params.partId, req.params.id]);
     if (!pr.rows.length) return res.json({ ok: true }); // già rimosso
     const clientId = pr.rows[0].client_id;
@@ -3236,6 +3317,7 @@ router.post('/dashboard/progetti/:id/quota', requireCoach, express.json(), async
   if (totale !== null && committente !== null && committente > totale)
     return res.status(400).json({ error: 'Il committente non puo pagare piu della quota totale' });
   try {
+    if (await bloccaSeCongelato(req.params.id, res)) return;
     await db.query(
       `UPDATE progetti SET quota_totale=$1, quota_committente=$2, updated_at=NOW() WHERE id=$3`,
       [totale, committente, req.params.id]
@@ -3276,6 +3358,7 @@ router.post('/dashboard/progetti/:id/quote-coachee', requireCoach, express.json(
   };
   for (const q of quote) if (Number.isNaN(num(q.quota))) return res.status(400).json({ error: 'Importi non validi' });
   try {
+    if (await bloccaSeCongelato(req.params.id, res)) return;
     for (const q of quote) {
       await db.query(
         `UPDATE partecipazioni SET quota_coachee=$1 WHERE id=$2 AND progetto_id=$3`,
@@ -3345,6 +3428,14 @@ router.post('/dashboard/progetti/:id/fasi', requireCoach, express.json(), async 
         );
       }
       // Obiettivo SMARTER + Parametri (voci dell'Intake) = verità del PROGETTO, una sola.
+      // 🔒 Congelati col contratto (finiscono nell'art. «Come si misura il successo»),
+      //    ma SOLO loro: registrare una fase avvenuta resta sempre possibile, anche a
+      //    contratto firmato. Un fatto non è una modifica dell'accordo, lo racconta —
+      //    e la Chiusura col Committente avviene per forza DOPO la firma.
+      if ((req.body.obiettivo !== undefined || req.body.parametri !== undefined)
+          && await progettoCongelato(req.params.id)) {
+        return res.status(409).json({ error: 'Il contratto del Committente è firmato: obiettivo e parametri del progetto sono congelati. Per cambiarli usa «Modifica contratto approvato».' });
+      }
       if (req.body.obiettivo !== undefined || req.body.parametri !== undefined) {
         await db.query(
           'UPDATE progetti SET obiettivo_smarter=$1, parametri=$2, updated_at=NOW() WHERE id=$3',
@@ -7502,7 +7593,7 @@ function progettiPage(progetti, committenti, req) {
  * definitivo dopo la firma — e il terzo gradino arriva con la Fetta 6, perché
  * oggi l'Hub non sa se un contratto è stato firmato.
  */
-function specificheCard({ p, coachee, percorsi, fasi, qTot, qComm, quoteGuaste }) {
+function specificheCard({ p, coachee, percorsi, fasi, qTot, qComm, quoteGuaste, congelato, nSedute }) {
   // ⚠️ `eur` qui NON esiste: è un aiuto locale di progettoDettaglioPage, e questa
   // funzione sta fuori. Alla prima prova la pagina rispondeva «Errore» proprio per
   // questo — e `npm run prova` non l'ha visto, perché controlla il JS che gira nel
@@ -7584,13 +7675,33 @@ function specificheCard({ p, coachee, percorsi, fasi, qTot, qComm, quoteGuaste }
           : '<strong style="color:#8a6d1e">Finché l\'Intake col Committente non è registrata, questi numeri sono provvisori</strong> e non basta averli per redigere un contratto.'}
       </div>
 
-      ${manca.length ? `<div class="flash-error" style="margin-bottom:12px">Perché i contratti escano completi manca ancora: <strong>${manca.map(esc).join(' · ')}</strong>.</div>` : ''}
+      ${congelato ? `<div style="margin-bottom:14px;padding:11px 13px;border-radius:8px;background:#eaf5ee;border-left:3px solid #4F8B73">
+        <strong style="color:#2f6b46">🔒 Specifiche congelate.</strong>
+        <span style="font-size:13px;color:#2f6b46">Il contratto del Committente è firmato, quindi tipologia, partecipanti, sessioni, valore, quote, parametri e piano dei pagamenti non si cambiano più — sono quello che il Committente ha sottoscritto.</span>
+        <div style="font-size:12px;color:var(--muted);margin-top:6px">Per riaprirle: <strong>«Modifica contratto approvato»</strong> nella card Contratti, qui sotto. Riporta il contratto a «da inviare», perché andrà rifatto e rimandato.</div>
+      </div>` : ''}
+      ${manca.length && !congelato ? `<div class="flash-error" style="margin-bottom:12px">Perché i contratti escano completi manca ancora: <strong>${manca.map(esc).join(' · ')}</strong>.</div>` : ''}
 
       <table style="width:100%">
         <tbody>
+          ${/* Fetta 6b — la tipologia si cambia da qui, con due lucchetti: il
+                contratto firmato e — più severo — le sedute già registrate.
+                Regola di Germano: «non si può modificare da collettivo a
+                individuale un percorso già cominciato». */ ''}
           ${voce('Tipologia', `<strong>${TIPI[p.tipo] || esc(p.tipo)}</strong>${collettivo ? ' <span style="color:var(--muted)">— sessioni con tutti insieme</span>' : ''}`,
-            `<a href="/dashboard/progetti" style="font-size:12px">si cambia dall'elenco progetti ↗</a>`)}
-          ${voce('Sessioni del percorso', sessioni, condiviso
+            congelato
+              ? '<span style="font-size:12px;color:#2f6b46">🔒 congelata dal contratto</span>'
+              : nSedute
+                ? `<span style="font-size:12px;color:var(--muted)" title="Cambiare tipologia cambia la struttura dei percorsi, e le sessioni resterebbero senza casa">🔒 il percorso è cominciato</span>`
+                : `<span style="white-space:nowrap">
+                     <select id="sp-tipo" style="padding:4px 6px;font-size:13px">
+                       ${Object.entries(TIPI).map(([k, et]) => `<option value="${k}"${k === p.tipo ? ' selected' : ''}>${et}</option>`).join('')}
+                     </select>
+                     <button onclick="salvaTipo()" class="btn btn-neutral btn-sm">Salva</button>
+                   </span>`)}
+          ${voce('Sessioni del percorso', sessioni, congelato
+            ? '<span style="font-size:12px;color:#2f6b46">🔒 congelate dal contratto</span>'
+            : condiviso
             ? `<span style="white-space:nowrap">
                  <input id="sp-previste" type="number" min="1" max="100" step="1"
                         value="${Number(condiviso.n_sessioni_previste) || ''}"
@@ -7603,9 +7714,11 @@ function specificheCard({ p, coachee, percorsi, fasi, qTot, qComm, quoteGuaste }
           ${voce('Partecipanti', nPart
               ? `<strong>${nPart}</strong> — ${coachee.map(k => esc(k.name || '—')).join(' · ')}`
               : vuoto,
-            `<button onclick="openAdd()" class="btn btn-neutral btn-sm">+ Aggiungi</button>`)}
+            congelato ? '<span style="font-size:12px;color:#2f6b46">🔒 congelati dal contratto</span>'
+                      : `<button onclick="openAdd()" class="btn btn-neutral btn-sm">+ Aggiungi</button>`)}
           ${voce('Valore del progetto', qTot != null ? `<strong>€ ${eur(qTot)}</strong>` : vuoto,
-            `<button onclick="apriPiano()" class="btn btn-neutral btn-sm">Modifica il piano</button>`)}
+            congelato ? '<span style="font-size:12px;color:#2f6b46">🔒 congelato dal contratto</span>'
+                      : `<button onclick="apriPiano()" class="btn btn-neutral btn-sm">Modifica il piano</button>`)}
           ${voce('Forma di pagamento', qTot == null || qComm == null ? vuoto
               : (Number(qComm) >= Number(qTot)
                   ? 'interamente a carico del Committente'
@@ -7617,7 +7730,8 @@ function specificheCard({ p, coachee, percorsi, fasi, qTot, qComm, quoteGuaste }
               p.data_meta ? 'meta ' + itDate(p.data_meta) : null,
               p.data_fine ? 'fine ' + itDate(p.data_fine) : null,
             ].filter(Boolean).join(' · ') || vuoto,
-            `<button onclick="apriPiano()" class="btn btn-neutral btn-sm">Modifica il piano</button>`)}
+            congelato ? '<span style="font-size:12px;color:#2f6b46">🔒 congelati dal contratto</span>'
+                      : `<button onclick="apriPiano()" class="btn btn-neutral btn-sm">Modifica il piano</button>`)}
         </tbody>
       </table>
 
@@ -8005,7 +8119,9 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
           ⛔ «Un unico luogo» vuol dire UNA SOLA SCHERMATA, non una seconda copia
              dei dati: qui non nasce nessun archivio parallelo.
           Piano completo: iCloud/Noesys/Piattaforma/PIANO — Specifiche di Progetto.md */ ''}
-    ${specificheCard({ p, coachee, percorsi, fasi, qTot, qComm, tot4, quoteGuaste })}
+    ${specificheCard({ p, coachee, percorsi, fasi, qTot, qComm, tot4, quoteGuaste,
+       congelato: statoContr('committente', p.id) === 'approvata',
+       nSedute: (seduteColl || []).length })}
 
     ${/* ═══ UNA SOLA TABELLA (12/08, secondo ripensamento) ═══════════════
           Germano, misurando: «dovrebbe potersi leggere tutta la scheda in
@@ -8393,6 +8509,19 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
         body: JSON.stringify({ tipo: tipo, soggetto_id: soggetto, stato: stato }) });
       const d = await r.json().catch(() => ({}));
       if (!r.ok || d.error) { alert('Errore: ' + (d.error || r.status)); return; }
+      ricaricaConservando();
+    }
+    // Fetta 6b — la tipologia. Si fa confermare perché cambia la natura del
+    // percorso e quindi le clausole dei contratti che ne escono.
+    async function salvaTipo() {
+      const sel = document.getElementById('sp-tipo');
+      if (!sel) return;
+      if (!confirm('Cambiare la tipologia cambia le clausole dei contratti: riservatezza, che cosa riceve il Committente e come si svolgono le sessioni.\\n\\nProcedo?')) return;
+      const r = await fetch('/dashboard/progetti/' + PID + '/tipo', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tipo: sel.value }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || d.error) { alert(d.error || ('Errore: ' + r.status)); return; }
       ricaricaConservando();
     }
     async function salvaPreviste() {

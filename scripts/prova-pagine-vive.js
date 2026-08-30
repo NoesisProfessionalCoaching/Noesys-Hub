@@ -201,7 +201,77 @@ const chiama = async (metodo, url, corpo) => {
       await db.query('DELETE FROM progetti WHERE id=$1', [g.dati.id]);
     }
 
-    console.log('\n11. 🔬 Adesso la rompo apposta');
+    // ── Fetta 6b — il congelamento ───────────────────────────────────────────
+    console.log('\n11. La tipologia si cambia dalla card, finché si può');
+    r = await chiama('GET', `/dashboard/progetti/${idProg}`);
+    dice(r.testo.includes('id="sp-tipo"'), 'la tendina della tipologia è nella card');
+    r = await chiama('POST', `/dashboard/progetti/${idProg}/tipo`, { tipo: 'group' });
+    dice(r.stato === 200, 'si cambia in «group»', r.stato + ' ' + r.testo.slice(0, 90));
+    let tp = await db.query('SELECT tipo FROM progetti WHERE id=$1', [idProg]);
+    dice(tp.rows[0].tipo === 'group', 'e nel database è cambiata');
+    r = await chiama('POST', `/dashboard/progetti/${idProg}/tipo`, { tipo: 'quadrupla' });
+    dice(r.stato === 400, '🔬 rifiuta una tipologia inventata', 'ha risposto ' + r.stato);
+
+    console.log('\n12. 🔒 Con una seduta registrata la tipologia si chiude');
+    const sed = await db.query(
+      `INSERT INTO sedute (id, percorso_id, tipo, data, ore, stato)
+       VALUES (gen_random_uuid(), $1, 'Ongoing', CURRENT_DATE, 1, 'confermata') RETURNING id`, [idPerc]);
+    r = await chiama('POST', `/dashboard/progetti/${idProg}/tipo`, { tipo: 'team' });
+    dice(r.stato === 409, 'un percorso cominciato non cambia tipologia', 'ha risposto ' + r.stato);
+    dice((r.dati && r.dati.error || '').includes('già cominciato'), 'e lo dice con parole comprensibili');
+    tp = await db.query('SELECT tipo FROM progetti WHERE id=$1', [idProg]);
+    dice(tp.rows[0].tipo === 'group', 'la tipologia è rimasta quella di prima');
+    r = await chiama('GET', `/dashboard/progetti/${idProg}`);
+    dice(!r.testo.includes('id="sp-tipo"'), 'e la tendina sparisce dalla card');
+    await db.query('DELETE FROM sedute WHERE id=$1', [sed.rows[0].id]);
+
+    console.log('\n13. 🔒 Col contratto del Committente firmato si congela TUTTO');
+    await chiama('POST', '/dashboard/contratti/stato', { tipo: 'committente', soggetto_id: idProg, stato: 'approvata' });
+    r = await chiama('GET', `/dashboard/progetti/${idProg}`);
+    dice(r.stato === 200, 'la pagina si apre lo stesso', r.stato);
+    dice(r.testo.includes('Specifiche congelate'), 'e dice a chiare lettere che è congelato');
+    dice(!r.testo.includes('id="sp-previste"') && !r.testo.includes('id="sp-tipo"'),
+      'i campi non ci sono più');
+    // ⛔ IL PUNTO VERO: il lucchetto sta sulle ROTTE, non sui pulsanti. Chi arriva
+    //    da un'altra strada deve trovare la porta chiusa lo stesso.
+    for (const [m, url, corpo, et] of [
+      ['POST', `/dashboard/progetti/${idProg}/tipo`, { tipo: 'team' }, 'la tipologia'],
+      ['POST', `/dashboard/progetti/${idProg}/percorsi/${idPerc}/previste`, { n_sessioni_previste: 20 }, 'le sessioni previste'],
+      ['POST', `/dashboard/progetti/${idProg}/quota`, { quota_totale: 9999 }, 'il valore del progetto'],
+      ['POST', `/dashboard/progetti/${idProg}/coachee`, { clientId: idCli }, 'l\'aggiunta di un partecipante'],
+      ['POST', `/dashboard/progetti/${idProg}`, { committente_id: idComm, titolo: marca, tipo: 'team', stato: 'attivo' }, 'la rotta generale del progetto'],
+    ]) {
+      r = await chiama(m, url, corpo);
+      dice(r.stato === 409, `🔬 la ROTTA rifiuta ${et}`, 'ha risposto ' + r.stato);
+    }
+    const dopo = await db.query('SELECT tipo, quota_totale FROM progetti WHERE id=$1', [idProg]);
+    dice(dopo.rows[0].tipo === 'group' && Number(dopo.rows[0].quota_totale || 0) !== 9999,
+      'e dopo cinque tentativi il progetto è intatto');
+    // I PARAMETRI si scrivono solo MODIFICANDO una fase esistente, non creandola:
+    // per provare il lucchetto giusto bisogna passare da lì. (Alla prima stesura
+    // chiamavo la creazione e la prova falliva accusando il codice a torto.)
+    const fase = await db.query(
+      `INSERT INTO fasi_progetto (id, progetto_id, tipo, fatta, stato, origine)
+       VALUES (gen_random_uuid(), $1, 'intake-sponsor', TRUE, 'confermata', 'manuale') RETURNING id`, [idProg]);
+    await db.query("UPDATE progetti SET parametri='quelli buoni' WHERE id=$1", [idProg]);
+    r = await chiama('POST', `/dashboard/progetti/${idProg}/fasi`,
+      { fid: fase.rows[0].id, tipo: 'intake-sponsor', parametri: 'quelli cambiati di nascosto' });
+    dice(r.stato === 409, '🔬 la ROTTA rifiuta i parametri di successo', 'ha risposto ' + r.stato);
+    const par = await db.query('SELECT parametri FROM progetti WHERE id=$1', [idProg]);
+    dice(par.rows[0].parametri === 'quelli buoni', 'e i parametri veri sono intatti');
+    await db.query('DELETE FROM fasi_progetto WHERE id=$1', [fase.rows[0].id]);
+    // ✅ ma i FATTI si registrano ancora: una fase avvenuta non è una modifica
+    r = await chiama('POST', `/dashboard/progetti/${idProg}/fasi`, { tipo: 'chiusura-sponsor' });
+    dice(r.stato === 200, '✅ ma registrare una FASE avvenuta si può ancora', 'ha risposto ' + r.stato);
+
+    console.log('\n14. ↩️ «Modifica contratto approvato» riapre tutto');
+    await chiama('POST', '/dashboard/contratti/stato', { tipo: 'committente', soggetto_id: idProg, stato: 'da_inviare' });
+    r = await chiama('POST', `/dashboard/progetti/${idProg}/percorsi/${idPerc}/previste`, { n_sessioni_previste: 20 });
+    dice(r.stato === 200, 'le sessioni previste si cambiano di nuovo', 'ha risposto ' + r.stato);
+    r = await chiama('GET', `/dashboard/progetti/${idProg}`);
+    dice(!r.testo.includes('Specifiche congelate'), 'e il cartello del congelamento è sparito');
+
+    console.log('\n15. 🔬 Adesso la rompo apposta');
     for (const [corpo, et] of [
       [{ tipo: 'boh',         soggetto_id: idProg, stato: 'da_inviare' }, 'un tipo inventato'],
       [{ tipo: 'committente', soggetto_id: idProg, stato: 'firmata'    }, 'uno stato che non esiste più'],
@@ -220,7 +290,7 @@ const chiama = async (metodo, url, corpo) => {
   } catch (e) {
     ko++; console.log('\n🔴 ECCEZIONE: ' + e.message + '\n' + e.stack.split('\n')[1]);
   } finally {
-    console.log('\n12. Pulizia (solo le righe create da questa prova)');
+    console.log('\n16. Pulizia (solo le righe create da questa prova)');
     try {
       if (idProg) { await db.query('DELETE FROM contratti WHERE progetto_id=$1 OR partecipazione_id IN (SELECT id FROM partecipazioni WHERE progetto_id=$1)', [idProg]);
                     await db.query('DELETE FROM percorso_partecipanti WHERE percorso_id IN (SELECT id FROM percorsi WHERE progetto_id=$1)', [idProg]);
