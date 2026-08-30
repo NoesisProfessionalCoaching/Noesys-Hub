@@ -4346,8 +4346,8 @@ function renderSedutaRow(s) {
  * ⚠️ L'intestazione (anagrafica del cliente, testata del progetto) NON si piega:
  *    è quella che dice dove sei.
  */
-const sezionePieghevole = (titolo, corpo, aperta, azioni) => `
-  <div class="card">
+const sezionePieghevole = (titolo, corpo, aperta, azioni, id) => `
+  <div class="card"${id ? ` id="${id}"` : ''}>
     <details class="sec"${aperta ? ' open' : ''}>
       <summary style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;cursor:pointer">
         <span style="display:flex;align-items:center;gap:8px"><span class="sec-caret">▸</span>${titolo}</span>
@@ -8210,7 +8210,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
           da altre pagine. E i due pulsanti stanno nel <summary>, quindi fermano il
           clic: senza, premerli chiuderebbe la sezione invece di aprire la
           finestrella. */ ''}
-    <div id="amm">${sezione(
+    ${sezione(
     `<h2 style="margin:0">Amministrazione
               <span style="font-size:12px;font-weight:400;color:#aaa;margin-left:10px">
                 Valore del progetto: <strong style="color:var(--ink)">${qTot != null ? '€ ' + eur(qTot) : '—'}</strong>
@@ -8258,7 +8258,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
     // già per i pacchetti — non se ne inventa una seconda.
     !pianoSalvato.length || (tot4.daChiedere || 0) > 0 || (tot4.chiesto || 0) > 0,
     `<button onclick="event.stopPropagation(); apriPiano()" class="btn btn-primary btn-sm">Modifica il piano</button>
-     <button onclick="event.stopPropagation(); openAdd()" class="btn btn-neutral btn-sm">+ Aggiungi cliente</button>`)}</div>
+     <button onclick="event.stopPropagation(); openAdd()" class="btn btn-neutral btn-sm">+ Aggiungi cliente</button>`, 'amm')}
 
     ${/* ── LA FINESTRELLA DEL PIANO ────────────────────────────────────────
           Un posto solo dove si imposta tutto: valore del progetto, quota di

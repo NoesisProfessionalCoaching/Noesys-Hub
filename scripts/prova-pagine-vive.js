@@ -315,6 +315,13 @@ const chiama = async (metodo, url, corpo) => {
     dice(distratti.length === 0,
       'ogni pulsante nelle intestazioni ferma il clic (altrimenti chiuderebbe la sezione)',
       distratti.join(' · '));
+    // ⚠️ L'Amministrazione dev'essere una card come le altre. Convertendola avevo
+    //    lasciato un <div id="amm"> intorno, e quel contenitore prendeva
+    //    `padding:14px 18px` da una regola generale: la sezione risultava 36px più
+    //    stretta delle altre e rientrata. Visto da Germano, misurato nel browser.
+    dice(/<div class="card" id="amm">/.test(r.testo),
+      'l\'Amministrazione è una card come le altre, senza contenitori in più');
+    dice(!/<div id="amm">/.test(r.testo), 'e non c\'è nessun involucro rimasto in giro');
 
     console.log('\n17. 🔬 Adesso la rompo apposta');
     for (const [corpo, et] of [
