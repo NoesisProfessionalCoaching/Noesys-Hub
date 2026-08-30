@@ -9,6 +9,7 @@ const scan = require('./scan');
 const scanModuli = require('./scan-moduli');
 const contratto = require('./contratto');            // l'impaginatore: disegna le pagine
 const contrattoTesti = require('./contratto-testi');  // le parole del contratto
+const contrattiStato = require('./contratti-stato'); // gli stati della bozza
 const documenti = require('./documenti');
 const mailer = require('./mailer');
 const moduli = require('./moduli');
@@ -1434,6 +1435,58 @@ router.post('/dashboard/progetti/:id/percorsi/:pid/chiudi', requireCoach, expres
     res.json({ ok: true });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Errore' }); }
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MUOVERE LO STATO DI UNA BOZZA DI CONTRATTO — Fetta 6a (30/08).
+// Una rotta sola per tutti e tre i tipi: cliente individuale, Committente,
+// partecipante. Le parole degli stati e le transizioni stanno in
+// `contratti-stato.js`, che è l'unico posto dove sono scritte.
+//
+// 🔴 «DA REDIGERE» È L'ASSENZA DELLA RIGA: la riga nasce al primo passo avanti.
+// ⚠️ Il SOGGETTO si controlla che esista davvero prima di scrivere: senza,
+//    bastava un identificativo inventato per creare stati di contratti che non
+//    esistono, e quelli sarebbero poi comparsi nell'elenco di Amministrazione.
+// ⚠️ Tornando a «da inviare» le due date si AZZERANO: il documento sta per
+//    cambiare, quindi «inviato il 3 settembre» diventerebbe una data falsa
+//    riferita a un foglio che nessuno ha più.
+// ═══════════════════════════════════════════════════════════════════════════
+router.post('/dashboard/contratti/stato', requireCoach, express.json(), async (req, res) => {
+  const { tipo, soggetto_id: soggetto, stato } = req.body || {};
+  const t = contrattiStato.TIPI[tipo];
+  if (!t) return res.status(400).json({ error: 'Tipo di contratto sconosciuto.' });
+  if (!contrattiStato.valido(stato)) return res.status(400).json({ error: 'Stato di contratto sconosciuto.' });
+  if (!soggetto) return res.status(400).json({ error: 'Manca il soggetto del contratto.' });
+  // Da quale tabella arriva il soggetto: è la stessa che la colonna referenzia.
+  const TABELLA = { percorso_id: 'percorsi', progetto_id: 'progetti', partecipazione_id: 'partecipazioni' };
+  try {
+    const c = await db.query(`SELECT 1 FROM ${TABELLA[t.colonna]} WHERE id=$1`, [soggetto]);
+    if (!c.rows.length) return res.status(404).json({ error: 'Il soggetto di questo contratto non esiste.' });
+
+    const invio = stato === 'in_attesa' ? 'CURRENT_DATE' : (stato === 'da_inviare' ? 'NULL' : 'data_invio');
+    const appr  = stato === 'approvata' ? 'CURRENT_DATE' : (stato === 'da_inviare' ? 'NULL' : 'data_approvazione');
+    const agg = await db.query(
+      `UPDATE contratti SET stato=$1, data_invio=${invio}, data_approvazione=${appr}, updated_at=NOW()
+        WHERE tipo=$2 AND ${t.colonna}=$3`, [stato, tipo, soggetto]);
+    if (!agg.rowCount) {
+      await db.query(
+        `INSERT INTO contratti (id, tipo, ${t.colonna}, stato, data_invio, data_approvazione)
+         VALUES ($1,$2,$3,$4,${stato === 'in_attesa' ? 'CURRENT_DATE' : 'NULL'},${stato === 'approvata' ? 'CURRENT_DATE' : 'NULL'})`,
+        [uuidv4(), tipo, soggetto, stato]);
+    }
+    res.json({ ok: true, stato });
+  } catch (err) { console.error('[contratti/stato]', err); res.status(500).json({ error: 'Errore' }); }
+});
+
+/** Gli stati dei contratti di un progetto, pronti da mettere in pagina. */
+async function statiContrattiProgetto(progettoId) {
+  const r = await db.query(
+    `SELECT tipo, progetto_id, partecipazione_id, stato FROM contratti
+      WHERE progetto_id=$1
+         OR partecipazione_id IN (SELECT id FROM partecipazioni WHERE progetto_id=$1)`, [progettoId]);
+  const mappa = new Map();
+  for (const c of r.rows) mappa.set(c.tipo + ':' + (c.progetto_id || c.partecipazione_id), c.stato);
+  return mappa;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // QUANTE SESSIONI PREVEDE IL PERCORSO CONDIVISO — Fetta 4, punto 1 (29/08).
@@ -2910,7 +2963,13 @@ router.get('/dashboard/progetti/:id', requireCoach, async (req, res) => {
     if (!pr.rows.length) return res.status(404).send('Progetto non trovato');
     const coachee = await db.query(`
       SELECT pa.id AS part_id, cl.id AS client_id, cl.name, cl.email, cl.token,
-             pa.quota_coachee, pa.stato_pag_coachee, pa.data_pag_coachee
+             pa.quota_coachee, pa.stato_pag_coachee, pa.data_pag_coachee,
+             ${/* Fetta 6a — la firma dell'INFORMATIVA non è un contratto e non ha
+                   stati: si spunta in anagrafica (`consenso_privacy`), e da lì la
+                   leggiamo. Correzione di Germano del 30/08: avevo scritto che chi
+                   non paga «non firma niente», e non è vero — firma l'informativa,
+                   e quella spunta esiste già. ⛔ Non farne una seconda. */ ''}
+             cl.consenso_privacy, cl.consenso_data
       FROM partecipazioni pa JOIN clients cl ON cl.id = pa.client_id
       WHERE pa.progetto_id=$1 ORDER BY cl.cognome NULLS LAST, cl.nome`, [req.params.id]);
     // Clienti già in anagrafica NON ancora in questo progetto: per collegarne uno
@@ -2953,8 +3012,10 @@ router.get('/dashboard/progetti/:id', requireCoach, async (req, res) => {
         LEFT JOIN partecipazioni pa ON pa.id = t.partecipazione_id
        WHERE pf.stato <> 'annullata'
          AND COALESCE(t.progetto_id, pa.progetto_id) = $1`, [req.params.id]);
+    // Fetta 6a — a che punto è la bozza di ciascun contratto di questo progetto.
+    const statiContratti = await statiContrattiProgetto(req.params.id);
     res.send(progettoDettaglioPage(pr.rows[0], coachee.rows, req, disponibili.rows, percorsi.rows, fasi.rows, seduteColl.rows, piano.rows,
-      incassi.mappaRate(chieste.rows)));
+      incassi.mappaRate(chieste.rows), statiContratti));
   } catch (err) {
     console.error(err);
     res.status(500).send('Errore');
@@ -7370,7 +7431,30 @@ function specificheCard({ p, coachee, percorsi, fasi, qTot, qComm, quoteGuaste }
     </div>`;
 }
 
-function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, seduteColl, piano, rateChieste) {
+function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, seduteColl, piano, rateChieste, statiContratti) {
+  // Fetta 6a — «da redigere» è l'assenza della riga, quindi la mappa non ce l'ha
+  // e il valore di riserva è proprio quello.
+  statiContratti = statiContratti || new Map();
+  const statoContr = (tipo, id) => statiContratti.get(tipo + ':' + id) || 'da_redigere';
+  // La cella «A che punto è»: il pallino, il passo avanti, e — se c'è — l'azione
+  // di modifica. ⚠️ Il pulsante dice cosa STAI DICHIARANDO, non a quale stato
+  // stai passando: «l'ho inviata» è la stessa cosa detta dalla parte di chi lavora.
+  // La firma dell'INFORMATIVA. Non è uno stato del contratto: è la casella
+  // `consenso_privacy` dell'anagrafica, che esiste da sempre ed è già quello che
+  // le Anomalie controllano. Qui si LEGGE e si dice dove si spunta — non si
+  // duplica, o diventerebbero due verità sulla stessa firma.
+  const cellaConsenso = (k) => k.consenso_privacy
+    ? `<div style="font-size:11px;color:#2f6b46;margin-top:5px">✓ informativa firmata${k.consenso_data ? ' il ' + itDate(k.consenso_data) : ''}</div>`
+    : `<div style="font-size:11px;color:#8a6d1e;margin-top:5px">informativa non ancora firmata — <a href="/dashboard/clients/${k.client_id}" style="color:inherit">si spunta in anagrafica ↗</a></div>`;
+  const cellaStato = (tipo, id, st) => {
+    const av  = contrattiStato.AVANTI[st];
+    const ind = contrattiStato.INDIETRO[st];
+    return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      ${contrattiStato.badge(st)}
+      ${av ? `<button onclick="muoviContratto('${tipo}','${id}','${av.a}')" class="btn btn-neutral btn-sm">${av.label}</button>` : ''}
+      ${ind ? `<button onclick="muoviContratto('${tipo}','${id}','${ind.a}')" style="background:none;border:none;padding:0;font-size:12px;color:var(--muted);text-decoration:underline;cursor:pointer" title="Riporta il flusso a «da inviare»: il documento cambia, quindi va rimandato">${ind.label}</button>` : ''}
+    </div>`;
+  };
   // ⭐ C3 — l'insieme delle rate gia dentro una proforma viva: da qui esce lo
   // stato «Chiesta». Se non arriva, `statoDi` ripiega sulla colonna salvata.
   rateChieste = rateChieste || new Map();
@@ -7878,12 +7962,19 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
       ${quoteGuaste
         ? `<div class="flash-error" style="margin-bottom:12px">${esc(quoteGuaste)} Finché non torna, i contratti non vengono preparati: un contratto al Committente e uno ai partecipanti che dicono cifre diverse sono due documenti firmati che si contraddicono.</div>`
         : ''}
+      ${/* Fetta 6a — la colonna «A che punto è». Il pallino dice lo stato, il
+            pulsante dice COSA STAI DICHIARANDO («l'ho inviata»), non a quale
+            stato stai passando: è la stessa cosa detta dalla parte di chi lavora.
+            Le due azioni di modifica sono facoltative e riportano a «da inviare».
+            🔒 Il contratto del COMMITTENTE porta anche l'avviso: approvarlo
+               congela le specifiche del progetto. */ ''}
       <div style="overflow-x:auto;margin:0 -4px">
-        <table style="min-width:460px">
+        <table style="min-width:620px">
           <thead><tr>
             <th style="text-align:left;font-size:12px;color:var(--muted)">Chi firma</th>
             <th style="text-align:left;font-size:12px;color:var(--muted)">Quota a suo carico</th>
             <th style="text-align:left;font-size:12px;color:var(--muted)">Che cosa firma</th>
+            <th style="text-align:left;font-size:12px;color:var(--muted)">A che punto è</th>
           </tr></thead>
           <tbody>
             <tr>
@@ -7892,6 +7983,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
               <td style="white-space:nowrap">${quoteGuaste
                 ? `<button class="btn btn-off btn-sm" disabled title="Prima devono tornare le quote">📄 Contratto</button>`
                 : `<a href="/dashboard/progetti/${p.id}/contratto" target="_blank" class="btn btn-primary btn-sm" style="text-decoration:none">📄 Contratto</a>`}</td>
+              <td>${cellaStato('committente', p.id, statoContr('committente', p.id))}</td>
             </tr>
             ${coachee.map(k => {
               const q = k.quota_coachee != null ? Number(k.quota_coachee) : 0;
@@ -7909,6 +8001,10 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
                     ? `<button class="btn btn-off btn-sm" disabled title="Prima devono tornare le quote">📄 Contratto</button>`
                     : `<a href="/dashboard/progetti/${p.id}/partecipanti/${k.part_id}/contratto" target="_blank" class="btn btn-primary btn-sm" style="text-decoration:none">📄 Contratto</a>`) + ' '
                 : ''}<a href="/dashboard/progetti/${p.id}/partecipanti/${k.part_id}/liberatoria" target="_blank" class="btn btn-neutral btn-sm" style="text-decoration:none">📄 ${p.tipo === 'team' || p.tipo === 'group' ? 'Informativa e Regole' : 'Informativa privacy'}</a></td>
+              <td>${(paga
+                ? cellaStato('partecipante', k.part_id, statoContr('partecipante', k.part_id))
+                : '<span style="font-size:12px;color:#aaa">nessun contratto: firma la sola informativa</span>')
+                + cellaConsenso(k)}</td>
             </tr>`; }).join('')}
           </tbody>
         </table>
@@ -8095,6 +8191,20 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
     // Fetta 4 — quante sessioni prevede il percorso condiviso. Fino al 29/08
     // quel numero non si poteva cambiare da nessuna schermata: nasceva a 8 (il
     // valore di riserva del database) e restava 8 per sempre.
+    // Fetta 6a — muove lo stato di una bozza di contratto.
+    // ⚠️ Approvare il contratto del COMMITTENTE congela le specifiche del
+    //    progetto: è l'unico passaggio che si fa confermare, perché è l'unico
+    //    che toglie qualcosa (la possibilità di cambiare idea).
+    async function muoviContratto(tipo, soggetto, stato) {
+      if (tipo === 'committente' && stato === 'approvata'
+          && !confirm("Il contratto del Committente risulta firmato.\\n\\nDa questo momento le specifiche del progetto si congelano: tipologia, partecipanti, sessioni e valore non si cambiano più.\\n\\nProcedo?")) return;
+      const r = await fetch('/dashboard/contratti/stato', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tipo: tipo, soggetto_id: soggetto, stato: stato }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || d.error) { alert('Errore: ' + (d.error || r.status)); return; }
+      ricaricaConservando();
+    }
     async function salvaPreviste() {
       const campo = document.getElementById('sp-previste');
       if (!campo) return;

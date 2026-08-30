@@ -1013,6 +1013,54 @@ async function init() {
   await query(`CREATE UNIQUE INDEX IF NOT EXISTS documenti_chiusura_unico
                  ON documenti (percorso_id) WHERE tipo = 'chiusura'`);
 
+  // ═══════════════════════════════════════════════════════════════════════════
+  // I CONTRATTI E IL LORO STATO — Fetta 6a (2026-08-30).
+  //
+  // ⭐ UNA TABELLA SOLA PER TUTTI E TRE I TIPI, deciso da Germano il 30/08: vuole
+  //    vederli tutti insieme in Amministrazione, e un elenco unico non si può
+  //    fare se gli stati stanno sparsi su `progetti` e `partecipazioni` — i
+  //    contratti dei clienti individuali resterebbero fuori, e sono nove veri.
+  //
+  // ⭐ I QUATTRO STATI (parole sue, 29-30/08):
+  //      da redigere → da inviare → in attesa di approvazione → approvata
+  //    «approvata» È il ritorno FIRMATO della controparte, non un'approvazione
+  //    del coach: glielo mandano via mail, lui lo salva e spunta.
+  //
+  // 🔴 «DA REDIGERE» NON SI SCRIVE: è l'ASSENZA della riga. Un contratto che
+  //    nessuno ha ancora toccato non ha bisogno di essere registrato da nessuna
+  //    parte, e così non serve riempire il database per i clienti che ci sono
+  //    già. La riga nasce quando lo stato si muove per la prima volta.
+  //
+  // Il soggetto del contratto è UNO dei tre, mai due insieme:
+  //   · 'cliente'      → un PERCORSO individuale (una persona può averne più
+  //                      d'uno nel tempo, e ognuno ha il suo contratto);
+  //   · 'committente'  → un PROGETTO;
+  //   · 'partecipante' → una PARTECIPAZIONE (è lì che vive la quota, ed è la
+  //                      quota che decide se quella persona firma un contratto).
+  // Gli indici unici qui sotto impediscono che ne nascano due per lo stesso
+  // soggetto: due stati per lo stesso documento sarebbero due verità in gara.
+  // ═══════════════════════════════════════════════════════════════════════════
+  await query(`
+    CREATE TABLE IF NOT EXISTS contratti (
+      id                TEXT PRIMARY KEY,
+      tipo              TEXT NOT NULL,
+      percorso_id       TEXT REFERENCES percorsi(id)        ON DELETE CASCADE,
+      progetto_id       TEXT REFERENCES progetti(id)        ON DELETE CASCADE,
+      partecipazione_id TEXT REFERENCES partecipazioni(id)  ON DELETE CASCADE,
+      stato             TEXT NOT NULL DEFAULT 'da_inviare',
+      data_invio        DATE,
+      data_approvazione DATE,
+      drive_url         TEXT,
+      created_at        TIMESTAMPTZ DEFAULT NOW(),
+      updated_at        TIMESTAMPTZ DEFAULT NOW()
+    )`);
+  await query(`CREATE UNIQUE INDEX IF NOT EXISTS contratti_cliente_unico
+                 ON contratti (percorso_id)       WHERE tipo = 'cliente'`);
+  await query(`CREATE UNIQUE INDEX IF NOT EXISTS contratti_committente_unico
+                 ON contratti (progetto_id)       WHERE tipo = 'committente'`);
+  await query(`CREATE UNIQUE INDEX IF NOT EXISTS contratti_partecipante_unico
+                 ON contratti (partecipazione_id) WHERE tipo = 'partecipante'`);
+
   // Stesso account coach della piattaforma strumenti (solo per il DB di test:
   // sul DB reale condiviso la riga esiste già).
   const existing = await query('SELECT id FROM coach WHERE username = $1', ['Germano']);

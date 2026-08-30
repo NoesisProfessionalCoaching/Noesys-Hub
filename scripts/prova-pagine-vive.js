@@ -49,6 +49,10 @@ const chiama = async (metodo, url, corpo) => {
 };
 
 (async () => {
+  // ⚠️ La migrazione PRIMA di tutto: senza, la prova gira su un database vecchio e
+  //    fallisce per un motivo che non c'entra col codice appena scritto. Successo
+  //    il 30/08 con la tabella `contratti`, che qui dentro non esisteva ancora.
+  await db.init();
   const marca = 'PROVA-PREVISTE-' + PORTA;
   let idCli, idComm, idProg, idPerc;
   try {
@@ -101,12 +105,70 @@ const chiama = async (metodo, url, corpo) => {
     const q3 = await db.query('SELECT n_sessioni_previste FROM percorsi WHERE id=$1', [pc.rows[0].id]);
     dice(Number(q3.rows[0].n_sessioni_previste) === 8, 'ed è rimasto a 8');
     await db.query('DELETE FROM percorsi WHERE id=$1', [pc.rows[0].id]);
+
+    // ── Fetta 6a — gli stati della bozza di contratto ────────────────────────
+    console.log('\n6. Il ciclo di vita della bozza di contratto');
+    const statoDb = async () => (await db.query(
+      "SELECT stato, data_invio, data_approvazione FROM contratti WHERE tipo='committente' AND progetto_id=$1",
+      [idProg])).rows[0] || null;
+    dice(await statoDb() === null, '«da redigere» è l\'ASSENZA della riga: il database è vuoto');
+    r = await chiama('GET', `/dashboard/progetti/${idProg}`);
+    dice(r.testo.includes('Da redigere'), 'e la pagina lo mostra lo stesso, come «Da redigere»');
+
+    for (const [st, atteso] of [['da_inviare', 'Da inviare'], ['in_attesa', 'In attesa di approvazione'], ['approvata', 'Approvata']]) {
+      r = await chiama('POST', '/dashboard/contratti/stato', { tipo: 'committente', soggetto_id: idProg, stato: st });
+      dice(r.stato === 200, `passa a «${atteso}»`, r.stato + ' ' + r.testo.slice(0, 90));
+      const d = await statoDb();
+      dice(d && d.stato === st, `  e nel database c'è ${st}`);
+      r = await chiama('GET', `/dashboard/progetti/${idProg}`);
+      dice(r.testo.includes(atteso), `  e la pagina mostra «${atteso}»`);
+    }
+    let d6 = await statoDb();
+    dice(!!d6.data_invio && !!d6.data_approvazione, 'le due date sono state registrate');
+
+    console.log('\n7. L\'azione «Modifica contratto approvato» riporta a «da inviare»');
+    r = await chiama('POST', '/dashboard/contratti/stato', { tipo: 'committente', soggetto_id: idProg, stato: 'da_inviare' });
+    d6 = await statoDb();
+    dice(d6.stato === 'da_inviare', 'lo stato è tornato indietro');
+    dice(!d6.data_invio && !d6.data_approvazione,
+      'e le due date sono state AZZERATE: il documento cambia, quelle sarebbero date false');
+    const quante = await db.query("SELECT count(*)::int AS n FROM contratti WHERE tipo='committente' AND progetto_id=$1", [idProg]);
+    dice(quante.rows[0].n === 1, 'e la riga resta UNA: i passaggi non ne creano di nuove');
+
+    // La firma dell'informativa NON è uno stato del contratto: si legge dalla
+    // casella dell'anagrafica. Se un giorno qualcuno ne facesse una seconda, qui
+    // si vedrebbe: la pagina deve cambiare quando cambia l'ANAGRAFICA.
+    console.log('\n8. L\'informativa si legge dall\'anagrafica, non da uno stato suo');
+    r = await chiama('GET', `/dashboard/progetti/${idProg}`);
+    dice(r.testo.includes('informativa non ancora firmata'), 'senza consenso la pagina lo dice');
+    await db.query('UPDATE clients SET consenso_privacy=TRUE, consenso_data=CURRENT_DATE WHERE id=$1', [idCli]);
+    r = await chiama('GET', `/dashboard/progetti/${idProg}`);
+    dice(r.testo.includes('informativa firmata'), 'spuntata in anagrafica, la pagina del progetto la mostra firmata');
+    dice(!r.testo.includes('informativa non ancora firmata'), 'e non dice piu il contrario');
+
+    console.log('\n9. 🔬 Adesso la rompo apposta');
+    for (const [corpo, et] of [
+      [{ tipo: 'boh',         soggetto_id: idProg, stato: 'da_inviare' }, 'un tipo inventato'],
+      [{ tipo: 'committente', soggetto_id: idProg, stato: 'firmata'    }, 'uno stato che non esiste più'],
+      [{ tipo: 'committente', soggetto_id: '',     stato: 'da_inviare' }, 'un soggetto vuoto'],
+    ]) {
+      r = await chiama('POST', '/dashboard/contratti/stato', corpo);
+      dice(r.stato === 400, `rifiuta ${et}`, 'ha risposto ' + r.stato);
+    }
+    r = await chiama('POST', '/dashboard/contratti/stato',
+      { tipo: 'committente', soggetto_id: '00000000-0000-0000-0000-000000000000', stato: 'approvata' });
+    dice(r.stato === 404, 'rifiuta un progetto che non esiste', 'ha risposto ' + r.stato);
+    const orfani = await db.query("SELECT count(*)::int AS n FROM contratti WHERE progetto_id='00000000-0000-0000-0000-000000000000'");
+    dice(orfani.rows[0].n === 0, 'e non ha lasciato righe orfane nel database');
+    d6 = await statoDb();
+    dice(d6.stato === 'da_inviare', 'dopo i quattro rifiuti lo stato buono è intatto');
   } catch (e) {
     ko++; console.log('\n🔴 ECCEZIONE: ' + e.message + '\n' + e.stack.split('\n')[1]);
   } finally {
-    console.log('\n6. Pulizia (solo le righe create da questa prova)');
+    console.log('\n10. Pulizia (solo le righe create da questa prova)');
     try {
-      if (idProg) { await db.query('DELETE FROM percorso_partecipanti WHERE percorso_id IN (SELECT id FROM percorsi WHERE progetto_id=$1)', [idProg]);
+      if (idProg) { await db.query('DELETE FROM contratti WHERE progetto_id=$1 OR partecipazione_id IN (SELECT id FROM partecipazioni WHERE progetto_id=$1)', [idProg]);
+                    await db.query('DELETE FROM percorso_partecipanti WHERE percorso_id IN (SELECT id FROM percorsi WHERE progetto_id=$1)', [idProg]);
                     await db.query('DELETE FROM partecipazioni WHERE progetto_id=$1', [idProg]);
                     await db.query('DELETE FROM percorsi WHERE progetto_id=$1', [idProg]);
                     await db.query('DELETE FROM progetti WHERE id=$1', [idProg]); }
