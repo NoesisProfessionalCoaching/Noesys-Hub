@@ -6943,11 +6943,25 @@ function contrattiAmmPage(singoli, progetti, partecipanti, req, tutti) {
   //    i contratti che chiedono qualcosa anneghiamo fra quelli chiusi da anni.
   // ⛔ Ma quante righe sono nascoste SI DICE SEMPRE. Nascondere in silenzio è
   //    peggio di non nascondere: chi guarda crede di star vedendo tutto.
-  const conclusi = singoli.filter(r => r.stato_percorso !== 'attivo');
-  const singoliVisti = tutti ? singoli : singoli.filter(r => r.stato_percorso === 'attivo');
-  const interruttore = !conclusi.length ? '' : (tutti
-    ? `<a href="/dashboard/amministrazione/contratti" style="font-size:12px">nascondi i ${conclusi.length} percorsi conclusi</a>`
-    : `<a href="/dashboard/amministrazione/contratti?tutti=1" style="font-size:12px">mostra anche i ${conclusi.length} percorsi conclusi</a>`);
+  // ⚠️ SI NASCONDE SOLO CIÒ CHE È CONCLUSO, non «tutto ciò che non è attivo».
+  //    Un progetto «in pausa» è lavoro vivo che si è fermato — è proprio quello
+  //    che vuoi vedere. Filtrare su «attivo» l'avrebbe fatto sparire: sbagliato
+  //    alla prima stesura del 30/08 e corretto guardando gli stati veri.
+  const finito = (x) => x === 'concluso';
+  const percConclusi = singoli.filter(r => finito(r.stato_percorso));
+  const progConclusi = progetti.filter(g => finito(g.stato_progetto));
+  const singoliVisti  = tutti ? singoli  : singoli.filter(r => !finito(r.stato_percorso));
+  const progettiVisti = tutti ? progetti : progetti.filter(g => !finito(g.stato_progetto));
+  // Un interruttore SOLO, in cima, per tutti e due gli elenchi: due comandi che
+  // fanno la stessa cosa in due punti diversi sono due modi di confondersi.
+  const nascosti = percConclusi.length + progConclusi.length;
+  const pezzi = [
+    percConclusi.length ? `${percConclusi.length} ${percConclusi.length === 1 ? 'percorso' : 'percorsi'}` : null,
+    progConclusi.length ? `${progConclusi.length} ${progConclusi.length === 1 ? 'progetto' : 'progetti'}` : null,
+  ].filter(Boolean).join(' e ');
+  const interruttore = !nascosti ? '' : (tutti
+    ? `<a href="/dashboard/amministrazione/contratti" style="font-size:13px">nascondi ${pezzi} ${nascosti === 1 ? 'concluso' : 'conclusi'}</a>`
+    : `<a href="/dashboard/amministrazione/contratti?tutti=1" style="font-size:13px">mostra anche ${pezzi} ${nascosti === 1 ? 'concluso' : 'conclusi'}</a>`);
   // Il conto per stato: è la riga che dice «dove sono i problemi» senza contare
   // le righe a occhio.
   const conta = (righe) => {
@@ -7011,24 +7025,26 @@ function contrattiAmmPage(singoli, progetti, partecipanti, req, tutti) {
       A che punto è ogni contratto. Qui si guarda: lo stato si cambia dove il contratto si prepara —
       la scheda del cliente o la pagina del progetto — e i link a destra ti ci portano.
     </p>
+    ${interruttore ? `<div style="margin:-8px 0 20px">
+      <span style="font-size:13px;color:var(--muted)">Vedi quello che è in corso. ${interruttore}</span>
+    </div>` : ''}
 
     <div class="card" style="margin-bottom:18px">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px">
         <h2 style="margin:0">Percorsi singoli</h2>
-        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">${conta(singoliVisti)} ${interruttore}</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">${conta(singoliVisti)}</div>
       </div>
       ${tabella(['Cliente', 'Percorso', 'Contratto', 'Privacy', ''], singoliVisti.map(rigaSingolo).join(''),
-        tutti || !conclusi.length ? 'Nessun percorso individuale fuori da un progetto.'
-          : `Nessun percorso attivo. ${interruttore}`)}
+        'Nessun percorso individuale in corso fuori da un progetto.')}
     </div>
 
     <div class="card">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px">
         <h2 style="margin:0">Progetti strutturati</h2>
-        <div style="display:flex;gap:6px;flex-wrap:wrap">${conta(progetti)} ${tuttiPart.length ? '<span style="font-size:12px;color:var(--muted)">+ ' + tuttiPart.length + ' contratti di partecipanti</span>' : ''}</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">${conta(progettiVisti)} ${tuttiPart.length ? '<span style="font-size:12px;color:var(--muted)">+ ' + tuttiPart.length + ' contratti di partecipanti</span>' : ''}</div>
       </div>
-      ${tabella(['Chi firma', 'Ruolo', 'Contratto', '', ''], progetti.map(rigaProgetto).join(''),
-        'Nessun progetto con committente.')}
+      ${tabella(['Chi firma', 'Ruolo', 'Contratto', '', ''], progettiVisti.map(rigaProgetto).join(''),
+        'Nessun progetto in corso.')}
     </div>
   </div>
   </body></html>`;

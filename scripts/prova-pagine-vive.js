@@ -178,15 +178,28 @@ const chiama = async (metodo, url, corpo) => {
     // nascoste vengano DICHIARATE: nascondere in silenzio è peggio che mostrare.
     const percConcluso = await db.query(
       `INSERT INTO percorsi (id, client_id, tipo, stato) VALUES (gen_random_uuid(), $1, 'Individuale', 'concluso') RETURNING id`, [idCli]);
+    const progConcluso = await chiama('POST', '/dashboard/progetti',
+      { committente_id: idComm, titolo: marca + '-CHIUSO', area: 'Business', tipo: 'team', stato: 'concluso' });
+    // e uno IN PAUSA, che NON deve sparire: è lavoro vivo che si è fermato
+    const progPausa = await chiama('POST', '/dashboard/progetti',
+      { committente_id: idComm, titolo: marca + '-PAUSA', area: 'Business', tipo: 'team', stato: 'in pausa' });
+
     r = await chiama('GET', '/dashboard/amministrazione/contratti');
-    dice(/mostra anche i \d+ percors/.test(r.testo), 'di norma i conclusi sono nascosti, e la pagina DICE quanti sono');
-    const righeStrette = (r.testo.match(/apri la scheda/g) || []).length;
+    dice(/mostra anche .*conclus/.test(r.testo), 'di norma i conclusi sono nascosti, e la pagina DICE quanti sono');
+    dice(!r.testo.includes(marca + '-CHIUSO'), 'il progetto concluso non si vede');
+    dice(r.testo.includes(marca + '-PAUSA'), '⚠️ ma quello IN PAUSA sì: è lavoro fermo, non finito');
+    const strette = (r.testo.match(/apri la scheda|apri il progetto/g) || []).length;
     r = await chiama('GET', '/dashboard/amministrazione/contratti?tutti=1');
-    const righeLarghe = (r.testo.match(/apri la scheda/g) || []).length;
-    dice(righeLarghe > righeStrette, 'con l\'interruttore acceso le righe aumentano');
-    dice(r.testo.includes('percorso concluso'), 'e i conclusi si riconoscono dal cartellino');
-    dice(/nascondi i \d+ percors/.test(r.testo), 'e l\'interruttore si può rispegnere');
+    const larghe = (r.testo.match(/apri la scheda|apri il progetto/g) || []).length;
+    dice(larghe > strette, 'con l\'interruttore acceso le righe aumentano');
+    dice(r.testo.includes(marca + '-CHIUSO'), 'e il progetto concluso compare');
+    dice(r.testo.includes('percorso concluso'), 'e i percorsi conclusi si riconoscono dal cartellino');
+    dice(/nascondi .*conclus/.test(r.testo), 'e l\'interruttore si può rispegnere');
     await db.query('DELETE FROM percorsi WHERE id=$1', [percConcluso.rows[0].id]);
+    for (const g of [progConcluso, progPausa]) if (g.dati && g.dati.id) {
+      await db.query('DELETE FROM percorsi WHERE progetto_id=$1', [g.dati.id]);
+      await db.query('DELETE FROM progetti WHERE id=$1', [g.dati.id]);
+    }
 
     console.log('\n11. 🔬 Adesso la rompo apposta');
     for (const [corpo, et] of [
