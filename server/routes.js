@@ -2807,7 +2807,7 @@ router.get('/dashboard/amministrazione/contratti', requireCoach, async (req, res
           LEFT JOIN contratti c ON c.tipo = 'partecipante' AND c.partecipazione_id = pa.id
          ORDER BY cl.cognome NULLS LAST, cl.nome`),
     ]);
-    res.send(contrattiAmmPage(singoli.rows, progetti.rows, partecipanti.rows, req));
+    res.send(contrattiAmmPage(singoli.rows, progetti.rows, partecipanti.rows, req, req.query.tutti === '1'));
   } catch (err) {
     console.error('[amm/contratti]', err);
     res.status(500).send('Errore nel caricamento dei contratti');
@@ -6935,8 +6935,19 @@ function proformaPage(daChiedere, proforme, req) {
  * ⚠️ Si guarda e basta: lo stato si cambia dove il contratto si fa. I link a
  *    destra ci portano.
  */
-function contrattiAmmPage(singoli, progetti, partecipanti, req) {
+function contrattiAmmPage(singoli, progetti, partecipanti, req, tutti) {
   const st = (x) => x || 'da_redigere';
+  // ⭐ Germano, 30/08: di norma si vedono solo i percorsi ATTIVI, con un
+  //    interruttore per tirare fuori anche i conclusi. Un elenco che serve ad
+  //    avere tutto sotto controllo, se cresce per sempre, smette di funzionare:
+  //    i contratti che chiedono qualcosa anneghiamo fra quelli chiusi da anni.
+  // ⛔ Ma quante righe sono nascoste SI DICE SEMPRE. Nascondere in silenzio è
+  //    peggio di non nascondere: chi guarda crede di star vedendo tutto.
+  const conclusi = singoli.filter(r => r.stato_percorso !== 'attivo');
+  const singoliVisti = tutti ? singoli : singoli.filter(r => r.stato_percorso === 'attivo');
+  const interruttore = !conclusi.length ? '' : (tutti
+    ? `<a href="/dashboard/amministrazione/contratti" style="font-size:12px">nascondi i ${conclusi.length} percorsi conclusi</a>`
+    : `<a href="/dashboard/amministrazione/contratti?tutti=1" style="font-size:12px">mostra anche i ${conclusi.length} percorsi conclusi</a>`);
   // Il conto per stato: è la riga che dice «dove sono i problemi» senza contare
   // le righe a occhio.
   const conta = (righe) => {
@@ -7004,10 +7015,11 @@ function contrattiAmmPage(singoli, progetti, partecipanti, req) {
     <div class="card" style="margin-bottom:18px">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px">
         <h2 style="margin:0">Percorsi singoli</h2>
-        <div style="display:flex;gap:6px;flex-wrap:wrap">${conta(singoli)}</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">${conta(singoliVisti)} ${interruttore}</div>
       </div>
-      ${tabella(['Cliente', 'Percorso', 'Contratto', 'Privacy', ''], singoli.map(rigaSingolo).join(''),
-        'Nessun percorso individuale fuori da un progetto.')}
+      ${tabella(['Cliente', 'Percorso', 'Contratto', 'Privacy', ''], singoliVisti.map(rigaSingolo).join(''),
+        tutti || !conclusi.length ? 'Nessun percorso individuale fuori da un progetto.'
+          : `Nessun percorso attivo. ${interruttore}`)}
     </div>
 
     <div class="card">

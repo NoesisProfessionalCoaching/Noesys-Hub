@@ -174,6 +174,20 @@ const chiama = async (metodo, url, corpo) => {
     dice(r.testo.includes('In attesa di approvazione'), 'con lo stato vero del contratto del cliente');
     dice(r.testo.includes('/dashboard/amministrazione/contratti'), 'e la voce sta nel menù dell\'area');
 
+    // L'interruttore dei percorsi conclusi. ⛔ Quello che conta è che le righe
+    // nascoste vengano DICHIARATE: nascondere in silenzio è peggio che mostrare.
+    const percConcluso = await db.query(
+      `INSERT INTO percorsi (id, client_id, tipo, stato) VALUES (gen_random_uuid(), $1, 'Individuale', 'concluso') RETURNING id`, [idCli]);
+    r = await chiama('GET', '/dashboard/amministrazione/contratti');
+    dice(/mostra anche i \d+ percors/.test(r.testo), 'di norma i conclusi sono nascosti, e la pagina DICE quanti sono');
+    const righeStrette = (r.testo.match(/apri la scheda/g) || []).length;
+    r = await chiama('GET', '/dashboard/amministrazione/contratti?tutti=1');
+    const righeLarghe = (r.testo.match(/apri la scheda/g) || []).length;
+    dice(righeLarghe > righeStrette, 'con l\'interruttore acceso le righe aumentano');
+    dice(r.testo.includes('percorso concluso'), 'e i conclusi si riconoscono dal cartellino');
+    dice(/nascondi i \d+ percors/.test(r.testo), 'e l\'interruttore si può rispegnere');
+    await db.query('DELETE FROM percorsi WHERE id=$1', [percConcluso.rows[0].id]);
+
     console.log('\n11. 🔬 Adesso la rompo apposta');
     for (const [corpo, et] of [
       [{ tipo: 'boh',         soggetto_id: idProg, stato: 'da_inviare' }, 'un tipo inventato'],
