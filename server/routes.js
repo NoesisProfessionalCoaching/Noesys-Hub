@@ -4332,6 +4332,31 @@ function renderSedutaRow(s) {
   </tr>`;
 }
 
+/**
+ * UNA SEZIONE PIEGHEVOLE — nata nella scheda del cliente, dal 30/08 comune anche
+ * alla pagina del progetto. Germano: «la pagina dei progetti occupa troppo
+ * spazio, voglio poter aprire solo le sezioni che mi interessano».
+ *
+ * ⚠️ I pulsanti che finiscono nel <summary> DEVONO fermare il clic
+ *    (`event.stopPropagation()`), altrimenti premerli chiude la sezione invece di
+ *    fare quello che dicono. È la trappola numero uno di questo meccanismo.
+ * ⭐ `aperta` non è un capriccio: una sezione si apre da sola quando ha qualcosa
+ *    in sospeso, e riposa chiusa quando non chiede niente. È il modo in cui la
+ *    pagina dice dove guardare senza che tu debba aprirle tutte.
+ * ⚠️ L'intestazione (anagrafica del cliente, testata del progetto) NON si piega:
+ *    è quella che dice dove sei.
+ */
+const sezionePieghevole = (titolo, corpo, aperta, azioni) => `
+  <div class="card">
+    <details class="sec"${aperta ? ' open' : ''}>
+      <summary style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;cursor:pointer">
+        <span style="display:flex;align-items:center;gap:8px"><span class="sec-caret">▸</span>${titolo}</span>
+        ${azioni ? `<span style="display:inline-flex;gap:8px;align-items:center">${azioni}</span>` : ''}
+      </summary>
+      <div style="margin-top:14px">${corpo}</div>
+    </details>
+  </div>`;
+
 function clientDetailPage(client, sessions, percorsi, payments, sedute, progetti, permessi, req, fatt) {
   fatt = fatt || {};
   const proforme = fatt.proforme || [];
@@ -4444,16 +4469,7 @@ Germano`;
   // di fare quello che dicono.
   // ⚠️ L'ANAGRAFICA non si tocca: non è una sezione pieghevole e resta fissa in
   // cima, com'è oggi (e con dentro il riquadro «pronto per fatturare»).
-  const sezione = (titolo, corpo, aperta, azioni) => `
-    <div class="card">
-      <details class="sec"${aperta ? ' open' : ''}>
-        <summary style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;cursor:pointer">
-          <span style="display:flex;align-items:center;gap:8px"><span class="sec-caret">▸</span>${titolo}</span>
-          ${azioni ? `<span style="display:inline-flex;gap:8px;align-items:center">${azioni}</span>` : ''}
-        </summary>
-        <div style="margin-top:14px">${corpo}</div>
-      </details>
-    </div>`;
+  const sezione = sezionePieghevole;
 
   // In sospeso qui = c'è un percorso attivo SENZA appuntamento, o con uno già
   // passato (è proprio quel vuoto che va visto), oppure ce n'è uno entro una
@@ -7691,14 +7707,15 @@ function specificheCard({ p, coachee, percorsi, fasi, qTot, qComm, quoteGuaste, 
   const nPre = (fasi || []).filter(f => f.tipo === 'pre-intake' && avvenuta(f)).length;
   const nSessComm = (fasi || []).filter(f => f.tipo === 'sessione-committente').length;
 
-  return `
-    <div class="card" style="margin-bottom:18px;border-left:4px solid var(--gold)">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;flex-wrap:wrap;gap:8px">
-        <h2 style="margin:0">Specifiche di Progetto</h2>
-        <span class="badge" style="background:${valorizzato ? '#eaf5ee' : '#fdf6e3'};color:${valorizzato ? '#2f6b46' : '#8a6d1e'}">
-          ${valorizzato ? 'Valorizzato' : 'Provvisorio'}
-        </span>
-      </div>
+  // La sezione si apre da sola finché il progetto non è a posto: provvisorio,
+  // oppure manca ancora qualcosa perché i contratti escano completi. Quando è
+  // valorizzato e non manca niente, riposa chiusa.
+  return sezionePieghevole(
+    `<h2 style="margin:0">Specifiche di Progetto</h2>
+     <span class="badge" style="background:${valorizzato ? '#eaf5ee' : '#fdf6e3'};color:${valorizzato ? '#2f6b46' : '#8a6d1e'}">
+       ${valorizzato ? 'Valorizzato' : 'Provvisorio'}
+     </span>`,
+    `
       <div style="font-size:12px;color:var(--muted);margin-bottom:12px">
         ${valorizzato
           ? 'L\'Intake col Committente è registrata: da qui i numeri sono affidabili e si può redigere la bozza di contratto.'
@@ -7771,15 +7788,23 @@ function specificheCard({ p, coachee, percorsi, fasi, qTot, qComm, quoteGuaste, 
       <div style="margin-top:12px;font-size:12px;color:var(--muted)">
         Da qui si scrive quello che ha un campo o un pulsante qui a destra; il resto si corregge dove nasce,
         e i pulsanti ti ci portano. ${condiviso ? 'Il numero di sessioni previste si cambia direttamente qui: prima non si poteva cambiare da nessuna parte.' : ''}
-      </div>
-    </div>`;
+      </div>`,
+    !valorizzato || manca.length > 0);
 }
 
 function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, seduteColl, piano, rateChieste, statiContratti) {
   // Fetta 6a — «da redigere» è l'assenza della riga, quindi la mappa non ce l'ha
   // e il valore di riserva è proprio quello.
   statiContratti = statiContratti || new Map();
+  // Fetta «sezioni pieghevoli» (30/08): lo stesso meccanismo della scheda cliente.
+  const sezione = sezionePieghevole;
   const statoContr = (tipo, id) => statiContratti.get(tipo + ':' + id) || 'da_redigere';
+  // Una sezione si apre da sola quando ha qualcosa in sospeso. Per i contratti,
+  // «in sospeso» vuol dire che qualcuno non ha ancora firmato: il Committente,
+  // o uno dei partecipanti che mette una quota.
+  const contrattiDaSeguire = statoContr('committente', p.id) !== 'approvata'
+    || (coachee || []).some(k => Number(k.quota_coachee) > 0
+         && statoContr('partecipante', k.part_id) !== 'approvata');
   // La cella «A che punto è»: il pallino, il passo avanti, e — se c'è — l'azione
   // di modifica. ⚠️ Il pulsante dice cosa STAI DICHIARANDO, non a quale stato
   // stai passando: «l'ho inviata» è la stessa cosa detta dalla parte di chi lavora.
@@ -7815,21 +7840,18 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
             <tbody>${seduteColl.map(renderSedutaRow).join('')}</tbody>
           </table>
         </div>`;
-    return `
-    <div class="card" style="margin-bottom:18px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:10px;flex-wrap:wrap">
-        <h2 style="margin:0">Scheda ${percCond.tipo === 'Group' ? 'del Gruppo' : 'del ' + esc(percCond.tipo)} <span style="font-weight:400;font-size:13px;color:#aaa">(${(Number(percCond.n_sessioni_fatte)||0)} ${(Number(percCond.n_sessioni_fatte)||0)===1?'sessione confermata':'sessioni confermate'} · ${fmtOre(percCond.ore_fatte)} h)</span></h2>
-        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-          ${hasDrive ? `<button id="scan-coll-btn" onclick="scanCollettivo()" class="btn btn-gold btn-sm" title="Legge i report Word nuovi dalla cartella del percorso e ne crea la bozza">⟳ Cerca nuovi report</button>` : ''}
-          <span style="display:inline-block;width:10px"></span>
-          ${percCond.stato === 'attivo'
-            ? `<button onclick="chiudiPercorsoColl()" class="btn btn-neutral btn-sm" title="Concludi il percorso di gruppo">Chiudi il percorso</button>`
-            : `<span class="badge badge-inactive">Percorso concluso</span>`}
-        </div>
-      </div>
-      ${!hasDrive ? `<div style="font-size:12px;color:#b45309;margin-bottom:10px">Crea prima la cartella Drive del percorso (colonna "Cartella sessioni" qui sopra) per l'automazione dei report.</div>` : ''}
-      ${body}
-    </div>`;
+    // ⚠️ I pulsanti stanno nel <summary>: senza `event.stopPropagation()` premerli
+    //    chiuderebbe la sezione invece di fare quello che dicono.
+    return sezionePieghevole(
+      `<h2 style="margin:0">Scheda ${percCond.tipo === 'Group' ? 'del Gruppo' : 'del ' + esc(percCond.tipo)} <span style="font-weight:400;font-size:13px;color:#aaa">(${(Number(percCond.n_sessioni_fatte)||0)} ${(Number(percCond.n_sessioni_fatte)||0)===1?'sessione confermata':'sessioni confermate'} · ${fmtOre(percCond.ore_fatte)} h)</span></h2>`,
+      `${!hasDrive ? `<div style="font-size:12px;color:#b45309;margin-bottom:10px">Crea prima la cartella Drive del percorso (colonna "Cartella sessioni" qui sopra) per l'automazione dei report.</div>` : ''}
+      ${body}`,
+      // Aperta se c'è una bozza da approvare: quello è lavoro che aspetta te.
+      seduteColl.some(x => x.stato === 'bozza'),
+      `${hasDrive ? `<button id="scan-coll-btn" onclick="event.stopPropagation(); scanCollettivo()" class="btn btn-gold btn-sm" title="Legge i report Word nuovi dalla cartella del percorso e ne crea la bozza">⟳ Cerca nuovi report</button>` : ''}
+       ${percCond.stato === 'attivo'
+         ? `<button onclick="event.stopPropagation(); chiudiPercorsoColl()" class="btn btn-neutral btn-sm" title="Concludi il percorso di gruppo">Chiudi il percorso</button>`
+         : `<span class="badge badge-inactive">Percorso concluso</span>`}`);
   })();
   // Fase 3a — le tappe con lo sponsor. La card parte VUOTA: si aggiungono a mano da
   // una tendina ("+ Aggiungi fase"). In futuro l'automazione (report nella cartella
@@ -7959,23 +7981,29 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
   const fasiMenuItems = FASI_CFG.map(c =>
     `<button type="button" onclick="addFase('${c.tipo}')" style="display:block;width:100%;text-align:left;padding:8px 12px;border:0;background:none;font-size:13px;color:var(--ink);cursor:pointer">${c.label}${c.opt ? ' <span style="color:#aaa;font-size:11px">(facoltativa)</span>' : ''}</button>`
   ).join('');
-  const fasiCard = `
-    <div class="card" style="margin-bottom:18px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-        <h2 style="margin:0">Fasi del progetto</h2>
-        ${p.drive_url
-          ? `<button id="scan-fasi-btn" onclick="scanProgetto()" class="btn btn-gold btn-sm" title="Legge i report nuovi dalle sottocartelle di fase su Drive e ne crea la riga in bozza">⟳ Cerca nuovi report</button>`
-          : `<span style="font-size:12px;color:var(--muted)">crea la cartella Drive per l'automazione</span>`}
-      </div>
-      <div id="fasi-list">${fasiRows}</div>
+  // Obbligatorie secondo le regole di Germano del 28/08: Intake e Chiusura col
+  // Committente. Kick-Off e Chiusura Open sono facoltative e non contano.
+  const fasiDaSeguire = ['intake-sponsor', 'chiusura-sponsor'].some(t =>
+      !(fasi || []).some(f => f.tipo === t && f.fatta && f.stato !== 'bozza'))
+    || (fasi || []).some(f => f.stato === 'bozza');
+  // ⚠️ Il pulsante finisce nel <summary>: senza `event.stopPropagation()` premerlo
+  //    chiuderebbe la sezione invece di cercare i report.
+  const fasiCard = sezionePieghevole(
+    `<h2 style="margin:0">Fasi del progetto <span style="font-weight:400;font-size:13px;color:#aaa">(${fasiSorted.length})</span></h2>`,
+    `<div id="fasi-list">${fasiRows}</div>
       <div id="fasi-empty" style="display:${fasiSorted.length ? 'none' : 'block'};font-size:13px;color:var(--muted);padding:6px 0">Nessuna fase ancora. Aggiungila con il pulsante qui sotto.</div>
       <div style="position:relative;margin-top:12px">
         <button type="button" onclick="toggleFaseMenu()" class="btn btn-primary btn-sm">+ Aggiungi fase ▾</button>
         <div id="fase-menu" style="display:none;position:absolute;left:0;top:100%;margin-top:4px;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.12);min-width:220px;z-index:50;overflow:hidden">
           ${fasiMenuItems}
         </div>
-      </div>
-    </div>`;
+      </div>`,
+    // Aperta se una fase OBBLIGATORIA non è ancora avvenuta, o se una bozza
+    // dell'automazione aspetta di essere approvata.
+    fasiDaSeguire,
+    `${p.drive_url
+          ? `<button id="scan-fasi-btn" onclick="event.stopPropagation(); scanProgetto()" class="btn btn-gold btn-sm" title="Legge i report nuovi dalle sottocartelle di fase su Drive e ne crea la riga in bozza">⟳ Cerca nuovi report</button>`
+          : `<span style="font-size:12px;color:var(--muted)">crea la cartella Drive per l'automazione</span>`}`);
   const STATO_CFG = {
     'attivo':   { label:'Attivo',   bg:'#d1fae5', color:'#065f46' },
     'in pausa': { label:'In pausa', bg:'#fff8dc', color:'#7a5c00' },
@@ -8178,19 +8206,17 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
           quota, e sotto stanno le sue rate. Le intestazioni si scrivono una
           volta, e la tabella delle quote sparisce perché la quota è diventata
           una colonna di questa. */ ''}
-    <div class="card" id="amm" style="margin-bottom:18px">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px;flex-wrap:wrap">
-        <h2 style="margin:0">Amministrazione
-          <span style="font-size:12px;font-weight:400;color:#aaa;margin-left:10px">
-            Valore del progetto: <strong style="color:var(--ink)">${qTot != null ? '€ ' + eur(qTot) : '—'}</strong>
-          </span>
-        </h2>
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          <button onclick="apriPiano()" class="btn btn-primary btn-sm">Modifica il piano</button>
-          <button onclick="openAdd()" class="btn btn-neutral btn-sm">+ Aggiungi cliente</button>
-        </div>
-      </div>
-
+    ${/* ⚠️ Il riquadro conserva id="amm": ci puntano i collegamenti che arrivano
+          da altre pagine. E i due pulsanti stanno nel <summary>, quindi fermano il
+          clic: senza, premerli chiuderebbe la sezione invece di aprire la
+          finestrella. */ ''}
+    <div id="amm">${sezione(
+    `<h2 style="margin:0">Amministrazione
+              <span style="font-size:12px;font-weight:400;color:#aaa;margin-left:10px">
+                Valore del progetto: <strong style="color:var(--ink)">${qTot != null ? '€ ' + eur(qTot) : '—'}</strong>
+              </span>
+            </h2>`,
+    `
       <div id="amm-empty" style="display:${ammQuoteSet ? 'none' : 'block'};font-size:13px;color:var(--muted);margin-bottom:12px">Imposta il valore del progetto per vedere il riepilogo.</div>
       ${/* QUATTRO numeri: «chiesto ma non ancora pagato» è lo stato in cui si
             vive per settimane, e dentro un generico «da incassare» spariva.
@@ -8226,7 +8252,13 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
       </div>
 
       <div id="q-riepilogo" style="margin-top:8px;font-size:12.5px;color:#4a5568"></div>
-    </div>
+    `,
+    // Aperta finché i soldi chiedono qualcosa: il piano non è ancora stato fatto,
+    // c'è da chiedere, o si aspetta un incasso. È la stessa regola che la home usa
+    // già per i pacchetti — non se ne inventa una seconda.
+    !pianoSalvato.length || (tot4.daChiedere || 0) > 0 || (tot4.chiesto || 0) > 0,
+    `<button onclick="event.stopPropagation(); apriPiano()" class="btn btn-primary btn-sm">Modifica il piano</button>
+     <button onclick="event.stopPropagation(); openAdd()" class="btn btn-neutral btn-sm">+ Aggiungi cliente</button>`)}</div>
 
     ${/* ── LA FINESTRELLA DEL PIANO ────────────────────────────────────────
           Un posto solo dove si imposta tutto: valore del progetto, quota di
@@ -8256,12 +8288,8 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
     })}
     ${pianoUi.modaleIncasso()}
 
-    <div class="card" style="margin-bottom:18px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-        <h2 style="margin:0">Percorsi</h2>
-        <span style="font-size:12px;color:var(--muted)">nascono da soli dai clienti del progetto</span>
-      </div>
-      ${(percorsi && percorsi.length) ? `<div style="overflow-x:auto;margin:0 -4px"><table style="min-width:480px">
+    ${sezione(`<h2 style="margin:0">Percorsi <span style="font-weight:400;font-size:13px;color:#aaa">(${(percorsi || []).length})</span></h2>`,
+      `${(percorsi && percorsi.length) ? `<div style="overflow-x:auto;margin:0 -4px"><table style="min-width:480px">
         <thead><tr>
           <th style="text-align:left;font-size:12px;color:var(--muted)">Tipo</th>
           <th style="text-align:left;font-size:12px;color:var(--muted)">Cliente/i</th>
@@ -8294,8 +8322,8 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
           </tr>`;
         }).join('')}</tbody>
       </table></div>`
-      : `<div style="font-size:13px;color:var(--muted)">Nessun percorso ancora: si generano da soli quando aggiungi i clienti al progetto.</div>`}
-    </div>
+      : `<div style="font-size:13px;color:var(--muted)">Nessun percorso ancora: si generano da soli quando aggiungi i clienti al progetto.</div>`}`,
+      false, '<span style="font-size:12px;color:var(--muted)">nascono da soli dai clienti del progetto</span>')}
 
     ${/* ── I CONTRATTI DEL PROGETTO (28/08/2026) ────────────────────────────
           Card NUOVA, accanto alle altre: non tocca la tabella dell'Amministrazione,
@@ -8304,12 +8332,8 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
           ⭐ Regola di Germano (27/08): chi mette una quota firma un CONTRATTO;
              chi non mette niente — progetto tutto a carico dell'azienda, il caso
              più frequente — firma solo l'INFORMATIVA PRIVACY. */ ''}
-    <div class="card" style="margin-bottom:18px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
-        <h2 style="margin:0">Contratti</h2>
-        <span style="font-size:12px;color:var(--muted)">si aprono in una scheda nuova · nessuno viene inviato</span>
-      </div>
-      ${quoteGuaste
+    ${sezione('<h2 style="margin:0">Contratti</h2>',
+      `${quoteGuaste
         ? `<div class="flash-error" style="margin-bottom:12px">${esc(quoteGuaste)} Finché non torna, i contratti non vengono preparati: un contratto al Committente e uno ai partecipanti che dicono cifre diverse sono due documenti firmati che si contraddicono.</div>`
         : ''}
       ${/* Fetta 6a — la colonna «A che punto è». Il pallino dice lo stato, il
@@ -8369,8 +8393,11 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
              li tratti tu in ogni caso, e quel documento è dove sta scritto che al Committente vanno
              <strong>solo date, presenze e ore</strong> — mai i contenuti delle sessioni.`}
         Il contratto invece lo firma solo chi ha una quota a proprio carico.
-      </div>
-    </div>
+      </div>`,
+      // Aperta finché qualcuno deve ancora firmare: quando sono tutti approvati
+      // la sezione riposa, perché non chiede più niente.
+      contrattiDaSeguire,
+      '<span style="font-size:12px;color:var(--muted)">si aprono in una scheda nuova · nessuno viene inviato</span>')}
 
     ${collCard}
 

@@ -298,7 +298,25 @@ const chiama = async (metodo, url, corpo) => {
     await chiama('POST', '/dashboard/contratti/stato', { tipo: 'committente', soggetto_id: idProg, stato: 'da_inviare' });
     await db.query('DELETE FROM fasi_progetto WHERE id=$1', [ko.rows[0].id]);
 
-    console.log('\n16. 🔬 Adesso la rompo apposta');
+    // ── Le sezioni pieghevoli della pagina progetto ─────────────────────────
+    console.log('\n16. Le sezioni della pagina progetto si piegano');
+    await db.query("UPDATE progetti SET drive_url='https://drive.example/x' WHERE id=$1", [idProg]);
+    await db.query("UPDATE percorsi SET drive_url='https://drive.example/y' WHERE id=$1", [idPerc]);
+    r = await chiama('GET', `/dashboard/progetti/${idProg}`);
+    const nSez = (r.testo.match(/<details class="sec"/g) || []).length;
+    dice(nSez >= 6, `ci sono tutte le sezioni pieghevoli (trovate ${nSez})`);
+    for (const t of ['Specifiche di Progetto', 'Contratti', 'Fasi del progetto', 'Percorsi', 'Amministrazione'])
+      dice(new RegExp('<details class="sec"[^>]*>[\\s\\S]{0,700}' + t).test(r.testo), `  «${t}» è pieghevole`);
+    // ⛔ LA TRAPPOLA NUMERO UNO: un pulsante dentro un <summary> che non ferma il
+    //    clic chiude la sezione invece di fare il suo mestiere. Qui si controlla
+    //    che OGNI pulsante dentro un summary lo fermi.
+    const sommari = r.testo.match(/<summary[\s\S]*?<\/summary>/g) || [];
+    const distratti = sommari.flatMap(x => (x.match(/onclick="(?!event\.stopPropagation)[^"]*"/g) || []));
+    dice(distratti.length === 0,
+      'ogni pulsante nelle intestazioni ferma il clic (altrimenti chiuderebbe la sezione)',
+      distratti.join(' · '));
+
+    console.log('\n17. 🔬 Adesso la rompo apposta');
     for (const [corpo, et] of [
       [{ tipo: 'boh',         soggetto_id: idProg, stato: 'da_inviare' }, 'un tipo inventato'],
       [{ tipo: 'committente', soggetto_id: idProg, stato: 'firmata'    }, 'uno stato che non esiste più'],
@@ -317,7 +335,7 @@ const chiama = async (metodo, url, corpo) => {
   } catch (e) {
     ko++; console.log('\n🔴 ECCEZIONE: ' + e.message + '\n' + e.stack.split('\n')[1]);
   } finally {
-    console.log('\n17. Pulizia (solo le righe create da questa prova)');
+    console.log('\n18. Pulizia (solo le righe create da questa prova)');
     try {
       if (idProg) { await db.query('DELETE FROM contratti WHERE progetto_id=$1 OR partecipazione_id IN (SELECT id FROM partecipazioni WHERE progetto_id=$1)', [idProg]);
                     await db.query('DELETE FROM percorso_partecipanti WHERE percorso_id IN (SELECT id FROM percorsi WHERE progetto_id=$1)', [idProg]);
