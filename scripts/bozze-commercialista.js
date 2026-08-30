@@ -55,6 +55,24 @@ const PARAMETRI = '- Riduzione del turnover del reparto\n'
 // un percorso condiviso, percorsi individuali tutti uguali, percorsi individuali
 // DIVERSI (che si elencano per nome — regola di Germano del 29/08).
 const SEDUTE_CONDIVISE  = { condivise: 10 };
+
+// Il piano delle rate. ⭐ L'innesco dice quando si EMETTE la fattura, i giorni
+// sono il termine di PAGAMENTO (Germano, 30/08). Entra solo nei pacchetti e nei
+// progetti strutturati: uno Standard a sessione si fattura ogni mese a rimessa
+// diretta e non ha rate.
+// ⚠️ Sta in DUE delle quattro versioni del contratto Committente, come i
+//    parametri: così risulta una variante e finisce in NERO, invece di sembrare
+//    testo comune da saltare. Il commercialista non l'ha mai letto.
+const RATE_PROGETTO = [
+  { etichetta: 'Acconto',       importo: 600, innesco: 'firma', giorni: 30 },
+  { etichetta: 'Metà percorso', importo: 800, innesco: 'meta',  giorni: 30 },
+  { etichetta: 'Saldo',         importo: 600, innesco: 'fine',  giorni: 30 },
+];
+const RATE_PACCHETTO = [
+  { etichetta: 'Acconto', importo: 600, innesco: 'firma', giorni: 30 },
+  { etichetta: 'Saldo',   importo: 600, innesco: 'fine',  giorni: 30 },
+];
+const RATE_QUOTA = [{ etichetta: 'Quota', importo: 500, innesco: 'firma', giorni: 30 }];
 const SEDUTE_UGUALI     = { individuali: [{ nome: 'MARIO ROSSI', n: 6 }, { nome: 'ANNA BIANCHI', n: 6 }] };
 const SEDUTE_DIVERSE    = { individuali: [{ nome: 'MARIO ROSSI', n: 8 }, { nome: 'ANNA BIANCHI', n: 5 }] };
 
@@ -64,7 +82,7 @@ const FAMIGLIE = [
     cartella: 'Persona Fisica',
     versioni: [
       ['Contratto — Standard a sessione.pdf',   () => T.personaFisica({ cliente: CLIENTE, percorso: percorso('Standard') })],
-      ['Contratto — Pacchetto.pdf',             () => T.personaFisica({ cliente: CLIENTE, percorso: percorso('Pacchetto') })],
+      ['Contratto — Pacchetto.pdf',             () => T.personaFisica({ cliente: CLIENTE, percorso: percorso('Pacchetto'), rate: RATE_PACCHETTO })],
       ['Contratto — Pro bono.pdf',              () => T.personaFisica({ cliente: CLIENTE, percorso: percorso('Pro bono') })],
       ['Contratto — Scambio di servizi.pdf',    () => T.personaFisica({ cliente: CLIENTE, percorso: percorso('Scambio servizi') })],
     ],
@@ -72,7 +90,7 @@ const FAMIGLIE = [
   {
     cartella: 'Persona Fisica',
     versioni: [
-      ['Contratto — Partecipante a progetto, percorso individuale.pdf', () => T.partecipanteProgetto({ cliente: CLIENTE, progetto: progetto('individuale-multiplo', 1500), committente: COMMITTENTE, quota: 500, nSessioni: 6 })],
+      ['Contratto — Partecipante a progetto, percorso individuale.pdf', () => T.partecipanteProgetto({ cliente: CLIENTE, progetto: progetto('individuale-multiplo', 1500), committente: COMMITTENTE, quota: 500, nSessioni: 6, rate: RATE_QUOTA })],
       ['Contratto — Partecipante a progetto, percorso collettivo.pdf',  () => T.partecipanteProgetto({ cliente: CLIENTE, progetto: progetto('team', 1500),                committente: COMMITTENTE, quota: 500, nSessioni: 10 })],
     ],
   },
@@ -97,9 +115,9 @@ const FAMIGLIE = [
       //    un contratto vero può contenere sta almeno in un documento — e risulta
       //    una variante, quindi in NERO, invece di sembrare testo da saltare.
       ['Contratto Committente — interamente a suo carico, percorso individuale.pdf',      () => T.personaGiuridica({ committente: COMMITTENTE, progetto: progetto('individuale-multiplo', 2000, PARAMETRI), nPartecipanti: 2, sessioni: SEDUTE_UGUALI })],
-      ['Contratto Committente — interamente a suo carico, percorso collettivo.pdf',       () => T.personaGiuridica({ committente: COMMITTENTE, progetto: progetto('team', 2000),                          nPartecipanti: 4, sessioni: SEDUTE_CONDIVISE })],
+      ['Contratto Committente — interamente a suo carico, percorso collettivo.pdf',       () => T.personaGiuridica({ committente: COMMITTENTE, progetto: progetto('team', 2000),                          nPartecipanti: 4, sessioni: SEDUTE_CONDIVISE, rate: RATE_PROGETTO })],
       ['Contratto Committente — co-finanziato dai partecipanti, percorso individuale.pdf', () => T.personaGiuridica({ committente: COMMITTENTE, progetto: progetto('individuale-multiplo', 1500),           nPartecipanti: 2, sessioni: SEDUTE_DIVERSE })],
-      ['Contratto Committente — co-finanziato dai partecipanti, percorso collettivo.pdf',  () => T.personaGiuridica({ committente: COMMITTENTE, progetto: progetto('team', 1500, PARAMETRI),                nPartecipanti: 4, sessioni: SEDUTE_CONDIVISE })],
+      ['Contratto Committente — co-finanziato dai partecipanti, percorso collettivo.pdf',  () => T.personaGiuridica({ committente: COMMITTENTE, progetto: progetto('team', 1500, PARAMETRI),                nPartecipanti: 4, sessioni: SEDUTE_CONDIVISE, rate: RATE_PROGETTO })],
     ],
   },
 ];
