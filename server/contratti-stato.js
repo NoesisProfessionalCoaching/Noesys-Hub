@@ -74,4 +74,23 @@ const TIPI = {
   partecipante: { colonna: 'partecipazione_id', etichetta: 'Partecipante' },
 };
 
-module.exports = { STATI, AVANTI, INDIETRO, TIPI, CHIAVI, valido, stato, badge };
+/**
+ * La cella «A che punto è»: il pallino, il passo avanti e — se c'è — l'azione di
+ * modifica. Sta qui e non nelle pagine perché la usano sia la card Contratti del
+ * progetto sia la scheda del cliente individuale: scriverla due volte vorrebbe
+ * dire due pulsantiere che prima o poi dicono cose diverse.
+ * ⚠️ Chi la mette in pagina deve avere una funzione `muoviContratto(tipo, id, stato)`.
+ * ⭐ Il pulsante dice COSA STAI DICHIARANDO («l'ho inviata»), non a quale stato
+ *   stai passando: è la stessa cosa detta dalla parte di chi lavora.
+ */
+function cella(tipo, id, st) {
+  const av = AVANTI[st];
+  const ind = INDIETRO[st];
+  return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+    ${badge(st)}
+    ${av ? `<button onclick="muoviContratto('${tipo}','${id}','${av.a}')" class="btn btn-neutral btn-sm">${av.label}</button>` : ''}
+    ${ind ? `<button onclick="muoviContratto('${tipo}','${id}','${ind.a}')" style="background:none;border:none;padding:0;font-size:12px;color:var(--muted);text-decoration:underline;cursor:pointer" title="Riporta il flusso a «da inviare»: il documento cambia, quindi va rimandato">${ind.label}</button>` : ''}
+  </div>`;
+}
+
+module.exports = { STATI, AVANTI, INDIETRO, TIPI, CHIAVI, valido, stato, badge, cella };

@@ -146,7 +146,35 @@ const chiama = async (metodo, url, corpo) => {
     dice(r.testo.includes('informativa firmata'), 'spuntata in anagrafica, la pagina del progetto la mostra firmata');
     dice(!r.testo.includes('informativa non ancora firmata'), 'e non dice piu il contrario');
 
-    console.log('\n9. 🔬 Adesso la rompo apposta');
+    // ── Il contratto del CLIENTE INDIVIDUALE, sulla sua scheda ──────────────
+    console.log('\n9. Lo stesso ciclo sulla scheda del cliente individuale');
+    const pInd = await db.query(
+      `INSERT INTO percorsi (id, client_id, tipo, n_sessioni_previste, stato)
+       VALUES (gen_random_uuid(), $1, 'Individuale', 8, 'attivo') RETURNING id`, [idCli]);
+    const idPercInd = pInd.rows[0].id;
+    r = await chiama('GET', `/dashboard/clients/${idCli}`);
+    dice(r.stato === 200, 'la scheda del cliente risponde 200', r.stato);
+    dice(r.testo.includes('Da redigere'), 'e mostra il contratto come «Da redigere»');
+    r = await chiama('POST', '/dashboard/contratti/stato', { tipo: 'cliente', soggetto_id: idPercInd, stato: 'in_attesa' });
+    dice(r.stato === 200, 'lo stato si muove anche di qui', r.stato + ' ' + r.testo.slice(0, 90));
+    r = await chiama('GET', `/dashboard/clients/${idCli}`);
+    dice(r.testo.includes('In attesa di approvazione'), 'e la scheda ricaricata lo mostra');
+    const cInd = await db.query("SELECT stato FROM contratti WHERE tipo='cliente' AND percorso_id=$1", [idPercInd]);
+    dice(cInd.rows.length === 1 && cInd.rows[0].stato === 'in_attesa', 'nel database c\'è una riga sola, giusta');
+    // ── La sezione «Contratti» in Amministrazione ───────────────────────────
+    // ⚠️ Questa prova esiste perché il 30/08, scrivendo la pagina, avevo chiamato
+    //    una `footerNoesys()` che non esiste: `node --check` non se ne accorge,
+    //    e la pagina avrebbe risposto «Errore» come il 28/08.
+    console.log('\n10. La sezione Contratti in Amministrazione');
+    r = await chiama('GET', '/dashboard/amministrazione/contratti');
+    dice(r.stato === 200, 'la pagina risponde 200 (non «Errore»)', r.stato + ' ' + r.testo.slice(0, 120));
+    dice(r.testo.includes('Percorsi singoli') && r.testo.includes('Progetti strutturati'),
+      'ci sono i DUE elenchi separati che ha chiesto Germano');
+    dice(r.testo.includes(marca), 'e dentro c\'è il caso appena costruito');
+    dice(r.testo.includes('In attesa di approvazione'), 'con lo stato vero del contratto del cliente');
+    dice(r.testo.includes('/dashboard/amministrazione/contratti'), 'e la voce sta nel menù dell\'area');
+
+    console.log('\n11. 🔬 Adesso la rompo apposta');
     for (const [corpo, et] of [
       [{ tipo: 'boh',         soggetto_id: idProg, stato: 'da_inviare' }, 'un tipo inventato'],
       [{ tipo: 'committente', soggetto_id: idProg, stato: 'firmata'    }, 'uno stato che non esiste più'],
@@ -165,14 +193,15 @@ const chiama = async (metodo, url, corpo) => {
   } catch (e) {
     ko++; console.log('\n🔴 ECCEZIONE: ' + e.message + '\n' + e.stack.split('\n')[1]);
   } finally {
-    console.log('\n10. Pulizia (solo le righe create da questa prova)');
+    console.log('\n12. Pulizia (solo le righe create da questa prova)');
     try {
       if (idProg) { await db.query('DELETE FROM contratti WHERE progetto_id=$1 OR partecipazione_id IN (SELECT id FROM partecipazioni WHERE progetto_id=$1)', [idProg]);
                     await db.query('DELETE FROM percorso_partecipanti WHERE percorso_id IN (SELECT id FROM percorsi WHERE progetto_id=$1)', [idProg]);
                     await db.query('DELETE FROM partecipazioni WHERE progetto_id=$1', [idProg]);
                     await db.query('DELETE FROM percorsi WHERE progetto_id=$1', [idProg]);
                     await db.query('DELETE FROM progetti WHERE id=$1', [idProg]); }
-      if (idCli)  { await db.query('DELETE FROM percorsi WHERE client_id=$1', [idCli]); await db.query('DELETE FROM clients WHERE id=$1', [idCli]); }
+      if (idCli)  { await db.query('DELETE FROM contratti WHERE percorso_id IN (SELECT id FROM percorsi WHERE client_id=$1)', [idCli]);
+                    await db.query('DELETE FROM percorsi WHERE client_id=$1', [idCli]); await db.query('DELETE FROM clients WHERE id=$1', [idCli]); }
       if (idComm) await db.query('DELETE FROM committenti WHERE id=$1', [idComm]);
       console.log('   ✓ righe di prova rimosse');
     } catch (e) { console.log('   ⚠️ pulizia incompleta: ' + e.message); }

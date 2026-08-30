@@ -529,7 +529,14 @@ router.get('/dashboard/clients/:id', requireCoach, async (req, res) => {
                  WHERE pf.stato <> 'annullata'
                    AND (pc.client_id = $1 OR pa.client_id = $1)`, [req.params.id]),
     ]);
+    // Fetta 6a — a che punto è la bozza di contratto dei percorsi di questo
+    // cliente. «Da redigere» non c'è nel database: è l'assenza della riga.
+    const contrCli = await db.query(
+      `SELECT c.percorso_id, c.stato FROM contratti c
+         JOIN percorsi p ON p.id = c.percorso_id
+        WHERE c.tipo = 'cliente' AND p.client_id = $1`, [req.params.id]);
     res.send(clientDetailPage(client, sr.rows, pr.rows, payr.rows, sedr.rows, prjr.rows, permr.rows, req, {
+      statiContratti: new Map(contrCli.rows.map(c => [c.percorso_id, c.stato])),
       moduliLetti: modr.rows,
       proforme: pfr.rows,
       maturato: mat[0] || null,
@@ -2758,6 +2765,55 @@ const CAMPI_EMITTENTE = [
   'banca', 'email', 'telefono',
 ];
 
+// ═══════════════════════════════════════════════════════════════════════════
+// AMMINISTRAZIONE → CONTRATTI — Fetta 6a (30/08). Idea di Germano: «il posto più
+// sensato sarebbe averle in amministrazione, è lì che dovrei avere tutto sotto
+// controllo».
+// ⭐ DUE ELENCHI SEPARATI, come ha chiesto lui: i percorsi singoli da una parte,
+//    i progetti strutturati dall'altra. Sono due mestieri diversi e mescolarli
+//    farebbe un elenco che non si legge.
+// ⚠️ Qui si GUARDA. Lo stato si cambia dove il contratto si fa — la scheda del
+//    cliente o la card del progetto — accanto al pulsante che genera il PDF.
+// 🔴 «Da redigere» non sta nel database: è l'assenza della riga. Per questo si
+//    parte dai SOGGETTI (percorsi, progetti, partecipazioni) e i contratti si
+//    agganciano con un LEFT JOIN. Partendo dai contratti si vedrebbero solo
+//    quelli già mossi — cioè si perderebbe di vista proprio quello che manca.
+// ═══════════════════════════════════════════════════════════════════════════
+router.get('/dashboard/amministrazione/contratti', requireCoach, async (req, res) => {
+  try {
+    const [singoli, progetti, partecipanti] = await Promise.all([
+      db.query(`
+        SELECT p.id AS percorso_id, p.tipo, p.stato AS stato_percorso, p.prezzo,
+               cl.id AS client_id, cl.name, cl.consenso_privacy,
+               c.stato AS stato_contratto
+          FROM percorsi p
+          JOIN clients cl ON cl.id = p.client_id
+          LEFT JOIN contratti c ON c.tipo = 'cliente' AND c.percorso_id = p.id
+         WHERE p.progetto_id IS NULL
+         ORDER BY cl.cognome NULLS LAST, cl.nome, p.data_inizio DESC NULLS LAST`),
+      db.query(`
+        SELECT pr.id AS progetto_id, pr.titolo, pr.stato AS stato_progetto, pr.tipo,
+               k.denominazione, c.stato AS stato_contratto
+          FROM progetti pr
+          JOIN committenti k ON k.id = pr.committente_id
+          LEFT JOIN contratti c ON c.tipo = 'committente' AND c.progetto_id = pr.id
+         ORDER BY pr.titolo`),
+      db.query(`
+        SELECT pa.id AS part_id, pa.progetto_id, pa.quota_coachee,
+               cl.id AS client_id, cl.name, cl.consenso_privacy,
+               c.stato AS stato_contratto
+          FROM partecipazioni pa
+          JOIN clients cl ON cl.id = pa.client_id
+          LEFT JOIN contratti c ON c.tipo = 'partecipante' AND c.partecipazione_id = pa.id
+         ORDER BY cl.cognome NULLS LAST, cl.nome`),
+    ]);
+    res.send(contrattiAmmPage(singoli.rows, progetti.rows, partecipanti.rows, req));
+  } catch (err) {
+    console.error('[amm/contratti]', err);
+    res.status(500).send('Errore nel caricamento dei contratti');
+  }
+});
+
 router.get('/dashboard/amministrazione/emittente', requireCoach, async (req, res) => {
   try {
     const r = await db.query('SELECT * FROM emittente WHERE id = 1');
@@ -4949,6 +5005,13 @@ Germano`;
               ? `<a href="/dashboard/clients/${client.id}/percorsi/${percorsoContratto.id}/contratto" target="_blank" class="btn btn-primary btn-sm" style="text-decoration:none">📄 Prepara il contratto</a>`
               : `<button class="btn btn-off btn-sm" disabled title="Serve un percorso individuale: il contratto prende da lì la modalità, il prezzo e il numero di sessioni">📄 Prepara il contratto</button>`}
           </div>
+          ${/* Fetta 6a — lo stato della bozza, con gli stessi pulsanti della card
+                del progetto: la cella la disegna `contratti-stato`, non questa
+                pagina, così le due pulsantiere non possono divergere. */ ''}
+          ${percorsoContratto
+            ? `<div style="margin:8px 0 2px">${contrattiStato.cella('cliente', percorsoContratto.id,
+                 (fatt.statiContratti && fatt.statiContratti.get(percorsoContratto.id)) || 'da_redigere')}</div>`
+            : ''}
           <div class="az-stato">${!percorsoContratto
             ? 'Compare quando il cliente ha un percorso individuale.'
             : `Lo prepara sul percorso <strong>${esc(percorsoContratto.tipo || 'individuale')}</strong>, modalità <strong>${esc(modalitaContratto || '—')}</strong>.` +
@@ -5587,6 +5650,18 @@ Germano`;
       }
       location.reload();
     }
+    // Fetta 6a — muove lo stato della bozza di contratto. Stessa rotta della card
+    // del progetto: una sola porta per tutti e tre i tipi di contratto.
+    // ⚠️ Qui il tipo è sempre 'cliente' e non congela niente: le specifiche di
+    //    progetto non esistono in un percorso individuale, quindi niente conferma.
+    async function muoviContratto(tipo, soggetto, stato) {
+      const r = await fetch('/dashboard/contratti/stato', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tipo: tipo, soggetto_id: soggetto, stato: stato }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || d.error) { alert('Errore: ' + (d.error || r.status)); return; }
+      location.reload();
+    }
     async function scanDrive() {
       const btn = document.getElementById('scan-btn');
       if (btn) { btn.disabled = true; btn.textContent = '⟳ Cerco… (può volerci qualche secondo)'; }
@@ -6210,6 +6285,7 @@ function leadsPage(leads, req) {
 function amNav(attiva) {
   const voci = [
     { key: 'anomalie',  label: 'Anomalie',             href: '/dashboard/amministrazione' },
+    { key: 'contratti', label: 'Contratti',            href: '/dashboard/amministrazione/contratti' },
     { key: 'proforma',  label: 'Proforma',             href: '/dashboard/amministrazione/proforma' },
     { key: 'incassi',   label: 'Incassi',              off: true },
     { key: 'fatture',   label: 'Fatture da preparare', off: true },
@@ -6853,6 +6929,99 @@ function proformaPage(daChiedere, proforme, req) {
 // riceve non sa dove pagare — quindi la pagina non si limita a raccogliere i
 // dati: dice in cima, con parole intere, se si può emettere o cosa manca.
 // ═══════════════════════════════════════════════════════════════════════════
+/**
+ * L'elenco di TUTTI i contratti, diviso in due come ha chiesto Germano: percorsi
+ * singoli e progetti strutturati.
+ * ⚠️ Si guarda e basta: lo stato si cambia dove il contratto si fa. I link a
+ *    destra ci portano.
+ */
+function contrattiAmmPage(singoli, progetti, partecipanti, req) {
+  const st = (x) => x || 'da_redigere';
+  // Il conto per stato: è la riga che dice «dove sono i problemi» senza contare
+  // le righe a occhio.
+  const conta = (righe) => {
+    const m = new Map();
+    for (const r of righe) m.set(st(r.stato_contratto), (m.get(st(r.stato_contratto)) || 0) + 1);
+    return contrattiStato.STATI.filter(s => m.get(s.key))
+      .map(s => `<span class="badge" style="background:${s.bg};color:${s.color}">${m.get(s.key)} ${s.label.toLowerCase()}</span>`).join(' ');
+  };
+  const consenso = (r) => r.consenso_privacy
+    ? '<span style="font-size:11px;color:#2f6b46">✓ informativa</span>'
+    : '<span style="font-size:11px;color:#8a6d1e">informativa da firmare</span>';
+
+  const rigaSingolo = (r) => `<tr>
+    <td><a href="/dashboard/clients/${r.client_id}" style="color:var(--blue);text-decoration:none">${esc(r.name || '—')}</a>
+        ${r.stato_percorso !== 'attivo' ? '<span class="badge badge-inactive">percorso concluso</span>' : ''}</td>
+    <td style="font-size:12px;color:var(--muted)">${esc(r.tipo || 'Individuale')}</td>
+    <td>${contrattiStato.badge(st(r.stato_contratto))}</td>
+    <td>${consenso(r)}</td>
+    <td style="text-align:right"><a href="/dashboard/clients/${r.client_id}" style="font-size:12px">apri la scheda ↗</a></td>
+  </tr>`;
+
+  const rigaProgetto = (g) => {
+    const suoi = partecipanti.filter(p => p.progetto_id === g.progetto_id);
+    const paganti = suoi.filter(p => Number(p.quota_coachee) > 0);
+    return `<tr>
+      <td><a href="/dashboard/progetti/${g.progetto_id}" style="color:var(--blue);text-decoration:none"><strong>${esc(g.titolo || '—')}</strong></a>
+          <div style="font-size:12px;color:var(--muted)">${esc(g.denominazione || '')}</div></td>
+      <td style="font-size:12px;color:var(--muted)">Committente</td>
+      <td>${contrattiStato.badge(st(g.stato_contratto))}</td>
+      <td style="font-size:11px;color:var(--muted)">${suoi.length} ${suoi.length === 1 ? 'partecipante' : 'partecipanti'}</td>
+      <td style="text-align:right"><a href="/dashboard/progetti/${g.progetto_id}" style="font-size:12px">apri il progetto ↗</a></td>
+    </tr>` + paganti.map(p => `<tr>
+      <td style="padding-left:26px"><a href="/dashboard/clients/${p.client_id}" style="color:var(--blue);text-decoration:none">${esc(p.name || '—')}</a></td>
+      <td style="font-size:12px;color:var(--muted)">Partecipante</td>
+      <td>${contrattiStato.badge(st(p.stato_contratto))}</td>
+      <td>${consenso(p)}</td>
+      <td></td>
+    </tr>`).join('') + suoi.filter(p => !(Number(p.quota_coachee) > 0)).map(p => `<tr>
+      <td style="padding-left:26px;color:var(--muted)">${esc(p.name || '—')}</td>
+      <td style="font-size:12px;color:#aaa">non firma un contratto</td>
+      <td><span style="font-size:12px;color:#aaa">—</span></td>
+      <td>${consenso(p)}</td>
+      <td></td>
+    </tr>`).join('');
+  };
+
+  const tabella = (intestazioni, corpo, vuoto) => corpo
+    ? `<div style="overflow-x:auto"><table style="width:100%;min-width:640px">
+         <thead><tr>${intestazioni.map(h => `<th style="text-align:left;font-size:12px;color:var(--muted);padding-bottom:6px">${h}</th>`).join('')}</tr></thead>
+         <tbody>${corpo}</tbody></table></div>`
+    : `<div style="font-size:13px;color:var(--muted)">${vuoto}</div>`;
+
+  const tuttiPart = partecipanti.filter(p => Number(p.quota_coachee) > 0);
+  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Contratti</title>${baseStyle()}</head><body>
+  ${headerNoesys({ mondo: 'amministrazione' })}
+  <div class="container" style="max-width:1200px">
+    <h1>Amministrazione</h1>
+    ${amNav('contratti')}
+    <h2 style="margin-bottom:4px">Contratti</h2>
+    <p style="color:var(--muted);font-size:13px;margin-bottom:20px">
+      A che punto è ogni contratto. Qui si guarda: lo stato si cambia dove il contratto si prepara —
+      la scheda del cliente o la pagina del progetto — e i link a destra ti ci portano.
+    </p>
+
+    <div class="card" style="margin-bottom:18px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+        <h2 style="margin:0">Percorsi singoli</h2>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">${conta(singoli)}</div>
+      </div>
+      ${tabella(['Cliente', 'Percorso', 'Contratto', 'Privacy', ''], singoli.map(rigaSingolo).join(''),
+        'Nessun percorso individuale fuori da un progetto.')}
+    </div>
+
+    <div class="card">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+        <h2 style="margin:0">Progetti strutturati</h2>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">${conta(progetti)} ${tuttiPart.length ? '<span style="font-size:12px;color:var(--muted)">+ ' + tuttiPart.length + ' contratti di partecipanti</span>' : ''}</div>
+      </div>
+      ${tabella(['Chi firma', 'Ruolo', 'Contratto', '', ''], progetti.map(rigaProgetto).join(''),
+        'Nessun progetto con committente.')}
+    </div>
+  </div>
+  </body></html>`;
+}
+
 function emittentePage(e, verdetto, salvato, req) {
   const v = k => attr(e[k] || '');
   const campo = (id, etichetta, extra = '') =>
@@ -7446,15 +7615,8 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
   const cellaConsenso = (k) => k.consenso_privacy
     ? `<div style="font-size:11px;color:#2f6b46;margin-top:5px">✓ informativa firmata${k.consenso_data ? ' il ' + itDate(k.consenso_data) : ''}</div>`
     : `<div style="font-size:11px;color:#8a6d1e;margin-top:5px">informativa non ancora firmata — <a href="/dashboard/clients/${k.client_id}" style="color:inherit">si spunta in anagrafica ↗</a></div>`;
-  const cellaStato = (tipo, id, st) => {
-    const av  = contrattiStato.AVANTI[st];
-    const ind = contrattiStato.INDIETRO[st];
-    return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-      ${contrattiStato.badge(st)}
-      ${av ? `<button onclick="muoviContratto('${tipo}','${id}','${av.a}')" class="btn btn-neutral btn-sm">${av.label}</button>` : ''}
-      ${ind ? `<button onclick="muoviContratto('${tipo}','${id}','${ind.a}')" style="background:none;border:none;padding:0;font-size:12px;color:var(--muted);text-decoration:underline;cursor:pointer" title="Riporta il flusso a «da inviare»: il documento cambia, quindi va rimandato">${ind.label}</button>` : ''}
-    </div>`;
-  };
+  const cellaStato = contrattiStato.cella;
+
   // ⭐ C3 — l'insieme delle rate gia dentro una proforma viva: da qui esce lo
   // stato «Chiesta». Se non arriva, `statoDi` ripiega sulla colonna salvata.
   rateChieste = rateChieste || new Map();
