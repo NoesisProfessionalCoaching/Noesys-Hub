@@ -35,10 +35,14 @@ const INNESCHI = {
 };
 
 // ⭐ Il piano è di CHI PAGA, non del committente. Un partecipante che paga la
-// sua quota ne ha uno anche lui — solo che il suo è **una tranche sola,
-// anticipata, a rimessa diretta** (Germano, 10/08: «Partecipante che paga la sua
-// quota → a tranche, 1 alla firma, rimessa diretta»). Zero giorni: si paga
-// subito, non a 30 giorni.
+// sua quota ne ha uno anche lui: una tranche sola, alla firma.
+//
+// 🔴 CORRETTO IL 30/08 — prima erano ZERO giorni, «rimessa diretta», da una
+//    decisione di Germano del 10/08. Quel giorno lui l'ha cambiata: «la rimessa
+//    diretta va sui clienti dei percorsi individuali; sui pacchetti e sui
+//    percorsi strutturati vale la regola dei 30 giorni». Un partecipante a un
+//    progetto sta nel secondo gruppo. ⚠️ La nota vecchia diceva il contrario ed
+//    è stata riscritta: due fonti che si contraddicono ingannano fra sei mesi.
 // Resta uno strumento solo: se un domani un partecipante dovesse pagare in due
 // volte, si spezza la sua tranche come si fa con quelle del committente.
 const PROPOSTE = {
@@ -48,7 +52,7 @@ const PROPOSTE = {
     { etichetta: 'Saldo',         quota: 0.30, innesco: 'fine',  giorni: 30 },
   ],
   partecipante: [
-    { etichetta: 'Quota',         quota: 1,    innesco: 'firma', giorni: 0 },
+    { etichetta: 'Quota',         quota: 1,    innesco: 'firma', giorni: 30 },
   ],
 };
 

@@ -1186,15 +1186,18 @@ router.post('/dashboard/scan-drive', requireCoach, express.json(), async (req, r
 //    e finché la banda «BOZZA NON VALIDATA» è accesa non deve partire a nessuno.
 router.get('/dashboard/clients/:id/percorsi/:pid/contratto', requireCoach, async (req, res) => {
   try {
-    const [cq, pq] = await Promise.all([
+    const [cq, pq, trq] = await Promise.all([
       db.query('SELECT * FROM clients WHERE id=$1', [req.params.id]),
       db.query('SELECT * FROM percorsi WHERE id=$1 AND client_id=$2', [req.params.pid, req.params.id]),
+      // Il piano delle rate del percorso. Esiste solo per i PACCHETTI: la rotta
+      // che lo salva rifiuta le altre modalità, quindi qui basta leggerlo.
+      db.query('SELECT ordine, etichetta, importo, innesco, giorni FROM tranche_progetto WHERE percorso_id=$1 ORDER BY ordine', [req.params.pid]),
     ]);
     const cliente = cq.rows[0];
     const percorso = pq.rows[0];
     if (!cliente || !percorso) return res.status(404).send('Cliente o percorso non trovato');
 
-    const blocchi = contrattoTesti.personaFisica({ cliente, percorso });
+    const blocchi = contrattoTesti.personaFisica({ cliente, percorso, rate: trq.rows });
     // Il contratto esce GIÀ FIRMATO (Germano, 27/08). Non c'è un passo di
     // approvazione da proteggere: questo PDF non si salva da nessuna parte —
     // nasce alla richiesta, si apre nel browser e sparisce. Quando la Mail 2
@@ -1217,7 +1220,7 @@ router.get('/dashboard/clients/:id/percorsi/:pid/contratto', requireCoach, async
 // sceglie da sé fra le due versioni confrontando quota_totale con
 // quota_committente: nessuno digita una percentuale.
 async function datiProgetto(progettoId) {
-  const [pq, paq, peq] = await Promise.all([
+  const [pq, paq, peq, trq] = await Promise.all([
     db.query(`SELECT p.*, to_jsonb(c) AS committente
                 FROM progetti p JOIN committenti c ON c.id = p.committente_id
                WHERE p.id = $1`, [progettoId]),
@@ -1233,6 +1236,10 @@ async function datiProgetto(progettoId) {
                 FROM percorsi pe LEFT JOIN clients cl ON cl.id = pe.client_id
                WHERE pe.progetto_id = $1
                ORDER BY cl.cognome NULLS LAST, cl.nome`, [progettoId]),
+    // Fetta «tranche nel contratto» (30/08): il piano di CHI PAGA. Quello del
+    // Committente ha `partecipazione_id` vuoto; ogni partecipante ha il suo.
+    db.query(`SELECT id, partecipazione_id, ordine, etichetta, importo, innesco, giorni
+                FROM tranche_progetto WHERE progetto_id = $1 ORDER BY ordine`, [progettoId]),
   ]);
   if (!pq.rows.length) return null;
   const progetto = pq.rows[0];
@@ -1254,7 +1261,12 @@ async function datiProgetto(progettoId) {
         n: intero(x.n_sessioni_previste),
       })) };
 
-  return { progetto, committente: progetto.committente || {}, partecipanti, sommaCoachee, percorsi, sessioni };
+  const rate = trq.rows;
+  const rateCommittente = rate.filter(t => !t.partecipazione_id);
+  const ratePartecipante = (partId) => rate.filter(t => t.partecipazione_id === partId);
+
+  return { progetto, committente: progetto.committente || {}, partecipanti, sommaCoachee, percorsi, sessioni,
+           rateCommittente, ratePartecipante };
 }
 
 // 🔴 IL GUARDIANO DELLE QUOTE. Senza, si stampa al Committente un contratto che
@@ -1283,7 +1295,7 @@ router.get('/dashboard/progetti/:id/contratto', requireCoach, async (req, res) =
     if (guasto) return res.status(400).send(guasto + ' Il contratto non viene preparato: correggi il piano e riprova.');
     const blocchi = contrattoTesti.personaGiuridica({
       committente: d.committente, progetto: d.progetto, nPartecipanti: d.partecipanti.length,
-      sessioni: d.sessioni,
+      sessioni: d.sessioni, rate: d.rateCommittente,
     });
     const pdf = await contratto.costruisci(blocchi, { firmato: true });
     res.setHeader('Content-Type', 'application/pdf');
@@ -1314,6 +1326,7 @@ router.get('/dashboard/progetti/:id/partecipanti/:partId/contratto', requireCoac
     const nSessioni = d.sessioni.condivise != null ? d.sessioni.condivise : (suo ? suo.n : null);
     const blocchi = contrattoTesti.partecipanteProgetto({
       cliente: pt, progetto: d.progetto, committente: d.committente, quota, nSessioni,
+      rate: d.ratePartecipante(pt.part_id),
     });
     const pdf = await contratto.costruisci(blocchi, { firmato: true });
     res.setHeader('Content-Type', 'application/pdf');

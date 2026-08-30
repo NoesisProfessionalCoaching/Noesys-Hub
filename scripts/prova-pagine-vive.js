@@ -323,7 +323,41 @@ const chiama = async (metodo, url, corpo) => {
       'l\'Amministrazione è una card come le altre, senza contenitori in più');
     dice(!/<div id="amm">/.test(r.testo), 'e non c\'è nessun involucro rimasto in giro');
 
-    console.log('\n17. 🔬 Adesso la rompo apposta');
+    // ── Le rate dentro il testo del contratto ───────────────────────────────
+    // Testi puri: si chiamano direttamente, senza passare dal PDF (che avrebbe
+    // bisogno della carta intestata su Drive, e qui le chiavi non ci sono).
+    console.log('\n17. Il piano delle rate dentro il contratto');
+    const T = require('../server/contratto-testi');
+    const testo = (b) => b.filter(x => typeof x.x === 'string').map(x => x.x).join('\n');
+    const rate3 = [{ etichetta: 'Acconto', importo: 600, innesco: 'firma', giorni: 30 },
+                   { etichetta: 'Saldo',   importo: 900, innesco: 'fine',  giorni: 30 }];
+    const cliente = { nome: 'M', cognome: 'R', name: 'M R' };
+    const prog = { tipo: 'team', titolo: 'X', quota_totale: 2000, quota_committente: 1500, data_inizio: '2026-10-01' };
+
+    const pac = testo(T.personaFisica({ cliente, percorso: { tipo: 'Individuale', modalita: 'Pacchetto', prezzo: 1500, n_sessioni_previste: 8 }, rate: rate3 }));
+    dice(pac.includes('Acconto — € 600,00 + IVA 22% — fattura alla firma'), 'il PACCHETTO elenca le rate');
+    dice(pac.includes('si salda entro 30 giorni'), '  e dice che si pagano a 30 giorni');
+    dice(!/fattura a 30 giorni/.test(pac),
+      '  ⚠️ e NON dice «fattura a 30 giorni»: sommato al pagamento farebbe 60');
+
+    const std = testo(T.personaFisica({ cliente, percorso: { tipo: 'Individuale', modalita: 'Standard', prezzo: 150, n_sessioni_previste: 8 } }));
+    dice(std.includes('cadenza mensile') && std.includes('rimessa diretta'),
+      'lo STANDARD a sessione si fattura ogni mese, a rimessa diretta');
+    dice(!std.includes('rate:'), '  e non ha rate: si paga man mano');
+
+    for (const [et, b] of [
+      ['COMMITTENTE', T.personaGiuridica({ committente: { denominazione: 'A' }, progetto: prog, nPartecipanti: 4, sessioni: { condivise: 8 }, rate: rate3 })],
+      ['PARTECIPANTE', T.partecipanteProgetto({ cliente, progetto: prog, committente: { denominazione: 'A' }, quota: 500, nSessioni: 8, rate: rate3 })],
+    ]) {
+      const x = testo(b);
+      dice(x.includes('Acconto — € 600,00') && x.includes('si salda entro 30 giorni'), `il contratto ${et} porta le rate`);
+    }
+    const senza = testo(T.personaGiuridica({ committente: { denominazione: 'A' }, progetto: prog, nPartecipanti: 4, sessioni: { condivise: 8 } }));
+    dice(!senza.includes('nelle seguenti rate') && senza.includes('si salda entro 30 giorni'),
+      '⛔ senza piano NON si inventa nessuna rata, e resta la regola generale');
+    dice(!/15 giorni/.test(pac + std + senza), 'e da nessuna parte si parla più di 15 giorni');
+
+    console.log('\n18. 🔬 Adesso la rompo apposta');
     for (const [corpo, et] of [
       [{ tipo: 'boh',         soggetto_id: idProg, stato: 'da_inviare' }, 'un tipo inventato'],
       [{ tipo: 'committente', soggetto_id: idProg, stato: 'firmata'    }, 'uno stato che non esiste più'],
@@ -342,7 +376,7 @@ const chiama = async (metodo, url, corpo) => {
   } catch (e) {
     ko++; console.log('\n🔴 ECCEZIONE: ' + e.message + '\n' + e.stack.split('\n')[1]);
   } finally {
-    console.log('\n18. Pulizia (solo le righe create da questa prova)');
+    console.log('\n19. Pulizia (solo le righe create da questa prova)');
     try {
       if (idProg) { await db.query('DELETE FROM contratti WHERE progetto_id=$1 OR partecipazione_id IN (SELECT id FROM partecipazioni WHERE progetto_id=$1)', [idProg]);
                     await db.query('DELETE FROM percorso_partecipanti WHERE percorso_id IN (SELECT id FROM percorsi WHERE progetto_id=$1)', [idProg]);

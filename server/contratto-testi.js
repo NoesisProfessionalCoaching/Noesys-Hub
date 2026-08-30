@@ -167,25 +167,100 @@ function testoLibero(testo) {
   ));
 }
 
+/**
+ * IL PIANO DELLE RATE DENTRO IL CONTRATTO — 30/08/2026.
+ *
+ * 🔴 BUCO TROVATO QUEL GIORNO: il contratto diceva solo «si salda entro N giorni
+ *    dalla fattura». Quante rate, di quanto e quando NON erano scritte da nessuna
+ *    parte. Un progetto pagato in tre tranche aveva un contratto che non le
+ *    nominava. Germano: «il piano delle tranche DEVE essere nel contratto; se non
+ *    c'è è un errore».
+ *
+ * ⭐ SI SCRIVE LA REGOLA, NON LA DATA. Una tranche non ha una data: ha un INNESCO
+ *    (firma · metà percorso · fine) più dei giorni, e la data la calcola l'Hub.
+ *    Quella data (a) può non esistere ancora — «metà percorso» resta vuota finché
+ *    il coach non la scrive — e (b) si sposta se cambia l'inizio del progetto.
+ *    Stamparla vorrebbe dire congelare nel contratto un numero che il gestionale
+ *    continua a ricalcolare: due verità che prima o poi litigano.
+ *
+ * ⚠️ LE RATE ENTRANO SOLO DOVE ESISTONO (regola di Germano, 30/08): percorsi
+ *    individuali a PACCHETTO e tutte le forme di progetto strutturato. Un percorso
+ *    Standard si paga a sessione e non ha rate; Pro bono e Scambio servizi non
+ *    hanno denaro.
+ * ⛔ E se il piano non è ancora stato fatto non si scrive NULLA: nessuna rata
+ *    inventata, nessun puntino. Resta la regola generale del pagamento.
+ */
+function pianoRate(righe) {
+  const r = (righe || []).filter(x => x && Number(x.importo) > 0);
+  if (!r.length) return [];
+  // ⭐ L'innesco dice QUANDO SI EMETTE LA FATTURA; i giorni sono il termine di
+  //    PAGAMENTO (Germano, 30/08: «la fattura si emette nel momento in cui è
+  //    prevista e si paga a 30 giorni»).
+  //    🔴 Alla prima stesura avevo scritto «fattura a 30 giorni dalla firma» E
+  //       «si salda entro 30 giorni dalla fattura»: letti insieme facevano 60.
+  const QUANDO = {
+    firma: 'alla firma del presente accordo',
+    meta:  'a metà percorso',
+    fine:  'alla conclusione del percorso',
+  };
+  const giorni = r.map(x => Number(x.giorni) || 0);
+  const tuttiUguali = giorni.every(g => g === giorni[0]);
+  const termine = (g) => (g > 0 ? `da saldare entro ${g} giorni` : 'da saldare a rimessa diretta');
+  return [
+    { t: 'p', x: 'Il compenso è corrisposto nelle seguenti rate:' },
+    ...r.map((x, i) => ({ t: 'li', x:
+      `${String(x.etichetta || 'Rata').trim()} — € ${euro(Math.round(Number(x.importo)))} + IVA 22% — `
+      + `fattura ${QUANDO[x.innesco] || QUANDO.firma}`
+      // Il termine si scrive per rata SOLO se le rate hanno termini diversi:
+      // altrimenti lo dice una volta sola la frase di chiusura, e ripeterlo
+      // tre volte sarebbe la stessa regola scritta quattro volte.
+      + (tuttiUguali ? '' : `, ${termine(giorni[i])}`) })),
+  ];
+}
+
+/** La frase che chiude l'articolo del compenso, coerente col piano che la precede. */
+function comePaga(righe) {
+  const r = (righe || []).filter(x => x && Number(x.importo) > 0);
+  const g = r.map(x => Number(x.giorni) || 0);
+  const coda = ', con bonifico sul conto indicato in fattura. Il compenso non è in alcun modo condizionato all\'esito del percorso.';
+  if (!r.length) return { t: 'p', x: 'Il compenso si salda entro 30 giorni dalla data della fattura' + coda };
+  if (g.every(x => x === g[0])) {
+    return { t: 'p', x: g[0] > 0
+      ? `Ogni rata è fatturata al maturare della scadenza indicata e si salda entro ${g[0]} giorni dalla data della relativa fattura${coda}`
+      : `Ogni rata è fatturata al maturare della scadenza indicata e si salda a rimessa diretta${coda}` };
+  }
+  return { t: 'p', x: 'Ogni rata è fatturata al maturare della scadenza indicata e si salda nel termine sopra riportato' + coda };
+}
+
 /** Il punto 4, in quattro versioni. Ne esce UNA sola per contratto. */
-function compenso(modalita, prezzo, nSessioni, prestazione) {
+function compenso(modalita, prezzo, nSessioni, prestazione, righeRate) {
   const p = prezzo == null ? '……………' : '€ ' + euro(prezzo);
   const n = nSessioni == null ? '………' : String(nSessioni);
+  // ⭐ TRENTA GIORNI, non quindici (Germano, 30/08): «la fattura si emette nel
+  //    momento in cui è prevista e si paga a 30 giorni». Prima il contratto ne
+  //    diceva 15 accanto a rate che ne dicevano 30 — due tempi per la stessa cosa.
   const pagamento = {
     t: 'p',
-    x: 'Il compenso si salda entro 15 giorni dalla data della fattura, con bonifico sul conto indicato in fattura. Il compenso non è in alcun modo condizionato all\'esito del percorso.',
+    x: 'Il compenso si salda entro 30 giorni dalla data della fattura, con bonifico sul conto indicato in fattura. Il compenso non è in alcun modo condizionato all\'esito del percorso.',
   };
+  const rate = pianoRate(righeRate);
   switch (modalita) {
     case 'Standard':
+      // ⭐ RIMESSA DIRETTA E CADENZA MENSILE, e sta SOLO qui (Germano, 30/08):
+      //    «si fattura una volta al mese a rimessa diretta, a prescindere dal
+      //    numero di sessioni fatte». La cadenza è mensile comunque; l'importo
+      //    resta quello delle sessioni svolte, perché il prezzo è a sessione.
+      //    ⚠️ Un percorso Standard non ha rate: si paga man mano.
       return [
         { t: 'p', x: `Il compenso è di ${p} + IVA 22% per ogni sessione, per un percorso di ${n} sessioni.` },
-        pagamento,
+        { t: 'p', x: 'Il compenso è fatturato con cadenza mensile, per le sessioni svolte nel mese e indipendentemente dal loro numero, e si salda a rimessa diretta. Il compenso non è in alcun modo condizionato all\'esito del percorso.' },
       ];
     case 'Pacchetto':
       return [
         { t: 'p', x: `Il compenso è di ${p} + IVA 22% per l'intero percorso di ${n} sessioni.` },
         { t: 'p', x: 'Il pacchetto va utilizzato entro 6 mesi dalla data della prima sessione.' },
-        pagamento,
+        ...rate,
+        comePaga(righeRate),
       ];
     case 'Scambio servizi':
       return [
@@ -240,7 +315,7 @@ function boxCliente(c) {
  * individuale (Germano, 27/08: «Persona Fisica: sono tutti i Clienti dei
  * percorsi individuali»).
  */
-function personaFisica({ cliente, percorso }) {
+function personaFisica({ cliente, percorso, rate }) {
   const modalita = percorso.modalita || 'Standard';
   return [
     { t: 'titolo', x: 'Accordo per servizi di coaching' },
@@ -263,7 +338,7 @@ function personaFisica({ cliente, percorso }) {
     ...COME_SI_SVOLGONO,
 
     { t: 'h', x: '4. Compenso' },
-    ...compenso(modalita, percorso.prezzo, percorso.n_sessioni_previste, percorso.prestazione_scambio),
+    ...compenso(modalita, percorso.prezzo, percorso.n_sessioni_previste, percorso.prestazione_scambio, rate),
 
     { t: 'h', x: '5. I primi 14 giorni: il diritto di ripensamento' },
     ...ripensamento14Giorni(),
@@ -477,7 +552,7 @@ function liberatoriaPartecipante({ progetto, committente } = {}) {
 // ⚠️ Qui NON c'è il recesso a 14 giorni e il Foro è quello del Professionista:
 //    valgono solo verso un consumatore, e un'azienda non lo è.
 // ═══════════════════════════════════════════════════════════════════════════
-function personaGiuridica({ committente, progetto, nPartecipanti, sessioni }) {
+function personaGiuridica({ committente, progetto, nPartecipanti, sessioni, rate }) {
   const c = committente || {};
   const p = progetto || {};
   const v = (x) => (x && String(x).trim() ? String(x).trim() : null);
@@ -531,11 +606,13 @@ function personaGiuridica({ committente, progetto, nPartecipanti, sessioni }) {
         ...elencoSedute,
         { t: 'p', x: `Di questo importo, € ${euro(dalCommittente)} + IVA 22% sono a carico del Committente e € ${euro(daiPartecipanti)} + IVA 22% sono a carico dei partecipanti, che li corrispondono direttamente al/la Professionista secondo quanto stabilito nei rispettivi accordi individuali.` },
         { t: 'p', x: 'Il Committente risponde della sola quota a proprio carico. Il mancato pagamento della quota di un partecipante non incide sugli obblighi del Committente né su quelli degli altri partecipanti.' },
+        ...pianoRate(rate),
       ]
     : [
         { t: 'p', x: `Il compenso complessivo per l'intero progetto è di € ${totale == null ? '……………' : euro(totale)} + IVA 22%, per un percorso rivolto a ${n} partecipanti${codaSedute}, ed è interamente a carico del Committente.` },
         ...elencoSedute,
         { t: 'p', x: 'Nessun corrispettivo è dovuto dai partecipanti.' },
+        ...pianoRate(rate),
       ];
 
   return [
@@ -612,7 +689,7 @@ function personaGiuridica({ committente, progetto, nPartecipanti, sessioni }) {
 
     A.h('compenso', 'Compenso'),
     ...compensoBlocchi,
-    { t: 'p', x: 'Il compenso si salda entro 15 giorni dalla data della fattura, con bonifico sul conto indicato in fattura. Il compenso non è in alcun modo condizionato all\'esito del percorso.' },
+    comePaga(rate),
 
     A.h('durata', 'Durata e recesso'),
     { t: 'p', x: `Il progetto ha inizio il ${p.data_inizio ? dataIt(p.data_inizio) : '………………'} e si considera concluso al termine delle sessioni previste.` },
@@ -690,7 +767,7 @@ function dataIt(d) {
  *    maggior parte la paga la sua azienda: i 14 giorni e il foro del consumatore
  *    valgono per lui esattamente come per un cliente individuale.
  */
-function partecipanteProgetto({ cliente, progetto, committente, quota, nSessioni }) {
+function partecipanteProgetto({ cliente, progetto, committente, quota, nSessioni, rate }) {
   const p = progetto || {};
   const tp = tipoPercorso(p.tipo);
   const nomeProgetto = (p.titolo && String(p.titolo).trim()) || '……………………';
@@ -747,7 +824,8 @@ function partecipanteProgetto({ cliente, progetto, committente, quota, nSessioni
     // non mette puntini al posto di un perimetro.
     { t: 'p', x: `La quota a carico del/la Cliente è di € ${quota == null ? '……………' : euro(quota)} + IVA 22% per l'intero percorso previsto dal progetto${nSessioni ? `, di ${nSessioni} ${nSessioni === 1 ? 'sessione' : 'sessioni'}` : ''}.` },
     { t: 'p', x: `La restante parte del compenso è a carico di ${nomeCommittente}, secondo l'accordo separato stipulato fra il/la Professionista e il Committente. Il/la Cliente non risponde di quella parte.` },
-    { t: 'p', x: 'Il compenso si salda entro 15 giorni dalla data della fattura, con bonifico sul conto indicato in fattura. Il compenso non è in alcun modo condizionato all\'esito del percorso.' },
+    ...pianoRate(rate),
+    comePaga(rate),
 
     { t: 'h', x: '5. I primi 14 giorni: il diritto di ripensamento' },
     ...ripensamento14Giorni(),
