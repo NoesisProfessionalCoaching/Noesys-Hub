@@ -271,7 +271,34 @@ const chiama = async (metodo, url, corpo) => {
     r = await chiama('GET', `/dashboard/progetti/${idProg}`);
     dice(!r.testo.includes('Specifiche congelate'), 'e il cartello del congelamento è sparito');
 
-    console.log('\n15. 🔬 Adesso la rompo apposta');
+    // ── Fetta 6c — l'avviso prima del Kick-Off ──────────────────────────────
+    console.log('\n15. L\'avviso del Kick-Off: grida, ma non sbarra');
+    r = await chiama('GET', `/dashboard/progetti/${idProg}`);
+    dice(!r.testo.includes('Kick-Off in calendario'), 'senza Kick-Off in calendario non dice niente');
+
+    const ko = await db.query(
+      `INSERT INTO fasi_progetto (id, progetto_id, tipo, data, fatta, stato, origine)
+       VALUES (gen_random_uuid(), $1, 'kick-off', CURRENT_DATE + 7, FALSE, 'confermata', 'manuale') RETURNING id`, [idProg]);
+    r = await chiama('GET', `/dashboard/progetti/${idProg}`);
+    dice(r.testo.includes('Kick-Off in calendario'), 'messo in calendario col contratto non firmato, avvisa');
+    dice(r.testo.includes('non un blocco'), 'e dice esplicitamente che non impedisce niente');
+
+    // ⛔ IL PUNTO: è un avviso, NON una porta chiusa. Le rotte devono passare.
+    r = await chiama('POST', `/dashboard/progetti/${idProg}/percorsi/${idPerc}/previste`, { n_sessioni_previste: 9 });
+    dice(r.stato === 200, '⛔ e infatti si continua a lavorare: nessuna rotta si chiude', 'ha risposto ' + r.stato);
+
+    await db.query('UPDATE fasi_progetto SET fatta=TRUE WHERE id=$1', [ko.rows[0].id]);
+    r = await chiama('GET', `/dashboard/progetti/${idProg}`);
+    dice(r.testo.includes('si è svolto senza contratto firmato'), 'se il Kick-Off è già AVVENUTO, l\'avviso diventa rosso');
+
+    await chiama('POST', '/dashboard/contratti/stato', { tipo: 'committente', soggetto_id: idProg, stato: 'approvata' });
+    r = await chiama('GET', `/dashboard/progetti/${idProg}`);
+    dice(!r.testo.includes('si è svolto senza contratto') && !r.testo.includes('Kick-Off in calendario'),
+      'e col contratto firmato l\'avviso sparisce del tutto');
+    await chiama('POST', '/dashboard/contratti/stato', { tipo: 'committente', soggetto_id: idProg, stato: 'da_inviare' });
+    await db.query('DELETE FROM fasi_progetto WHERE id=$1', [ko.rows[0].id]);
+
+    console.log('\n16. 🔬 Adesso la rompo apposta');
     for (const [corpo, et] of [
       [{ tipo: 'boh',         soggetto_id: idProg, stato: 'da_inviare' }, 'un tipo inventato'],
       [{ tipo: 'committente', soggetto_id: idProg, stato: 'firmata'    }, 'uno stato che non esiste più'],
@@ -290,7 +317,7 @@ const chiama = async (metodo, url, corpo) => {
   } catch (e) {
     ko++; console.log('\n🔴 ECCEZIONE: ' + e.message + '\n' + e.stack.split('\n')[1]);
   } finally {
-    console.log('\n16. Pulizia (solo le righe create da questa prova)');
+    console.log('\n17. Pulizia (solo le righe create da questa prova)');
     try {
       if (idProg) { await db.query('DELETE FROM contratti WHERE progetto_id=$1 OR partecipazione_id IN (SELECT id FROM partecipazioni WHERE progetto_id=$1)', [idProg]);
                     await db.query('DELETE FROM percorso_partecipanti WHERE percorso_id IN (SELECT id FROM percorsi WHERE progetto_id=$1)', [idProg]);

@@ -7593,6 +7593,36 @@ function progettiPage(progetti, committenti, req) {
  * definitivo dopo la firma — e il terzo gradino arriva con la Fetta 6, perché
  * oggi l'Hub non sa se un contratto è stato firmato.
  */
+/**
+ * L'AVVISO PRIMA DEL KICK-OFF — Fetta 6c.
+ * Compare solo se il Kick-Off è stato messo in calendario (è facoltativo: molti
+ * progetti non ne hanno uno) e il contratto del Committente non è firmato.
+ * ⛔ Non blocca niente: è un cartello. Sbarrare la strada renderebbe l'Hub un
+ *    ostacolo il giorno che il cliente chiede di anticipare.
+ */
+function avvisoKickOff(p, fasi, statoContratto) {
+  if (statoContratto === 'approvata') return '';
+  const ko = (fasi || []).filter(f => f.tipo === 'kick-off' && f.stato !== 'bozza');
+  if (!ko.length) return '';
+  const avvenuto = ko.find(f => f.fatta);
+  const previsto = ko.find(f => f.data && !f.fatta) || ko[0];
+  const et = contrattiStato.stato(statoContratto).label.toLowerCase();
+  const quando = (f) => f && f.data ? ' del ' + itDate(f.data) : '';
+  return avvenuto
+    ? `<div class="card" style="margin-bottom:18px;border-left:5px solid #a4342a;background:#fdf2f0">
+         <div style="font-size:17px;font-weight:700;color:#a4342a;margin-bottom:6px">🔴 Il Kick-Off si è svolto senza contratto firmato</div>
+         <div style="font-size:14px;color:#7a2b23">Il Kick-Off${quando(avvenuto)} risulta avvenuto, ma il contratto del Committente è ancora <strong>${et}</strong>.
+         Il progetto sta camminando senza che nessuno abbia sottoscritto quanto costa, quante sedute sono e che cosa viene riferito al Committente.</div>
+         <div style="font-size:13px;color:#7a2b23;margin-top:8px">Si sistema dalla card <strong>Contratti</strong>, qui sotto.</div>
+       </div>`
+    : `<div class="card" style="margin-bottom:18px;border-left:5px solid #b45309;background:#fdf8ef">
+         <div style="font-size:17px;font-weight:700;color:#b45309;margin-bottom:6px">⚠️ Kick-Off in calendario, contratto non ancora firmato</div>
+         <div style="font-size:14px;color:#7a5a1e">Il Kick-Off${quando(previsto)} è previsto, e il contratto del Committente è <strong>${et}</strong>.
+         Prima di cominciare davanti a tutti, quel contratto andrebbe firmato.</div>
+         <div style="font-size:13px;color:#7a5a1e;margin-top:8px">Lo prepari e lo segui dalla card <strong>Contratti</strong>, qui sotto. Nessuno ti impedisce di procedere: questo è un promemoria, non un blocco.</div>
+       </div>`;
+}
+
 function specificheCard({ p, coachee, percorsi, fasi, qTot, qComm, quoteGuaste, congelato, nSedute }) {
   // ⚠️ `eur` qui NON esiste: è un aiuto locale di progettoDettaglioPage, e questa
   // funzione sta fuori. Alla prima prova la pagina rispondeva «Errore» proprio per
@@ -7693,8 +7723,11 @@ function specificheCard({ p, coachee, percorsi, fasi, qTot, qComm, quoteGuaste, 
               ? '<span style="font-size:12px;color:#2f6b46">🔒 congelata dal contratto</span>'
               : nSedute
                 ? `<span style="font-size:12px;color:var(--muted)" title="Cambiare tipologia cambia la struttura dei percorsi, e le sessioni resterebbero senza casa">🔒 il percorso è cominciato</span>`
-                : `<span style="white-space:nowrap">
-                     <select id="sp-tipo" style="padding:4px 6px;font-size:13px">
+                : `<span style="display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
+                     ${/* ⚠️ max-width: senza, la tendina è larga quanto «Individuale per
+                           più Clienti» e sotto gli 850px spinge il pulsante Salva fuori
+                           dallo schermo. Visto sulla pagina vera, non nel codice. */ ''}
+                     <select id="sp-tipo" style="padding:4px 6px;font-size:13px;max-width:145px">
                        ${Object.entries(TIPI).map(([k, et]) => `<option value="${k}"${k === p.tipo ? ' selected' : ''}>${et}</option>`).join('')}
                      </select>
                      <button onclick="salvaTipo()" class="btn btn-neutral btn-sm">Salva</button>
@@ -8119,6 +8152,17 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
           ⛔ «Un unico luogo» vuol dire UNA SOLA SCHERMATA, non una seconda copia
              dei dati: qui non nasce nessun archivio parallelo.
           Piano completo: iCloud/Noesys/Piattaforma/PIANO — Specifiche di Progetto.md */ ''}
+    ${/* ═══ FETTA 6c — L'AVVISO PRIMA DEL KICK-OFF (30/08) ═════════════════
+          Il Kick-Off è il momento in cui il progetto comincia davanti a tutti.
+          Farlo senza il contratto firmato è un rischio vero: si lavora senza che
+          nessuno abbia sottoscritto quanto costa, quante sedute sono, cosa si
+          può dire al Committente.
+          ⛔ AVVISO, NON PORTA CHIUSA — deciso da Germano: «un blocco vero mi
+             farebbe combattere col gestionale il giorno che anticipo un Kick-Off
+             su richiesta del cliente». Qui si grida, non si sbarra.
+          ⚠️ E grida DI PIÙ se il Kick-Off è già avvenuto: lì non è più un
+             promemoria, è una cosa da sistemare. */ ''}
+    ${avvisoKickOff(p, fasi, statoContr('committente', p.id))}
     ${specificheCard({ p, coachee, percorsi, fasi, qTot, qComm, tot4, quoteGuaste,
        congelato: statoContr('committente', p.id) === 'approvata',
        nSedute: (seduteColl || []).length })}
