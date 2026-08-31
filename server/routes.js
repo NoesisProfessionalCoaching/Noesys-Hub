@@ -1636,47 +1636,16 @@ router.post('/api/sedute', express.json(), async (req, res) => {
   } catch (err) { console.error(err); res.status(500).json({ error: 'Errore' }); }
 });
 
-// ═══════════════════════════════════════════════════════
-// PAGAMENTI
-// ═══════════════════════════════════════════════════════
+// ⛔ 31/08 — TOLTE LE TRE ROTTE DEI PAGAMENTI A MANO (POST payments, /ricevuto,
+// DELETE). Non erano raggiungibili da nessuna pagina: il pulsante «+ Pagamento»
+// era già sparito il 15/08 su richiesta di Germano («qui non dovrebbe servire»),
+// perché da quando ogni cifra concordata ha le sue rate non resta niente da
+// segnare a mano. ⚠️ La TABELLA payments e le sue 7 righe NON si toccano: sono
+// clienti veri (scambio servizi a 0,00 €) e la scheda cliente le mostra ancora,
+// in sola lettura, sotto «Registrazioni di prima».
+// ⛔ Non ricostruirle: lo stato dei soldi si ricava dai fatti, non da un
+// interruttore acceso a mano.
 
-router.post('/dashboard/clients/:id/payments', requireCoach, express.json(), async (req, res) => {
-  const { importo, data_pagamento, tipo, stato, percorso_id, note } = req.body;
-  if (!importo) return res.status(400).json({ error: 'Importo obbligatorio' });
-  try {
-    const pid = uuidv4();
-    await db.query(
-      `INSERT INTO payments (id,client_id,percorso_id,importo,data_pagamento,tipo,stato,note)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-      [pid, req.params.id, percorso_id||null, importo, data_pagamento||null,
-       tipo||'sessione', stato||'atteso', note||'']
-    );
-    res.json({ ok: true, id: pid });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Errore' });
-  }
-});
-
-router.post('/dashboard/clients/:id/payments/:pid/ricevuto', requireCoach, async (req, res) => {
-  try {
-    await db.query("UPDATE payments SET stato='ricevuto',data_pagamento=CURRENT_DATE WHERE id=$1", [req.params.pid]);
-    res.json({ ok: true });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Errore' });
-  }
-});
-
-router.delete('/dashboard/clients/:id/payments/:pid', requireCoach, async (req, res) => {
-  try {
-    await db.query('DELETE FROM payments WHERE id=$1', [req.params.pid]);
-    res.json({ ok: true });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Errore' });
-  }
-});
 
 // ═══════════════════════════════════════════════════════
 // LEAD
@@ -3342,23 +3311,6 @@ router.post('/dashboard/progetti/:id/quota', requireCoach, express.json(), async
   }
 });
 
-// Fase 3B — interruttore pagamento del committente. Ricevuto → registra la data
-// (oggi); torna ad atteso → azzera la data.
-router.post('/dashboard/progetti/:id/pag-committente', requireCoach, express.json(), async (req, res) => {
-  const stato = req.body.stato === 'ricevuto' ? 'ricevuto' : 'atteso';
-  try {
-    await db.query(
-      `UPDATE progetti SET stato_pag_committente=$1,
-         data_pag_committente = CASE WHEN $1='ricevuto' THEN CURRENT_DATE ELSE NULL END,
-         updated_at=NOW() WHERE id=$2`,
-      [stato, req.params.id]
-    );
-    res.json({ ok: true });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Errore' });
-  }
-});
 
 // Fase 3B Pezzo 2 — salva le quote dei coachee (quota_coachee per partecipazione).
 // Riceve un array {part_id, quota}; campo vuoto = null (non ancora deciso).
@@ -3385,23 +3337,6 @@ router.post('/dashboard/progetti/:id/quote-coachee', requireCoach, express.json(
   }
 });
 
-// Fase 3B Pezzo 2 — interruttore pagamento di un coachee. Ricevuto → registra la
-// data (oggi); torna ad atteso → azzera la data.
-router.post('/dashboard/progetti/:id/coachee/:partId/pagamento', requireCoach, express.json(), async (req, res) => {
-  const stato = req.body.stato === 'ricevuto' ? 'ricevuto' : 'atteso';
-  try {
-    await db.query(
-      `UPDATE partecipazioni SET stato_pag_coachee=$1,
-         data_pag_coachee = CASE WHEN $1='ricevuto' THEN CURRENT_DATE ELSE NULL END
-       WHERE id=$2 AND progetto_id=$3`,
-      [stato, req.params.partId, req.params.id]
-    );
-    res.json({ ok: true });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Errore' });
-  }
-});
 
 // Fase 3a — fasi del progetto. Un'unica POST fa create-o-update: senza `fid` crea una
 // nuova tappa (ritorna l'id, per i pre-intake ripetibili e per la prima volta di una
@@ -5713,16 +5648,6 @@ Germano`;
       ore.readOnly = false;
       if (auto != null) { ore.value = auto; hint.textContent = '(preimpostate per ' + t + ', modificabili)'; }
       else { hint.textContent = '(Final: a mano)'; }
-    }
-    function openSeduta() {
-      document.getElementById('seduta-title').textContent = 'Aggiungi sessione';
-      document.getElementById('s-id').value = '';
-      const ps = document.getElementById('s-percorso'); if (ps.options.length) ps.selectedIndex = 0;
-      document.getElementById('s-tipo').value = 'Ongoing';
-      document.getElementById('s-data').value = new Date().toISOString().slice(0, 10);
-      ['s-obiettivo','s-argomenti','s-attivita','s-scadenza','s-ora','s-eseguita','s-note'].forEach(id => document.getElementById(id).value = '');
-      oreAuto();
-      document.getElementById('modal-seduta').style.display = 'flex';
     }
     function editSeduta(sid) {
       const s = SEDUTE[sid]; if (!s) return;
@@ -8519,15 +8444,6 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
       if (auto != null) { ore.value = auto; hint.textContent = '(preimpostate per ' + t + ', modificabili)'; }
       else { hint.textContent = '(Final: a mano)'; }
     }
-    function openSeduta() {
-      document.getElementById('seduta-title').textContent = 'Aggiungi sessione';
-      document.getElementById('s-id').value = '';
-      document.getElementById('s-tipo').value = 'Ongoing';
-      document.getElementById('s-data').value = new Date().toISOString().slice(0, 10);
-      ['s-obiettivo','s-argomenti','s-attivita','s-scadenza','s-ora','s-eseguita','s-note'].forEach(id => document.getElementById(id).value = '');
-      oreAuto();
-      document.getElementById('modal-seduta').style.display = 'flex';
-    }
     function editSeduta(sid) {
       const s = SEDUTE[sid]; if (!s) return;
       document.getElementById('seduta-title').textContent = 'Modifica sessione';
@@ -8842,8 +8758,11 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
     // dicono le tranche («dicono cose diverse», Germano). Adesso lo stato è di
     // ogni rata: vedi segnaStato().
     // Le colonne stato_pag_committente e stato_pag_coachee restano nel
-    // database e non le legge più nessuno: si tolgono con la pulizia del codice
-    // morto, non di nascosto adesso.
+    // database e non le legge più nessuno. ⛔ 31/08: le due ROTTE che le
+    // scrivevano sono state tolte con la pulizia del codice morto; le COLONNE
+    // no, per decisione di Germano — una migrazione non si torna indietro, e
+    // due colonne vuote e ferme non danno fastidio a nessuno. In produzione al
+    // 31/08 sono tutte al valore di partenza «atteso»: non le ha mosse nessuno.
 
     let addMode = 'new';
     function setAddMode(m) {
