@@ -526,7 +526,13 @@ function quattroNumeri(t4, conPiano) {
             <div id="${id}" class="amm-num-v" style="font-size:17px;font-weight:700;color:${cVal}">€ ${eur(valore)}</div>
           </div>`;
   return `
-        <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:8px">
+        ${/* 🔴 NON `repeat(4, 1fr)`: quattro colonne fisse a 375px sbordano di 17px
+              e fanno scivolare di lato TUTTA la pagina (misurato il 31/08 sulla
+              scheda cliente). La pagina progetto aveva già la sua toppa in una
+              media query; la scheda cliente no. ⭐ Corretto QUI, dove i numeri
+              nascono, invece di copiare la toppa: due elenchi scritti a mano
+              divergono sempre. `auto-fit` va a capo da solo quando non ci sta. */ ''}
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));gap:8px">
           ${n('Concordato',  'amm-atteso',     t4.concordato, '#f4f7fa', '#9AA0AA', 'var(--ink)')}
           ${n('Da chiedere', 'amm-dachiedere', t4.daChiedere, '#f7f9fb', '#6B7280', '#4a5568')}
           ${n('Chiesto',     'amm-chiesto',    t4.chiesto,    '#fdf6ec', '#b7791f', '#7a5c00')}

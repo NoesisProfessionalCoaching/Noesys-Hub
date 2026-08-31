@@ -4058,7 +4058,7 @@ function dashboardPage(clients, req, { individuali = false, tutti = false } = {}
       <button onclick="openNewClient()" class="btn btn-primary">+ Nuovo cliente</button>
     </div>
     <input id="cerca" type="search" placeholder="🔍 Cerca cliente (nome, email, area…)" oninput="filtra()" style="margin-bottom:14px">
-    <div class="card" style="padding:0;overflow:hidden">
+    <div class="card" style="padding:0;overflow-x:auto">
       <table>
         <thead><tr><th>Cliente</th><th>Area</th><th>Stato</th><th>Percorso</th><th>Prossima azione</th><th></th></tr></thead>
         <tbody id="lista-clienti">${rows}</tbody>
@@ -4436,7 +4436,7 @@ Germano`;
     `<h2 style="margin:0">Percorsi <span style="font-weight:400;font-size:13px;color:#aaa">(${percorsi.length})</span></h2>`,
     `${avvisoStati}
       ${percorsi.length === 0 ? `<div class="empty">Nessun percorso registrato.</div>` : `
-      <table>
+      <div style="overflow-x:auto"><table>
         <thead><tr><th>Tipo</th><th>Lavoro svolto</th><th>Modalità</th><th>Prezzo</th><th>Periodo</th><th>Stato</th><th></th></tr></thead>
         <tbody>
           ${percorsi.map(p => { const condiviso = !p.client_id;
@@ -4465,7 +4465,7 @@ Germano`;
               : `<button onclick="editPercorso('${p.id}')" class="btn btn-neutral btn-sm" title="Correggi modalità, prezzo, sessioni previste">Modifica</button> ${p.stato==='attivo' ? `<button onclick="chiudiPercorso('${p.id}','${fineIso}','${fineIt}')" class="btn btn-neutral btn-sm">Chiudi il percorso</button>` : ''}<span style="display:inline-block;width:14px"></span><button onclick="delPercorso('${p.id}')" class="btn btn-danger btn-sm" title="Elimina il percorso">🗑</button>`}</td>
           </tr>`; }).join('')}
         </tbody>
-      </table>`}`,
+      </table></div>`}`,
     percorsiInSospeso,
     `<button onclick="event.stopPropagation();openPercorso()" class="btn btn-primary btn-sm">+ Nuovo percorso</button>`);
 
@@ -4785,7 +4785,7 @@ Germano`;
         Storico in sola lettura: da qui non se ne aggiungono più. Sono i pagamenti segnati a mano
         prima che ogni cifra concordata avesse le sue rate — quasi tutti scambi di servizi.
         Restano fuori dal conto qui sopra.</div>
-      <table>
+      <div style="overflow-x:auto"><table>
         <thead><tr><th>Importo</th><th>Tipo</th><th>Data</th><th>Stato</th><th>Note</th></tr></thead>
         <tbody>
           ${payments.map(p => `<tr>
@@ -4796,7 +4796,7 @@ Germano`;
             <td style="font-size:12px;color:#aaa">${esc(p.note||'')}</td>
           </tr>`).join('')}
         </tbody>
-      </table>` : '';
+      </table></div>` : '';
   // In sospeso qui = ci sono SOLDI CHE ASPETTANO: qualcosa di maturato da
   // chiedere, una proforma creata e non ancora spedita, o un pagamento atteso.
   // ⚠️ Chi è «da mandare» lo dice `proforma.daMandare`, come in home e nella
@@ -4958,7 +4958,7 @@ Germano`;
         Da ${bozza.moduli.map(m => esc(m.nome)).join(' · ')}. Spunta quello che vuoi tenere: quello che sostituisce un dato che hai già arriva <strong>non spuntato</strong>.
       </div>
       ${(bozza.proposte || []).length ? `
-      <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">
         <thead><tr style="text-align:left;color:var(--hint);font-size:11px;text-transform:uppercase;letter-spacing:.06em">
           <th style="padding:5px 8px 5px 0;width:26px"></th><th style="padding:5px 8px 5px 0">Campo</th>
           <th style="padding:5px 8px 5px 0">C&rsquo;è scritto</th><th style="padding:5px 0">Il documento dice <span style="text-transform:none;font-weight:400">(correggibile)</span></th>
@@ -4978,7 +4978,7 @@ Germano`;
                  style="width:100%;font-weight:600;padding:7px 9px;border:1px solid var(--line);border-radius:7px;font-family:inherit;font-size:13px"></td>
           </tr>`).join('')}
         </tbody>
-      </table>` : ''}
+      </table></div>` : ''}
       ${bozza.consenso ? `
       <div style="margin-top:12px;padding:10px 12px;background:#fff;border:1px solid var(--line);border-radius:8px">
         <label style="display:flex;gap:9px;align-items:flex-start;margin:0;text-transform:none;letter-spacing:0;font-weight:400;font-size:13px">
@@ -6185,7 +6185,7 @@ function leadsPage(leads, req) {
 
     <input id="cerca" type="search" placeholder="🔍 Cerca lead (nome, email, telefono…)" oninput="filtra()" style="margin-bottom:14px">
 
-    <div class="card" style="padding:0;overflow:hidden">
+    <div class="card" style="padding:0;overflow-x:auto">
       <table>
         <thead><tr><th>Contatto</th><th>Stato</th><th>Fonte</th><th>Prossimo contatto</th><th>Note</th><th></th></tr></thead>
         <tbody>
@@ -6196,7 +6196,7 @@ function leadsPage(leads, req) {
 
     ${archiviati.length ? `
     <h2 style="margin:24px 0 10px;font-size:14px;color:#aaa">Archiviati (convertiti / persi)</h2>
-    <div class="card" style="padding:0;overflow:hidden">
+    <div class="card" style="padding:0;overflow-x:auto">
       <table><thead><tr><th>Contatto</th><th>Stato</th><th>Fonte</th><th>Prossimo contatto</th><th>Note</th><th></th></tr></thead>
       <tbody>${archiviati.map(renderRow).join('')}</tbody></table>
     </div>` : ''}
@@ -7241,7 +7241,7 @@ function committentiPage(committenti, req) {
 
     <input id="cerca" type="search" placeholder="🔍 Cerca committente (nome, referente, email…)" oninput="filtra()" style="margin-bottom:14px">
 
-    <div class="card" style="padding:0;overflow:hidden">
+    <div class="card" style="padding:0;overflow-x:auto">
       <table>
         <thead><tr><th>Committente</th><th>Tipo</th><th>Contatto</th><th>Fatturazione</th><th></th></tr></thead>
         <tbody>
@@ -7421,7 +7421,7 @@ function progettiPage(progetti, committenti, req) {
 
     <input id="cerca" type="search" placeholder="🔍 Cerca progetto (titolo, committente…)" oninput="filtra()" style="margin-bottom:14px">
 
-    <div class="card" style="padding:0;overflow:hidden">
+    <div class="card" style="padding:0;overflow-x:auto">
       <table>
         <thead><tr><th>Progetto</th><th>Area</th><th>Tipo</th><th>Stato</th><th>Clienti</th><th>Inizio</th><th></th></tr></thead>
         <tbody>
@@ -7667,7 +7667,7 @@ function specificheCard({ p, coachee, percorsi, fasi, qTot, qComm, quoteGuaste, 
       </div>` : ''}
       ${manca.length && !congelato ? `<div class="flash-error" style="margin-bottom:12px">Perché i contratti escano completi manca ancora: <strong>${manca.map(esc).join(' · ')}</strong>.</div>` : ''}
 
-      <table style="width:100%">
+      <div style="overflow-x:auto"><table style="width:100%">
         <tbody>
           ${/* Fetta 6b — la tipologia si cambia da qui, con due lucchetti: il
                 contratto firmato e — più severo — le sedute già registrate.
@@ -7721,7 +7721,7 @@ function specificheCard({ p, coachee, percorsi, fasi, qTot, qComm, quoteGuaste, 
             congelato ? '<span style="font-size:12px;color:#2f6b46">🔒 congelati dal contratto</span>'
                       : `<button onclick="apriPiano()" class="btn btn-neutral btn-sm">Modifica il piano</button>`)}
         </tbody>
-      </table>
+      </table></div>
 
       <div style="margin-top:12px;font-size:12px;color:var(--muted)">
         Da qui si scrive quello che ha un campo o un pulsante qui a destra; il resto si corregge dove nasce,
@@ -9255,7 +9255,7 @@ function icfPage(rows, tot, clientiUnici, req) {
       Le ore si aggiornano dalla scheda di ogni cliente (campo “ore svolte” del percorso).
     </p>
 
-    <div class="card" style="padding:0;overflow:hidden">
+    <div class="card" style="padding:0;overflow-x:auto">
       <table>
         <thead><tr>
           <th>Cliente</th><th>Contatto</th><th>Tipo</th><th>Modalità</th>
