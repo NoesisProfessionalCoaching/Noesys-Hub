@@ -168,6 +168,12 @@ function js(o) {
       return null;
     }
     function esc2(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
+    // ⭐ 0.4 (03/09/2026) — un valore libero dentro un onclick. Il browser scioglie
+    // le entita dell attributo PRIMA di leggere il JavaScript: con esc2 un nome come
+    // D Amico con l apostrofo chiudeva la stringa a meta e il pulsante moriva.
+    // Qui il valore diventa una stringa JavaScript vera (JSON, doppi apici) e poi
+    // si rende sicura per l attributo. Si scrive SENZA apici attorno.
+    function jsArg(s) { return esc2(JSON.stringify(String(s == null ? '' : s))); }
     // ⚠️ Gemella di fiscale.euroIntero(), ma per il BROWSER: qui il modulo del
     // server non si puo chiamare. Stesse opzioni, cosi lo stesso importo si
     // scrive uguale in pagina e nei messaggi che arrivano dal server.
@@ -212,7 +218,7 @@ function js(o) {
           // da lì lo stato della rata si ricava invece di essere scritto.
           var d = t.doc || {};
           var comando = t.stato === 'da_chiedere'
-            ? '<button onclick="chiediRata(\\'' + t.id + '\\',\\'' + esc2(t.etichetta) + ', € ' + eur2(t.importo) + '\\')" class="btn btn-primary btn-sm">Chiedi il pagamento</button>'
+            ? '<button onclick="chiediRata(' + jsArg(t.id) + ',' + jsArg(t.etichetta + ', € ' + eur2(t.importo)) + ')" class="btn btn-primary btn-sm">Chiedi il pagamento</button>'
             : t.stato === 'da_mandare'
             ? '<a href="/dashboard/amministrazione/proforma" class="btn btn-primary btn-sm">Rileggi e manda</a>'
             : t.stato === 'incassata'
@@ -225,7 +231,7 @@ function js(o) {
                  ? ' <a href="/dashboard/amministrazione/proforma" style="font-size:11.5px;color:var(--muted)">n. ' + esc2(d.numero) + '</a>'
                  : ' <button onclick="segnaStato(\\'' + t.id + '\\',\\'da_chiedere\\')" class="btn btn-neutral btn-sm" title="Torna indietro">Annulla</button>')
             : d.proformaId
-            ? '<button onclick="apriIncasso(\\'' + d.proformaId + '\\',\\'' + esc2(pg.nome) + ' — ' + esc2(t.etichetta) + '\\',' + (Number(d.residuo) || 0) + ')" class="btn btn-neutral btn-sm">È arrivato</button>'
+            ? '<button onclick="apriIncasso(' + jsArg(d.proformaId) + ',' + jsArg(pg.nome + ' — ' + t.etichetta) + ',' + (Number(d.residuo) || 0) + ')" class="btn btn-neutral btn-sm">È arrivato</button>'
             : '';
           html += '<tr>'
             + '<td style="padding-left:26px">' + esc2(t.etichetta)

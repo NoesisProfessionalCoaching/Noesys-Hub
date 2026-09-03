@@ -54,7 +54,7 @@ const chiama = async (metodo, url, corpo) => {
   //    il 30/08 con la tabella `contratti`, che qui dentro non esisteva ancora.
   await db.init();
   const marca = 'PROVA-PREVISTE-' + PORTA;
-  let idCli, idComm, idProg, idPerc;
+  let idCli, idComm, idProg, idPerc, idLead;
   try {
     console.log('\n1. Costruisco il caso coi pulsanti');
     let r = await chiama('POST', '/dashboard/clients', { nome: 'Prova', cognome: marca, area: 'Business' });
@@ -366,7 +366,9 @@ const chiama = async (metodo, url, corpo) => {
     // cambiano le altre (accettato). Su tutte e TRE le rotte del piano.
     console.log('\n18. Le rate dentro un documento non si toccano più (fetta 0.1)');
     // Il cliente deve essere fatturabile: un privato con codice fiscale e indirizzo.
-    r = await chiama('POST', `/dashboard/clients/${idCli}`, { nome: 'Prova', cognome: marca, area: 'Business',
+    // ⭐ 0.4 — da qui in avanti il cliente si chiama «D'Amico»: l'apostrofo nel nome
+    // deve arrivare intero in ogni pulsante delle pagine che seguono (sezione 20).
+    r = await chiama('POST', `/dashboard/clients/${idCli}`, { nome: 'Prova', cognome: "D'Amico " + marca, area: 'Business',
       codice_fiscale: 'RSSMRA80A01H501U', via: 'Via Roma 1', cap: '00100', citta: 'Roma', provincia: 'RM' });
     dice(r.stato === 200, 'il cliente ha i dati che servono a una proforma', r.stato + ' ' + r.testo.slice(0, 120));
     const idPart = (await db.query('SELECT id FROM partecipazioni WHERE progetto_id=$1 AND client_id=$2', [idProg, idCli])).rows[0].id;
@@ -514,7 +516,55 @@ const chiama = async (metodo, url, corpo) => {
     r = await chiama('POST', '/api/sedute', { secret: 'x', percorso_id: idPacc, client_id: idCli, tipo: 'Ongoing' });
     dice(r.stato === 404, '⛔ la rotta senza login /api/sedute non esiste più', 'ha risposto ' + r.stato);
 
-    console.log('\n20. 🔬 Adesso la rompo apposta');
+    // ═══ FETTA 0.4 DEL RIORDINO (03/09/2026) — I QUATTRO DIFETTI D'INTERFACCIA ═══
+    console.log("\n20. Un apostrofo nel nome non spegne i pulsanti, e gli altri tre difetti d'interfaccia");
+    // Ogni onclick delle pagine vere, decodificato come fa il browser (le entità
+    // HTML si sciolgono PRIMA che il JavaScript venga letto), deve essere codice
+    // valido. Il cliente si chiama «D'Amico» dalla sezione 18; qui nasce anche un
+    // lead con l'apostrofo, perché i suoi pulsanti passano da un'altra pagina.
+    const decodifica = (s) => s.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+    // Si guardano gli onclick del MARKUP, non il codice dentro <script> (lì ci sono
+    // le stringhe che costruiscono i pulsanti nel browser: quelle le prova
+    // prova-js-pagine.js con un documento finto).
+    const pulsantiRotti = (html) => [...html.replace(/<script>[\s\S]*?<\/script>/g, '').matchAll(/onclick="([^"]*)"/g)].map(m => decodifica(m[1]))
+      .filter(c => { try { new Function(c); return false; } catch (e) { return true; } });
+    r = await chiama('POST', '/dashboard/leads', { nome: "Sant'Elia", cognome: "D'Amico " + marca, email: 'x@example.it', fonte: 'altro', stato: 'nuovo', note: "un'annotazione" });
+    idLead = r.dati && r.dati.id;
+    dice(r.stato === 200 && !!idLead, "nasce un lead che si chiama Sant'Elia D'Amico", r.stato + ' ' + r.testo.slice(0, 120));
+    for (const [nome, url, deve] of [
+      ['la scheda del cliente', `/dashboard/clients/${idCli}`, "D'Amico"],
+      ['la pagina del progetto', `/dashboard/progetti/${idProg}`, "D'Amico"],
+      ['i lead', '/dashboard/leads', "Sant'Elia"],
+      ['le proforma', '/dashboard/amministrazione/proforma', "D'Amico"],
+      ['la home', '/dashboard', null],
+    ]) {
+      r = await chiama('GET', url);
+      const rotti = r.stato === 200 ? pulsantiRotti(r.testo) : ['pagina non risponde 200'];
+      const contiene = !deve || decodifica(r.testo).includes(deve);
+      dice(r.stato === 200 && contiene && rotti.length === 0, `🔴 ${nome}: tutti i pulsanti reggono l'apostrofo`,
+        r.stato !== 200 ? 'risposta ' + r.stato : !contiene ? 'la pagina non mostra il nome con l’apostrofo' : rotti.length + ' rotti, es. ' + (rotti[0] || '').slice(0, 90));
+    }
+
+    // La data del consenso è un dato legale: togliere la spunta non la cancella.
+    const anagrafica = { nome: 'Prova', cognome: "D'Amico " + marca, area: 'Business', codice_fiscale: 'RSSMRA80A01H501U', via: 'Via Roma 1', cap: '00100', citta: 'Roma', provincia: 'RM' };
+    r = await chiama('POST', `/dashboard/clients/${idCli}`, { ...anagrafica, consenso_privacy: true });
+    let cons = (await db.query('SELECT consenso_privacy, consenso_data FROM clients WHERE id=$1', [idCli])).rows[0];
+    dice(r.stato === 200 && cons.consenso_privacy === true && !!cons.consenso_data, 'spuntato il consenso, la data si scrive', JSON.stringify(cons));
+    const dataConsenso = String(cons.consenso_data);
+    r = await chiama('POST', `/dashboard/clients/${idCli}`, { ...anagrafica, consenso_privacy: false });
+    cons = (await db.query('SELECT consenso_privacy, consenso_data FROM clients WHERE id=$1', [idCli])).rows[0];
+    dice(r.stato === 200 && cons.consenso_privacy === false, 'tolta la spunta, il consenso risulta revocato');
+    dice(String(cons.consenso_data) === dataConsenso, '🔴 ma la data in cui era stato dato NON sparisce: è un dato legale', 'ora è ' + cons.consenso_data);
+    r = await chiama('GET', `/dashboard/clients/${idCli}`);
+    dice(r.stato === 200 && !/Consenso privacy<\/div><div class="field-value">Sì/.test(r.testo), '  e la scheda non lo mostra come «Sì»');
+
+    // Scrivere su Drive non si fa con un link: la prova di scrittura è un POST.
+    r = await chiama('GET', '/dashboard/diag/drive/test-create');
+    dice(r.stato === 404, '🔴 aprire un LINK non crea più cartelle su Drive (GET → 404)', 'ha risposto ' + r.stato);
+    r = await chiama('POST', '/dashboard/diag/drive/test-create');
+    dice(r.stato === 200 && /Variabili mancanti|Cartella di prova/.test(r.testo), '  la stessa prova si fa con un pulsante (POST), e qui senza chiavi Google lo dice', r.stato + ' ' + r.testo.slice(0, 80));
+
+    console.log('\n21. 🔬 Adesso la rompo apposta');
     for (const [corpo, et] of [
       [{ tipo: 'boh',         soggetto_id: idProg, stato: 'da_inviare' }, 'un tipo inventato'],
       [{ tipo: 'committente', soggetto_id: idProg, stato: 'firmata'    }, 'uno stato che non esiste più'],
@@ -533,8 +583,9 @@ const chiama = async (metodo, url, corpo) => {
   } catch (e) {
     ko++; console.log('\n🔴 ECCEZIONE: ' + e.message + '\n' + e.stack.split('\n')[1]);
   } finally {
-    console.log('\n21. Pulizia (solo le righe create da questa prova)');
+    console.log('\n22. Pulizia (solo le righe create da questa prova)');
     try {
+      if (idLead) await db.query('DELETE FROM leads WHERE id=$1', [idLead]);
       // Le proforme nate nella sezione 18 (i numeri bruciati nel database di PROVA
       // restano bruciati: qui non è un problema). Prima le righe, poi i documenti,
       // e prima del cliente: cancellandolo il legame andrebbe solo a NULL.

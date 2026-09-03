@@ -377,7 +377,10 @@ router.get('/dashboard/diag/drive', requireCoach, async (req, res) => {
 
 // Diagnosi SCRITTURA: crea (idempotente) una cartella di prova sotto «Noesys».
 // Serve solo a verificare che le credenziali possano scrivere; poi la si cancella a mano.
-router.get('/dashboard/diag/drive/test-create', requireCoach, async (req, res) => {
+// ⭐ 0.4 (03/09/2026) — era una GET: bastava un link (anche un'immagine in una
+// pagina aperta col coach loggato) per far scrivere l'Hub su Drive. Una scrittura
+// si fa con un pulsante, cioè con un POST; il pulsante sta nella pagina di diagnosi.
+router.post('/dashboard/diag/drive/test-create', requireCoach, async (req, res) => {
   const steps = [];
   try {
     const missing = drive.missingEnv();
@@ -565,6 +568,11 @@ router.post('/dashboard/clients/:id', requireCoach, express.json(), async (req, 
   const name = [nome, cognome].filter(Boolean).join(' '); // display "Nome Cognome", tenuto in sync
   try {
     // Se il consenso è appena stato dato e non c'era una data, la impostiamo a oggi.
+    // ⭐ 0.4 (03/09/2026) — togliere la spunta NON cancella più la data: è un dato
+    //    legale (quando è stato dato il consenso) e si conserva. Quello che manca
+    //    ancora è la data della REVOCA: vuole una colonna nuova, e le modifiche
+    //    all'impianto del database sono rimandate a ottobre (decisione di Germano).
+    //    Nel frattempo la scheda mostra il consenso come «No» e tiene la data.
     const consenso = !!b.consenso_privacy;
     await db.query(
       `UPDATE clients SET
@@ -576,7 +584,7 @@ router.post('/dashboard/clients/:id', requireCoach, express.json(), async (req, 
         partita_iva=$29, regime=$30, natura_giuridica=$31, paese=$32, identificativo_estero=$33,
         consenso_privacy=$20,
         consenso_data = CASE WHEN $20 AND consenso_data IS NULL THEN CURRENT_DATE
-                             WHEN $20 THEN consenso_data ELSE NULL END
+                             ELSE consenso_data END
        WHERE id=$21`,
       [name, (b.email||'').trim(), moduli.normalizzaTelefono((b.telefono||'').trim()), (b.altro_recapito||'').trim(),
        (b.social_tipo||'').trim(), (b.via||'').trim(), (b.cap||'').trim(), (b.citta||'').trim(),
@@ -4014,7 +4022,7 @@ function homePage(d, req) {
       <span><a href="/dashboard/clients/${a.client_id}" style="text-decoration:none;color:inherit">${esc(a.name)}</a></span>
       <span class="hm-voce-coda">
         ${itDate(a.scad)}${a.ora ? ` · <strong style="color:var(--ink)">${esc(a.ora)}</strong>` : ''}
-        <button onclick="apriApp('${a.percorso_id}','${esc(a.name)}','${a.scad || ''}','${esc(a.ora || '')}')"
+        <button onclick="apriApp('${a.percorso_id}',${jsStr(a.name)},'${a.scad || ''}',${jsStr(a.ora || '')})"
                 class="btn btn-neutral btn-sm" style="margin-left:8px" title="Sposta l'appuntamento">✎</button>
       </span>
     </div>`));
@@ -4389,6 +4397,11 @@ function driveDiagPage(steps, root, children, req) {
       ${childRows}
     </div>` : ''}
 
+    <form method="post" action="/dashboard/diag/drive/test-create" style="margin:14px 0">
+      <button type="submit" class="btn btn-neutral btn-sm">Prova a creare una cartella su Drive</button>
+      <span style="font-size:12px;color:var(--hint);margin-left:8px">crea «Test-Automazione» dentro Noesys: è l'unica cosa che scrive, e si può cancellare</span>
+    </form>
+
     ${allOk ? `
     <p style="color:var(--muted);font-size:13px">Tutto a posto: la Fase 1 è confermata. Il prossimo passo è la chiave Claude (Fase 2).</p>`
     : `<p style="color:var(--muted);font-size:13px">Segnalami cosa vedi qui sopra: dal messaggio d'errore capisco se è un valore incollato male su Railway (e quale) o altro.</p>`}
@@ -4592,7 +4605,7 @@ Germano`;
           ${quando}
           <div style="font-size:11px;color:var(--hint)">${esc(a.percorso_tipo || 'Percorso')}${a.scad ? ` · ${a.fonte === 'mano' ? 'scritto da te' : 'dal report'}` : ''}</div>
         </div>
-        <button onclick="apriApp('${a.percorso_id}','${a.scad || ''}','${esc(a.ora || '')}')" class="btn btn-neutral btn-sm">
+        <button onclick="apriApp('${a.percorso_id}','${a.scad || ''}',${jsStr(a.ora || '')})" class="btn btn-neutral btn-sm">
           ${a.scad ? 'Cambia' : 'Segna un appuntamento'}
         </button>
       </div>`;
@@ -4797,7 +4810,7 @@ Germano`;
   const ultima = proforme[0];              // già ordinate dalla più recente
   const stU = ultima ? (STATO_PF[ultima.stato] || STATO_PF.emessa) : null;
   const rigaUltima = !ultima ? '' : rigaDue('Ultima proforma', `
-      <a href="#" onclick="apriPdf('${ultima.id}','Proforma n. ${esc(ultima.numero)}');return false" style="font-weight:700;color:var(--blue);text-decoration:none">n. ${esc(ultima.numero)}</a>
+      <a href="#" onclick="apriPdf('${ultima.id}',${jsStr('Proforma n. ' + ultima.numero)});return false" style="font-weight:700;color:var(--blue);text-decoration:none">n. ${esc(ultima.numero)}</a>
       <span style="font-size:13px;color:var(--muted);margin-left:8px">${ultima.data_emissione ? itDate(ultima.data_emissione) : ''}</span>
       <span style="font-size:13px;margin-left:8px">€ ${fiscale.euro(ultima.da_pagare)}</span>
       <span class="badge" style="background:${stU.bg};color:${stU.c};margin-left:8px">${stU.label}</span>
@@ -4864,7 +4877,7 @@ Germano`;
       const doc = rateChieste.get(t.id) || {};
       const dataInc = doc.ultimoIncasso || t.data_incasso;
       const comando = (stato === 'da_chiedere')
-        ? `<button onclick="chiediRata('${t.id}','${esc(t.etichetta)}, \u20ac ${fiscale.euroIntero(imp)}')" class="btn btn-primary btn-sm">Chiedi il pagamento</button>`
+        ? `<button onclick="chiediRata('${t.id}',${jsStr(t.etichetta + ', \u20ac ' + fiscale.euroIntero(imp))})" class="btn btn-primary btn-sm">Chiedi il pagamento</button>`
         : (stato === 'da_mandare')
         ? `<a href="/dashboard/amministrazione/proforma" class="btn btn-primary btn-sm">Rileggi e manda</a>`
         : (stato === 'incassata')
@@ -4873,7 +4886,7 @@ Germano`;
              ? `<a href="/dashboard/amministrazione/proforma" style="font-size:11.5px;color:var(--muted)">n. ${esc(doc.numero)}</a>`
              : `<button onclick="segnaStato('${t.id}','da_chiedere')" class="btn btn-neutral btn-sm" title="Torna indietro">Annulla</button>`}`
         : doc.proformaId
-        ? `<button onclick="apriIncasso('${doc.proformaId}','${esc(t.etichetta)}',${Number(doc.residuo) || 0})" class="btn btn-neutral btn-sm">È arrivato</button>`
+        ? `<button onclick="apriIncasso('${doc.proformaId}',${jsStr(t.etichetta)},${Number(doc.residuo) || 0})" class="btn btn-neutral btn-sm">È arrivato</button>`
         : '';
       return `<tr>
           <td>${esc(t.etichetta)}${perc !== null ? ` <span style="font-size:11px;color:var(--hint)">${perc}%</span>` : ''}</td>
@@ -5062,7 +5075,7 @@ Germano`;
         <summary>
           <span class="sec-caret">▸</span>
           <span style="font-weight:700;color:var(--ink)">${TOOL_LABEL[s.tool] || esc(s.tool)}</span>
-          <span style="color:#aaa;font-size:12px">· ${itDate(s.created_at)}</span>
+          <span style="color:#aaa;font-size:12px">· ${itDateTime(s.created_at)}</span>
           <span style="margin-left:auto;font-size:11px;color:#aaa">agg. ${fmtDate(s.updated_at)}</span>
         </summary>
         <div class="acc-body" style="line-height:1.7">${renderSessionData(s.tool, s.data)}</div>
@@ -5126,7 +5139,7 @@ Germano`;
         <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--line);font-size:13px">
           <span style="flex:1">✓ <strong>${p.tool ? (TOOL_LABEL[p.tool] || esc(p.tool)) : 'Tutti gli strumenti'}</strong>
             <span style="color:#8a94a6">— ${descrivi(p)}</span></span>
-          <button onclick="chiudiPermesso('${attr(p.id)}')" class="btn btn-off btn-sm" style="padding:2px 9px;font-size:11px">chiudi</button>
+          <button onclick="chiudiPermesso(${jsStr(p.id)})" class="btn btn-off btn-sm" style="padding:2px 9px;font-size:11px">chiudi</button>
         </div>`).join('');
 
   // ── PROPOSTA letta dai moduli, da approvare (08/08) ──────────────────
@@ -5566,7 +5579,7 @@ Germano`;
       <div class="form-group"><label>Link cartella Google Drive</label><input id="e-drive" type="text" value="${attr(client.drive_url)}" placeholder="https://drive.google.com/…"></div>
       <div class="form-group" style="display:flex;align-items:center;gap:8px">
         <input id="e-consenso" type="checkbox" style="width:auto;margin:0" ${client.consenso_privacy?'checked':''}>
-        <label style="margin:0;text-transform:none;font-size:13px;letter-spacing:0">Consenso al trattamento dei dati personali${client.consenso_data ? ` (dato il ${String(client.consenso_data).slice(0,10)})` : ''}</label>
+        <label style="margin:0;text-transform:none;font-size:13px;letter-spacing:0">Consenso al trattamento dei dati personali${client.consenso_data ? ` (dato il ${itDate(client.consenso_data)}${client.consenso_privacy ? '' : ', poi revocato'})` : ''}</label>
       </div>
       <div id="edit-error" style="display:none" class="flash-error"></div>
       <div style="display:flex;gap:8px;margin-top:4px">
@@ -6530,7 +6543,7 @@ function leadsPage(leads, req) {
       <td style="font-size:12px;color:#aaa">${l.data_prossimo_contatto ? itDate(l.data_prossimo_contatto) : '—'}</td>
       <td style="font-size:12px;color:#4a5568;max-width:180px">${esc(l.note||'')}</td>
       <td style="white-space:nowrap">
-        <button onclick="editLead('${l.id}','${attr(l.nome)}','${attr(l.cognome||'')}','${attr(l.email||'')}','${attr(l.telefono||'')}','${l.fonte}','${l.stato}','${attr(l.note||'')}','${l.data_prossimo_contatto?String(l.data_prossimo_contatto).slice(0,10):''}')" class="btn btn-neutral btn-sm">Modifica</button>
+        <button onclick="editLead('${l.id}',${jsStr(l.nome)},${jsStr(l.cognome||'')},${jsStr(l.email||'')},${jsStr(l.telefono||'')},'${l.fonte}','${l.stato}',${jsStr(l.note||'')},'${l.data_prossimo_contatto?String(l.data_prossimo_contatto).slice(0,10):''}')" class="btn btn-neutral btn-sm">Modifica</button>
         ${l.stato!=='convertito' ? `<button onclick="convertLead('${l.id}')" class="btn btn-neutral btn-sm" style="margin:0 4px" title="Trasforma questo lead in un cliente">→ Cliente</button>` : ''}
         <span style="display:inline-block;width:10px"></span><button onclick="deleteLead('${l.id}')" class="btn btn-danger btn-sm" title="Elimina il lead">🗑</button>
       </td>
@@ -6861,7 +6874,7 @@ function proformaPage(daChiedere, proforme, req) {
   const eur = n => '€ ' + fiscale.euro(n);
   // Il numero del documento apre l'anteprima invece di portare via dalla pagina.
   const linkPdf = (p, stile) =>
-    `<a href="#" onclick="apriPdf('${p.id}','Proforma n. ${esc(p.numero)}');return false" style="${stile}">n. ${esc(p.numero)}</a>`;
+    `<a href="#" onclick="apriPdf('${p.id}',${jsStr('Proforma n. ' + p.numero)});return false" style="${stile}">n. ${esc(p.numero)}</a>`;
 
   const passo = (n, titolo, sottotitolo, corpo) => `
     <section style="margin-bottom:26px">
@@ -6949,9 +6962,9 @@ function proformaPage(daChiedere, proforme, req) {
         </div>
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-left:auto">
           <strong style="font-size:15px">${eur(p.da_pagare)}</strong>
-          <button onclick="apriPdf('${p.id}','Proforma n. ${esc(p.numero)}')" class="btn btn-neutral btn-sm">Apri il PDF</button>
+          <button onclick="apriPdf('${p.id}',${jsStr('Proforma n. ' + p.numero)})" class="btn btn-neutral btn-sm">Apri il PDF</button>
           <button onclick="apriInvio('${p.id}')" class="btn btn-gold btn-sm">✉️ Rivedi e manda</button>
-          <button onclick="annulla('${p.id}','${esc(p.numero)}',false)" class="btn btn-neutral btn-sm">Annulla</button>
+          <button onclick="annulla('${p.id}',${jsStr(p.numero)},false)" class="btn btn-neutral btn-sm">Annulla</button>
         </div>
       </div>
     </div>`).join('');
@@ -6993,7 +7006,7 @@ function proformaPage(daChiedere, proforme, req) {
         </div>
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-left:auto">
           <strong style="font-size:15px">${eur(manca)}</strong>
-          <button onclick="apriIncasso('${p.id}','n. ${esc(p.numero)} — ${esc(p.cliente_nome || '')}',${manca})" class="btn btn-gold btn-sm">È arrivato</button>
+          <button onclick="apriIncasso('${p.id}',${jsStr('n. ' + p.numero + ' — ' + (p.cliente_nome || ''))},${manca})" class="btn btn-gold btn-sm">È arrivato</button>
         </div>
       </div>
       ${righeInc}
@@ -7079,7 +7092,7 @@ function proformaPage(daChiedere, proforme, req) {
           ${p.drive_url
             ? `<a href="${esc(p.drive_url)}" target="_blank" style="font-size:12px;color:var(--muted);text-decoration:none">copia su Drive</a>`
             : `<button onclick="riprovaDrive('${p.id}')" class="btn btn-neutral btn-sm" title="La mail è partita, ma la copia in archivio no">Copia su Drive non riuscita — riprova</button>`}
-          <button onclick="annulla('${p.id}','${esc(p.numero)}',true)" class="btn btn-neutral btn-sm">Annulla</button>
+          <button onclick="annulla('${p.id}',${jsStr(p.numero)},true)" class="btn btn-neutral btn-sm">Annulla</button>
         </div>
       </div>`;
   };
@@ -9490,9 +9503,23 @@ function esc(str) {
     .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
-// Per valori dentro attributi HTML e stringhe JS inline (apici singoli/doppi).
+// Per valori dentro ATTRIBUTI HTML (value="…", data-url="…"): è esc(), e basta.
+// ⛔ 0.4 (03/09/2026) — NON dentro un onclick: lì si usa jsStr(). Prima questa
+//    funzione prometteva di coprire anche «stringhe JS inline» e non faceva niente
+//    (sostituiva &#39; con &#39;): una sicurezza che non esisteva.
 function attr(str) {
-  return esc(str).replace(/&#39;/g, '&#39;');
+  return esc(str);
+}
+
+// ⭐ 0.4 — UN VALORE LIBERO DENTRO UN onclick="…". Il browser decodifica le entità
+// dell'attributo PRIMA di leggere il JavaScript: con esc() «D'Amico» diventa
+// f('D&#39;Amico') → f('D'Amico') e la stringa si chiude a metà, il pulsante muore.
+// Qui il valore diventa una stringa JavaScript vera (JSON, fra doppi apici, con
+// gli escape giusti) e POI si rende sicura per l'attributo: il browser restituisce
+// al JavaScript esattamente "D'Amico". Si scrive SENZA apici attorno:
+//   onclick="apri(${jsStr(nome)})"
+function jsStr(v) {
+  return esc(JSON.stringify(String(v == null ? '' : v)));
 }
 
 // Ore con al più un decimale, senza ".0" inutile: 25 → "25", 1.5 → "1,5" (virgola IT).
