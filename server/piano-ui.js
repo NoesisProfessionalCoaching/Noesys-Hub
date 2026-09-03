@@ -250,15 +250,30 @@ function js(o) {
     // Adesso il DOM e la verita finche la finestrella e aperta: si aggiornano
     // solo i TESTI derivati (la percentuale, le somme, la verifica).
     // ═══════════════════════════════════════════════════════════════════════
+    // ⭐ FETTA 0.1 (03/09/2026) — una rata che sta gia in un documento, o che
+    // risulta incassata, e FERMA: i suoi campi si vedono spenti, non ha il
+    // cestino, e al posto del cestino dice in che stato e e in quale proforma.
+    // Il server rifiuta comunque di toccarla (la regola vera sta li, in
+    // tranche.riconcilia): qui si evita solo di far scrivere a vuoto.
+    // Ogni riga porta il suo id in data-id: e cosi che il server la riconosce.
+    function rataFerma(t) { return !!(t && t.id && t.stato && t.stato !== 'da_chiedere'); }
     function rigaPianoHtml(key, t) {
-      return '<tr data-key="' + key + '">'
-        + '<td><input class="pr-et" value="' + esc2(t.etichetta) + '" style="width:120px"></td>'
-        + '<td style="white-space:nowrap"><input class="pr-imp" type="number" step="1" min="0" value="' + (Math.round(Number(t.importo)||0)) + '" oninput="ricalcolaPiano()" style="width:96px">'
+      var ferma = rataFerma(t);
+      var off = ferma ? ' disabled' : '';
+      var st = ferma ? (STATI[t.stato] || STATI.da_chiedere) : null;
+      var doc = (t && t.doc) || {};
+      var coda = ferma
+        ? '<span class="badge" style="background:' + st.bg + ';color:' + st.c + '" title="Questa rata sta gia in un documento: non si cambia e non si toglie. Si cambiano le altre.">'
+          + st.label + (doc.numero ? ' · n. ' + esc2(doc.numero) : '') + '</span>'
+        : '<button onclick="togliRiga(this)" class="btn btn-danger btn-sm" title="Togli la rata">🗑</button>';
+      return '<tr data-key="' + key + '"' + (t && t.id ? ' data-id="' + esc2(t.id) + '"' : '') + (ferma ? ' data-ferma="1"' : '') + '>'
+        + '<td><input class="pr-et" value="' + esc2(t.etichetta) + '" style="width:120px"' + off + '></td>'
+        + '<td style="white-space:nowrap"><input class="pr-imp" type="number" step="1" min="0" value="' + (Math.round(Number(t.importo)||0)) + '" oninput="ricalcolaPiano()" style="width:96px"' + off + '>'
         + ' <span class="pr-perc" style="font-size:11px;color:var(--hint)"></span></td>'
-        + '<td><select class="pr-inn" onchange="ricalcolaPiano()" style="width:140px">' + INNESCHI_OPT + '</select></td>'
-        + '<td><input class="pr-gg" type="number" step="1" min="0" value="' + (Number(t.giorni)||0) + '" oninput="ricalcolaPiano()" style="width:56px"></td>'
+        + '<td><select class="pr-inn" onchange="ricalcolaPiano()" style="width:140px"' + off + '>' + INNESCHI_OPT + '</select></td>'
+        + '<td><input class="pr-gg" type="number" step="1" min="0" value="' + (Number(t.giorni)||0) + '" oninput="ricalcolaPiano()" style="width:56px"' + off + '></td>'
         + '<td class="pr-scad" style="font-size:12px;white-space:nowrap;color:var(--hint)"></td>'
-        + '<td style="text-align:right"><button onclick="togliRiga(this)" class="btn btn-danger btn-sm" title="Togli la rata">🗑</button></td>'
+        + '<td style="text-align:right">' + coda + '</td>'
         + '</tr>';
     }
     function costruisciFinestrella() {
@@ -313,6 +328,10 @@ function js(o) {
     }
     function leggiRiga(tr) {
       return {
+        // ⭐ 0.1 — l'id viaggia con la riga: senza, il server non puo sapere che
+        // questa e la rata ferma e la tratterebbe come tolta. (Un campo spento si
+        // legge lo stesso: disabled toglie la scrittura, non il valore.)
+        id: tr.getAttribute('data-id') || null,
         etichetta: tr.querySelector('.pr-et').value,
         importo: Math.round(Number(tr.querySelector('.pr-imp').value) || 0),
         innesco: tr.querySelector('.pr-inn').value,

@@ -109,5 +109,68 @@ console.log('\n— A CHE PUNTO È UNA RATA —');
     tr.totali(rate, 6000, new Map([['c', 'inviata']])));
 }
 
+console.log('\n— LE RATE DENTRO UN DOCUMENTO NON SI TOCCANO (fetta 0.1, 03/09/2026) —');
+{
+  // Il piano salvato: tre rate del committente. La prima sta in una proforma
+  // già mandata, la seconda in una solo creata, la terza è libera.
+  const salvate = [
+    { id: 'a', etichetta: 'Acconto',       importo: 2100, innesco: 'firma', giorni: 30, stato: 'da_chiedere' },
+    { id: 'b', etichetta: 'Metà percorso', importo: 2800, innesco: 'meta',  giorni: 30, stato: 'da_chiedere' },
+    { id: 'c', etichetta: 'Saldo',         importo: 2100, innesco: 'fine',  giorni: 30, stato: 'da_chiedere' },
+  ];
+  const documenti = new Map([
+    ['a', { stato: 'inviata', saldata: false, proformaId: 'p1', numero: '2026/007' }],
+    ['b', { stato: 'emessa',  saldata: false, proformaId: 'p2', numero: '2026/008' }],
+  ]);
+  const uguale = (t) => ({ id: t.id, etichetta: t.etichetta, importo: t.importo, innesco: t.innesco, giorni: t.giorni });
+
+  prova('una rata chiesta è ferma', true, tr.bloccata(salvate[0], documenti));
+  prova('una rata in un documento solo creato è ferma lo stesso: il documento esiste', true, tr.bloccata(salvate[1], documenti));
+  prova('una rata libera non è ferma', false, tr.bloccata(salvate[2], documenti));
+  prova('una rata segnata incassata a mano (prima di C4) è ferma anche senza documento',
+    true, tr.bloccata({ id: 'z', stato: 'incassata' }, new Map()));
+  prova('⭐ annullata la proforma, la rata torna libera da sé', false, tr.bloccata(salvate[0], new Map()));
+
+  // Il caso buono: le due ferme arrivano identiche, la terza cambia.
+  let e = tr.riconcilia({ salvate, documenti,
+    righe: [uguale(salvate[0]), uguale(salvate[1]), { etichetta: 'Saldo finale', importo: 2100, innesco: 'fine', giorni: 60 }] });
+  prova('ferme intatte + libera cambiata → nessun problema', [], e.problemi);
+  prova('  le ferme sono due', ['a', 'b'], e.ferme.map(t => t.id));
+  prova('  da riscrivere c’è solo la libera', ['Saldo finale'], e.libere.map(r => r.etichetta));
+
+  // 🔴 Il difetto della ricognizione: la rata chiesta non arriva più (tolta dal piano).
+  e = tr.riconcilia({ salvate, documenti, righe: [uguale(salvate[1]), { etichetta: 'Tutto', importo: 4200, innesco: 'fine', giorni: 30 }] });
+  prova('🔴 togliere dal piano una rata chiesta è un problema', 1, e.problemi.length);
+  prova('  e il messaggio nomina la rata, l’importo e la proforma', true,
+    /«Acconto»/.test(e.problemi[0]) && /2\.100/.test(e.problemi[0]) && /2026\/007/.test(e.problemi[0]) && /togliere/.test(e.problemi[0]));
+
+  // Cambiarle l'importo, l'etichetta, l'innesco o i giorni: è come toglierla.
+  for (const [campo, valore] of [['importo', 2000], ['etichetta', 'Anticipo'], ['innesco', 'meta'], ['giorni', 60]]) {
+    const r = { ...uguale(salvate[0]), [campo]: valore };
+    e = tr.riconcilia({ salvate, documenti, righe: [r, uguale(salvate[1]), uguale(salvate[2])] });
+    prova(`cambiare «${campo}» a una rata ferma è un problema`, true, e.problemi.length === 1 && /modificare/.test(e.problemi[0]));
+  }
+  prova('l’ordine invece si può cambiare: non sta nel documento', [],
+    tr.riconcilia({ salvate, documenti, righe: [uguale(salvate[2]), uguale(salvate[1]), uguale(salvate[0])] }).problemi);
+  prova('gli spazi attorno all’etichetta e l’importo come stringa non contano', [],
+    tr.riconcilia({ salvate, documenti, righe: [{ ...uguale(salvate[0]), etichetta: ' Acconto ', importo: '2100' }, uguale(salvate[1]), uguale(salvate[2])] }).problemi);
+
+  // Una finestrella vecchia (pagina non ricaricata) manda le righe SENZA id.
+  e = tr.riconcilia({ salvate, documenti, righe: salvate.map(t => ({ ...uguale(t), id: null })) });
+  prova('senza id le ferme risultano tolte: due problemi, uno per rata', 2, e.problemi.length);
+
+  // Una rata libera con un id vecchio si riscrive come oggi: il suo id non la protegge.
+  e = tr.riconcilia({ salvate, documenti, righe: [uguale(salvate[0]), uguale(salvate[1]), { ...uguale(salvate[2]), importo: 1000 }, { etichetta: 'Extra', importo: 1100, innesco: 'fine', giorni: 30 }] });
+  prova('una rata libera si riscrive anche se porta il suo id', ['Saldo', 'Extra'], e.libere.map(r => r.etichetta));
+
+  // Un id inventato che non corrisponde a niente di fermo: riga libera, non un errore.
+  e = tr.riconcilia({ salvate, documenti, righe: [uguale(salvate[0]), uguale(salvate[1]), { id: 'boh', etichetta: 'X', importo: 2100, innesco: 'fine', giorni: 30 }] });
+  prova('un id sconosciuto è una riga libera', [], e.problemi);
+
+  // Senza documenti e senza rate salvate, tutto è libero: il primo salvataggio.
+  e = tr.riconcilia({ salvate: [], documenti: new Map(), righe: [{ etichetta: 'Quota', importo: 500, innesco: 'firma', giorni: 30 }] });
+  prova('il primo salvataggio non ha niente di fermo', { p: [], f: 0, l: 1 }, { p: e.problemi, f: e.ferme.length, l: e.libere.length });
+}
+
 console.log(`\n${falliti ? '✗' : '✓'} ${falliti} prove fallite.`);
 process.exit(falliti ? 1 : 0);

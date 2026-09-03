@@ -4,7 +4,18 @@
     {
       "name": "noesys-hub",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["start"],
+      "runtimeArgs": [
+        "start"
+      ],
+      "port": 3100
+    },
+    {
+      "name": "noesys-hub-prova",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--env-file=.env",
+        "server/index.js"
+      ],
       "port": 3100
     }
   ]

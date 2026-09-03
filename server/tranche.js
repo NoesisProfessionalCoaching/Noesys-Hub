@@ -207,4 +207,72 @@ function statoDi(t, documenti) {
   return salvato === 'chiesta' ? 'da_chiedere' : salvato;
 }
 
-module.exports = { INNESCHI, STATI, pianoProposto, percentuale, problemi, scadenza, totali, statoDi };
+// ═══════════════════════════════════════════════════════════════════════════
+// ⭐ FETTA 0.1 DEL RIORDINO (03/09/2026) — LE RATE DENTRO UN DOCUMENTO NON SI TOCCANO.
+//
+// La ricognizione indipendente (B1) ha trovato il difetto più caro dell'Hub:
+// salvare il piano cancellava TUTTE le rate e le riscriveva da zero. Se una rata
+// stava già dentro una proforma, spariva: il documento restava ma non sapeva più
+// a cosa si riferiva, il controllo «già chiesta» non la trovava più e la stessa
+// rata si poteva chiedere due volte. Tutto in silenzio.
+//
+// La regola, in un posto solo, per le tre rotte del piano (progetto, pacchetto,
+// partecipante): una rata che sta in un documento vivo — o che risulta incassata
+// — è FERMA. Deve arrivare dalla finestrella identica a com'è salvata (stesso
+// id, stesso importo, stessa etichetta, stesso innesco, stessi giorni), altrimenti
+// il salvataggio si rifiuta e si dice quale rata e quale proforma. Le altre rate
+// sono libere: si riscrivono come prima, purché il totale torni.
+//
+// ⚠️ Perché TUTTO congelato e non solo l'importo: la proforma porta scritti
+// l'etichetta e la percentuale, e la scadenza si congela nel documento al momento
+// in cui nasce (innesco + giorni). Cambiare uno di quei campi sulla rata farebbe
+// dire alla scheda una cosa e al documento un'altra. L'ordine invece non sta nel
+// documento, e si può cambiare.
+//
+// ⛔ Perché NON «annulla la proforma e rifai»: Germano, 03/09 sera — l'annullamento
+// è un comando solo interno, il cliente che ha ricevuto il documento non ne sa
+// niente, e su un'annullata l'Hub rifiuta gli incassi. Regge solo finché il
+// documento non è partito. Una rata incassata poi non si «disfa» in nessun modo.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Una rata è ferma se sta in un documento vivo o risulta incassata. */
+function bloccata(t, documenti) {
+  return statoDi(t, documenti) !== 'da_chiedere';
+}
+
+const pulita = (s) => String(s == null ? '' : s).trim();
+const intero = (n) => Math.round(Number(n) || 0);
+
+/**
+ * Confronta le rate salvate con quelle che arrivano dalla finestrella.
+ * @param {Array}  salvate    le rate come stanno nel database
+ * @param {Map}    documenti  rata → documento vivo (la mappa di `incassi.mappaRate`)
+ * @param {Array}  righe      le righe in arrivo; una riga ferma porta il suo `id`
+ * @returns {{problemi: string[], ferme: Array, libere: Array}}
+ *   `problemi` vuoto = si può salvare. `ferme` = le rate da NON toccare
+ *   (al massimo si aggiorna l'ordine). `libere` = le righe da riscrivere.
+ */
+function riconcilia({ salvate, documenti, righe }) {
+  const ferme = (salvate || []).filter(t => bloccata(t, documenti));
+  const idsFermi = new Set(ferme.map(t => String(t.id)));
+  const arrivate = new Map((righe || []).filter(r => r && r.id).map(r => [String(r.id), r]));
+  const problemi = [];
+  for (const t of ferme) {
+    const doc = documenti && documenti.get ? documenti.get(t.id) : null;
+    const chi = `La rata «${pulita(t.etichetta)}» (€ ${fiscale.euroIntero(t.importo)}) `
+      + (doc && doc.numero ? `sta nella proforma n. ${doc.numero}` : 'risulta incassata');
+    const r = arrivate.get(String(t.id));
+    if (!r) { problemi.push(chi + ': non si può togliere dal piano.'); continue; }
+    const diversa = intero(r.importo) !== intero(t.importo)
+      || pulita(r.etichetta) !== pulita(t.etichetta)
+      || pulita(r.innesco) !== pulita(t.innesco)
+      || intero(r.giorni) !== intero(t.giorni);
+    if (diversa) problemi.push(chi + ': non si può modificare. Cambia le altre rate.');
+  }
+  // Libera = non è una rata ferma. Un id di una rata libera non la protegge: si
+  // riscrive come prima. Un id sconosciuto è solo una riga nuova.
+  const libere = (righe || []).filter(r => !(r && r.id && idsFermi.has(String(r.id))));
+  return { problemi, ferme, libere };
+}
+
+module.exports = { INNESCHI, STATI, pianoProposto, percentuale, problemi, scadenza, totali, statoDi, bloccata, riconcilia };

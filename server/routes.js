@@ -2398,6 +2398,36 @@ router.get('/dashboard/proforma/:id/pdf', requireCoach, async (req, res) => {
 // Si salva TUTTO IL PIANO in un colpo, non riga per riga: le tranche hanno senso
 // solo insieme (devono sommare la quota concordata), e salvarne una alla volta
 // vorrebbe dire lasciare il piano in stati che non tornano.
+// ⭐ FETTA 0.1 (03/09/2026) — i documenti vivi che contengono le rate di un
+// contenitore (progetto, pacchetto o partecipazione). Serve alle tre rotte del
+// piano per sapere quali rate sono FERME: la regola sta in `tranche.riconcilia`,
+// la mappa è la stessa che leggono le pagine (`incassi.mappaRate`).
+async function documentiDelleRate(filtro, params) {
+  const r = await db.query(`
+    SELECT ${incassi.SQL_COLONNE}
+      FROM proforma_righe r
+      JOIN proforme pf ON pf.id = r.proforma_id
+      JOIN tranche_progetto t ON t.id = r.tranche_id
+     WHERE pf.stato <> 'annullata' AND ${filtro}`, params);
+  return incassi.mappaRate(r.rows);
+}
+// Il messaggio comune alle tre rotte quando una rata ferma viene toccata.
+const NOTA_RATE_FERME = ' Una rata già in un documento non si tocca: si cambiano le altre.'
+  + ' (Se nella finestrella non la vedi bloccata, ricarica la pagina.)';
+// Riscrive le rate LIBERE di un contenitore e lascia stare quelle FERME (al
+// massimo ne aggiorna l'ordine). `inserisci(q, r)` è la INSERT di quella rotta.
+async function riscriviRateLibere(q, dove, id, righe, esito, inserisci) {
+  const idsFermi = esito.ferme.map(t => String(t.id));
+  await q(`DELETE FROM tranche_progetto WHERE ${dove} = $1 AND NOT (id = ANY($2::text[]))`, [id, idsFermi]);
+  for (const r of righe) {
+    if (r.id && idsFermi.includes(String(r.id))) {
+      await q('UPDATE tranche_progetto SET ordine = $2 WHERE id = $1', [r.id, r.ordine]);
+    } else {
+      await inserisci(q, r);
+    }
+  }
+}
+
 router.post('/dashboard/progetti/:id/piano', requireCoach, express.json(), async (req, res) => {
   try {
     if (await bloccaSeCongelato(req.params.id, res)) return;
@@ -2424,6 +2454,8 @@ router.post('/dashboard/progetti/:id/piano', requireCoach, express.json(), async
         return res.status(400).json({ error: 'Un piano si riferisce a un partecipante che non è in questo progetto.' });
       }
       const righe = (Array.isArray(pi.righe) ? pi.righe : []).map((r, i) => ({
+        // ⭐ 0.1 — l'id viaggia con la riga: è così che una rata ferma si riconosce.
+        id: r.id ? String(r.id) : null,
         ordine: i,
         etichetta: String(r.etichetta || '').trim() || ('Tranche ' + (i + 1)),
         importo: Math.round(Number(r.importo) || 0),
@@ -2449,22 +2481,30 @@ router.post('/dashboard/progetti/:id/piano', requireCoach, express.json(), async
     if (!dataOk(meta)) return res.status(400).json({ error: 'La data di metà percorso non è valida.' });
     if (!dataOk(fine)) return res.status(400).json({ error: 'La data di fine non è valida.' });
 
-    // Il piano si riscrive intero dentro una transazione: o c'è quello nuovo o
-    // resta quello di prima, mai mezzo vecchio e mezzo nuovo.
+    // ⭐ 0.1 — le rate già in un documento (di QUALUNQUE pagatore del progetto:
+    // questa rotta riscrive anche le rate dei partecipanti) devono arrivare
+    // identiche, o il salvataggio si ferma qui, prima di toccare niente.
+    const salvate = await db.query('SELECT * FROM tranche_progetto WHERE progetto_id = $1', [req.params.id]);
+    const documenti = await documentiDelleRate('t.progetto_id = $1', [req.params.id]);
+    const esito = tranche.riconcilia({ salvate: salvate.rows, documenti,
+      righe: preparati.flatMap(pi => pi.righe) });
+    if (esito.problemi.length) return res.status(400).json({ error: esito.problemi.join(' ') + NOTA_RATE_FERME });
+
+    // Il piano si riscrive dentro una transazione: o c'è quello nuovo o resta
+    // quello di prima, mai mezzo vecchio e mezzo nuovo. Le rate ferme non si
+    // toccano (al massimo cambia il loro ordine).
     await db.transazione(async (q) => {
       await q('UPDATE progetti SET data_meta = $2, data_fine = $3, updated_at = NOW() WHERE id = $1',
         [req.params.id, meta || null, fine || null]);
-      await q('DELETE FROM tranche_progetto WHERE progetto_id = $1', [req.params.id]);
-      for (const pi of preparati) {
-        for (const r of pi.righe) {
-          await q(`INSERT INTO tranche_progetto
-                     (id, progetto_id, partecipazione_id, ordine, etichetta,
-                      importo, innesco, giorni, stato, data_incasso)
-                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-            [uuidv4(), req.params.id, pi.pid, r.ordine, r.etichetta,
-             r.importo, r.innesco, r.giorni, r.stato, r.data_incasso]);
-        }
-      }
+      // Ogni riga si ricorda di che pagatore è, così una INSERT sola basta per tutti.
+      const tutte = preparati.flatMap(pi => pi.righe.map(r => ({ ...r, pid: pi.pid })));
+      await riscriviRateLibere(q, 'progetto_id', req.params.id, tutte, esito, (qq, r) =>
+        qq(`INSERT INTO tranche_progetto
+              (id, progetto_id, partecipazione_id, ordine, etichetta,
+               importo, innesco, giorni, stato, data_incasso)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+          [uuidv4(), req.params.id, r.pid, r.ordine, r.etichetta,
+           r.importo, r.innesco, r.giorni, r.stato, r.data_incasso]));
     });
     res.json({ ok: true });
   } catch (err) {
@@ -2495,6 +2535,7 @@ router.post('/dashboard/percorsi/:id/piano', requireCoach, express.json(), async
     if (prezzo <= 0) return res.status(400).json({ error: 'Scrivi il prezzo del pacchetto.' });
 
     const righe = (Array.isArray(b.righe) ? b.righe : []).map((r, i) => ({
+      id: r.id ? String(r.id) : null,   // ⭐ 0.1 — così una rata ferma si riconosce
       ordine: i,
       etichetta: String(r.etichetta || '').trim() || ('Rata ' + (i + 1)),
       importo: Math.round(Number(r.importo) || 0),
@@ -2515,17 +2556,21 @@ router.post('/dashboard/percorsi/:id/piano', requireCoach, express.json(), async
     if (!dataOk(meta)) return res.status(400).json({ error: 'La data di metà percorso non è valida.' });
     if (!dataOk(fine)) return res.status(400).json({ error: 'La data di fine non è valida.' });
 
+    // ⭐ 0.1 — le rate già in un documento devono arrivare identiche.
+    const salvate = await db.query('SELECT * FROM tranche_progetto WHERE percorso_id = $1', [req.params.id]);
+    const documenti = await documentiDelleRate('t.percorso_id = $1', [req.params.id]);
+    const esito = tranche.riconcilia({ salvate: salvate.rows, documenti, righe });
+    if (esito.problemi.length) return res.status(400).json({ error: esito.problemi.join(' ') + NOTA_RATE_FERME });
+
     await db.transazione(async (q) => {
       await q('UPDATE percorsi SET prezzo = $2, data_meta = $3, data_fine = $4 WHERE id = $1',
         [req.params.id, prezzo, meta || null, fine || null]);
-      await q('DELETE FROM tranche_progetto WHERE percorso_id = $1', [req.params.id]);
-      for (const r of righe) {
-        await q(`INSERT INTO tranche_progetto
-                   (id, percorso_id, ordine, etichetta, importo, innesco, giorni, stato, data_incasso)
-                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      await riscriviRateLibere(q, 'percorso_id', req.params.id, righe, esito, (qq, r) =>
+        qq(`INSERT INTO tranche_progetto
+              (id, percorso_id, ordine, etichetta, importo, innesco, giorni, stato, data_incasso)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
           [uuidv4(), req.params.id, r.ordine, r.etichetta,
-           r.importo, r.innesco, r.giorni, r.stato, r.data_incasso]);
-      }
+           r.importo, r.innesco, r.giorni, r.stato, r.data_incasso]));
     });
     res.json({ ok: true });
   } catch (err) {
@@ -2561,6 +2606,7 @@ router.post('/dashboard/partecipazioni/:id/piano', requireCoach, express.json(),
     }
 
     const righe = (Array.isArray((req.body || {}).righe) ? req.body.righe : []).map((r, i) => ({
+      id: r.id ? String(r.id) : null,   // ⭐ 0.1 — così una rata ferma si riconosce
       ordine: i,
       etichetta: String(r.etichetta || '').trim() || ('Rata ' + (i + 1)),
       importo: Math.round(Number(r.importo) || 0),
@@ -2572,16 +2618,20 @@ router.post('/dashboard/partecipazioni/:id/piano', requireCoach, express.json(),
     const guai = tranche.problemi(righe, quota);
     if (guai.length) return res.status(400).json({ error: guai.join(' ') });
 
+    // ⭐ 0.1 — le rate già in un documento devono arrivare identiche.
+    const salvate = await db.query('SELECT * FROM tranche_progetto WHERE partecipazione_id = $1', [req.params.id]);
+    const documenti = await documentiDelleRate('t.partecipazione_id = $1', [req.params.id]);
+    const esito = tranche.riconcilia({ salvate: salvate.rows, documenti, righe });
+    if (esito.problemi.length) return res.status(400).json({ error: esito.problemi.join(' ') + NOTA_RATE_FERME });
+
     await db.transazione(async (q) => {
-      await q('DELETE FROM tranche_progetto WHERE partecipazione_id = $1', [req.params.id]);
-      for (const r of righe) {
-        await q(`INSERT INTO tranche_progetto
-                   (id, progetto_id, partecipazione_id, ordine, etichetta,
-                    importo, innesco, giorni, stato, data_incasso)
-                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      await riscriviRateLibere(q, 'partecipazione_id', req.params.id, righe, esito, (qq, r) =>
+        qq(`INSERT INTO tranche_progetto
+              (id, progetto_id, partecipazione_id, ordine, etichetta,
+               importo, innesco, giorni, stato, data_incasso)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
           [uuidv4(), pa.rows[0].progetto_id, req.params.id, r.ordine, r.etichetta,
-           r.importo, r.innesco, r.giorni, r.stato, r.data_incasso]);
-      }
+           r.importo, r.innesco, r.giorni, r.stato, r.data_incasso]));
     });
     res.json({ ok: true });
   } catch (err) {

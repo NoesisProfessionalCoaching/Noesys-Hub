@@ -357,7 +357,95 @@ const chiama = async (metodo, url, corpo) => {
       '⛔ senza piano NON si inventa nessuna rata, e resta la regola generale');
     dice(!/15 giorni/.test(pac + std + senza), 'e da nessuna parte si parla più di 15 giorni');
 
-    console.log('\n18. 🔬 Adesso la rompo apposta');
+    // ═══ FETTA 0.1 DEL RIORDINO (03/09/2026) — LE RATE DENTRO UN DOCUMENTO NON SI TOCCANO ═══
+    // La ricognizione indipendente (B1): salvare il piano cancellava e riscriveva
+    // TUTTE le rate, anche quella già dentro una proforma. Il documento restava
+    // orfano e la rata si poteva chiedere due volte, in silenzio. Qui si fa il
+    // giro vero coi pulsanti: piano → proforma su una rata → si prova a toglierla
+    // o a cambiarla (rifiutato, rata intatta e ancora legata al documento) → si
+    // cambiano le altre (accettato). Su tutte e TRE le rotte del piano.
+    console.log('\n18. Le rate dentro un documento non si toccano più (fetta 0.1)');
+    // Il cliente deve essere fatturabile: un privato con codice fiscale e indirizzo.
+    r = await chiama('POST', `/dashboard/clients/${idCli}`, { nome: 'Prova', cognome: marca, area: 'Business',
+      codice_fiscale: 'RSSMRA80A01H501U', via: 'Via Roma 1', cap: '00100', citta: 'Roma', provincia: 'RM' });
+    dice(r.stato === 200, 'il cliente ha i dati che servono a una proforma', r.stato + ' ' + r.testo.slice(0, 120));
+    const idPart = (await db.query('SELECT id FROM partecipazioni WHERE progetto_id=$1 AND client_id=$2', [idProg, idCli])).rows[0].id;
+    r = await chiama('POST', `/dashboard/progetti/${idProg}/quota`, { quota_totale: 10000, quota_committente: 7000 });
+    dice(r.stato === 200, 'valore del progetto 10.000, committente 7.000', r.stato);
+    r = await chiama('POST', `/dashboard/progetti/${idProg}/quote-coachee`, { quote: [{ part_id: idPart, quota: 3000 }] });
+    dice(r.stato === 200, 'il partecipante paga 3.000', r.stato);
+
+    const rateComm = (a, b, c) => [{ etichetta: 'Acconto', importo: a, innesco: 'firma', giorni: 30 },
+                                   { etichetta: 'Metà percorso', importo: b, innesco: 'meta', giorni: 30 },
+                                   { etichetta: 'Saldo', importo: c, innesco: 'fine', giorni: 30 }].filter(x => x.importo > 0);
+    const salvaProgetto = (righeComm, righePart) => chiama('POST', `/dashboard/progetti/${idProg}/piano`, {
+      piani: [{ partecipazione_id: null, righe: righeComm }, { partecipazione_id: idPart, righe: righePart }],
+      data_meta: '2026-11-15', data_fine: '2026-12-20' });
+    const rateDb = (dove, id) => db.query(`SELECT id, etichetta, importo::int AS importo, ordine FROM tranche_progetto WHERE ${dove}=$1 ORDER BY ordine`, [id]);
+
+    r = await salvaProgetto(rateComm(2100, 2800, 2100), [{ etichetta: 'Quota', importo: 3000, innesco: 'firma', giorni: 30 }]);
+    dice(r.stato === 200, 'il piano si salva: 3 rate al committente, 1 al partecipante', r.stato + ' ' + r.testo.slice(0, 160));
+    let rataQuota = (await rateDb('partecipazione_id', idPart)).rows[0];
+    dice(!!rataQuota && rataQuota.importo === 3000, 'la rata del partecipante è nel database');
+
+    // La proforma nasce dal pulsante «Chiedi il pagamento» di quella rata.
+    r = await chiama('POST', `/dashboard/tranche/${rataQuota.id}/proforma`);
+    dice(r.stato === 200 && r.dati && r.dati.numero, 'la proforma della rata del partecipante nasce', r.stato + ' ' + r.testo.slice(0, 200));
+    const numPf = r.dati && r.dati.numero;
+    r = await chiama('GET', `/dashboard/progetti/${idProg}`);
+    dice(r.stato === 200 && r.testo.includes('"stato":"da_mandare"'), 'e la pagina del progetto dice che la rata è «da mandare»: sta in un documento');
+
+    // 🔴 IL DIFETTO: si risalva il piano del progetto SENZA la rata chiesta.
+    r = await salvaProgetto(rateComm(2100, 2800, 2100), [{ etichetta: 'Quota', importo: 3000, innesco: 'firma', giorni: 30 }]);
+    dice(r.stato === 400, '🔴 risalvare il piano del PROGETTO senza quella rata è rifiutato', 'ha risposto ' + r.stato + ' ' + r.testo.slice(0, 160));
+    dice(r.dati && /Quota/.test(r.dati.error || '') && new RegExp(String(numPf).replace('/', '\\/')).test(r.dati.error || ''),
+      '  e il messaggio nomina la rata e la proforma', r.dati && r.dati.error);
+    let rateOra = (await rateDb('partecipazione_id', idPart)).rows;
+    dice(rateOra.length === 1 && rateOra[0].id === rataQuota.id, '  la rata è ancora lì, con lo stesso id');
+    let legamePf = await db.query('SELECT count(*)::int AS n FROM proforma_righe WHERE tranche_id=$1', [rataQuota.id]);
+    dice(legamePf.rows[0].n === 1, '  e la proforma sa ancora a quale rata si riferisce');
+    // Cambiarle l'importo è come toglierla.
+    r = await salvaProgetto(rateComm(2100, 2800, 2100), [{ id: rataQuota.id, etichetta: 'Quota', importo: 2000, innesco: 'firma', giorni: 30 }, { etichetta: 'Resto', importo: 1000, innesco: 'fine', giorni: 30 }]);
+    dice(r.stato === 400 && /modificare/.test((r.dati || {}).error || ''), '🔴 cambiare l’importo della rata chiesta è rifiutato', r.stato + ' ' + r.testo.slice(0, 160));
+    // Il caso buono: la rata chiesta arriva identica, le rate del committente cambiano.
+    r = await salvaProgetto(rateComm(3000, 4000, 0), [{ id: rataQuota.id, etichetta: 'Quota', importo: 3000, innesco: 'firma', giorni: 30 }]);
+    dice(r.stato === 200, '✅ con la rata chiesta intatta, le ALTRE rate si cambiano', r.stato + ' ' + r.testo.slice(0, 160));
+    rateOra = (await rateDb('partecipazione_id', idPart)).rows;
+    dice(rateOra.length === 1 && rateOra[0].id === rataQuota.id, '  la rata chiesta ha ancora lo stesso id');
+    const rateCommOra = (await db.query('SELECT importo::int AS importo FROM tranche_progetto WHERE progetto_id=$1 AND partecipazione_id IS NULL ORDER BY ordine', [idProg])).rows.map(x => x.importo);
+    dice(JSON.stringify(rateCommOra) === '[3000,4000]', '  e il committente ha le due rate nuove', JSON.stringify(rateCommOra));
+    r = await chiama('POST', `/dashboard/tranche/${rataQuota.id}/proforma`);
+    dice(r.stato === 400, '  e la rata non si può chiedere una seconda volta', r.stato);
+
+    // La rotta del PARTECIPANTE (dalla scheda del cliente): stessa regola.
+    r = await chiama('POST', `/dashboard/partecipazioni/${idPart}/piano`, { righe: [{ etichetta: 'Quota', importo: 3000, innesco: 'firma', giorni: 30 }] });
+    dice(r.stato === 400, '🔴 risalvare le rate del PARTECIPANTE senza quella chiesta è rifiutato', r.stato + ' ' + r.testo.slice(0, 160));
+    r = await chiama('POST', `/dashboard/partecipazioni/${idPart}/piano`, { righe: [{ id: rataQuota.id, etichetta: 'Quota', importo: 3000, innesco: 'firma', giorni: 30 }] });
+    dice(r.stato === 200, '✅ con la rata identica il salvataggio passa', r.stato + ' ' + r.testo.slice(0, 160));
+    rateOra = (await rateDb('partecipazione_id', idPart)).rows;
+    dice(rateOra.length === 1 && rateOra[0].id === rataQuota.id, '  e la rata ha ancora lo stesso id');
+
+    // La rotta del PACCHETTO: un percorso a Pacchetto dello stesso cliente.
+    r = await chiama('POST', `/dashboard/clients/${idCli}/percorsi`, { tipo: 'Individuale', modalita: 'Pacchetto', prezzo: 1500, data_inizio: '2026-10-05', n_sessioni_previste: 8 });
+    dice(r.stato === 200, 'nasce un percorso a Pacchetto', r.stato + ' ' + r.testo.slice(0, 120));
+    const idPacc = (await db.query("SELECT id FROM percorsi WHERE client_id=$1 AND modalita='Pacchetto'", [idCli])).rows[0].id;
+    const salvaPacc = (righe) => chiama('POST', `/dashboard/percorsi/${idPacc}/piano`, { prezzo: 1500, data_meta: '', data_fine: '2026-12-20', righe });
+    r = await salvaPacc([{ etichetta: 'Acconto', importo: 600, innesco: 'firma', giorni: 30 }, { etichetta: 'Saldo', importo: 900, innesco: 'fine', giorni: 30 }]);
+    dice(r.stato === 200, 'il piano del pacchetto si salva: 600 + 900', r.stato + ' ' + r.testo.slice(0, 160));
+    const acconto = (await rateDb('percorso_id', idPacc)).rows[0];
+    r = await chiama('POST', `/dashboard/tranche/${acconto.id}/proforma`);
+    dice(r.stato === 200, 'la proforma dell’acconto nasce', r.stato + ' ' + r.testo.slice(0, 200));
+    r = await salvaPacc([{ etichetta: 'Tutto', importo: 1500, innesco: 'fine', giorni: 30 }]);
+    dice(r.stato === 400, '🔴 risalvare il piano del PACCHETTO senza l’acconto chiesto è rifiutato', r.stato + ' ' + r.testo.slice(0, 160));
+    rateOra = (await rateDb('percorso_id', idPacc)).rows;
+    dice(rateOra.length === 2 && rateOra[0].id === acconto.id, '  le due rate sono intatte');
+    r = await salvaPacc([{ id: acconto.id, etichetta: 'Acconto', importo: 600, innesco: 'firma', giorni: 30 },
+                         { etichetta: 'Metà', importo: 450, innesco: 'meta', giorni: 30 }, { etichetta: 'Saldo', importo: 450, innesco: 'fine', giorni: 30 }]);
+    dice(r.stato === 200, '✅ l’acconto intatto e il saldo spezzato in due: passa', r.stato + ' ' + r.testo.slice(0, 160));
+    rateOra = (await rateDb('percorso_id', idPacc)).rows;
+    dice(rateOra.length === 3 && rateOra[0].id === acconto.id && rateOra[0].ordine === 0, '  tre rate, e l’acconto è sempre lui, al primo posto');
+
+    console.log('\n19. 🔬 Adesso la rompo apposta');
     for (const [corpo, et] of [
       [{ tipo: 'boh',         soggetto_id: idProg, stato: 'da_inviare' }, 'un tipo inventato'],
       [{ tipo: 'committente', soggetto_id: idProg, stato: 'firmata'    }, 'uno stato che non esiste più'],
@@ -376,8 +464,14 @@ const chiama = async (metodo, url, corpo) => {
   } catch (e) {
     ko++; console.log('\n🔴 ECCEZIONE: ' + e.message + '\n' + e.stack.split('\n')[1]);
   } finally {
-    console.log('\n19. Pulizia (solo le righe create da questa prova)');
+    console.log('\n20. Pulizia (solo le righe create da questa prova)');
     try {
+      // Le proforme nate nella sezione 18 (i numeri bruciati nel database di PROVA
+      // restano bruciati: qui non è un problema). Prima le righe, poi i documenti,
+      // e prima del cliente: cancellandolo il legame andrebbe solo a NULL.
+      if (idCli) { await db.query('DELETE FROM proforma_righe WHERE proforma_id IN (SELECT id FROM proforme WHERE client_id=$1)', [idCli]);
+                   await db.query('DELETE FROM incassi WHERE proforma_id IN (SELECT id FROM proforme WHERE client_id=$1)', [idCli]);
+                   await db.query('DELETE FROM proforme WHERE client_id=$1', [idCli]); }
       if (idProg) { await db.query('DELETE FROM contratti WHERE progetto_id=$1 OR partecipazione_id IN (SELECT id FROM partecipazioni WHERE progetto_id=$1)', [idProg]);
                     await db.query('DELETE FROM percorso_partecipanti WHERE percorso_id IN (SELECT id FROM percorsi WHERE progetto_id=$1)', [idProg]);
                     await db.query('DELETE FROM partecipazioni WHERE progetto_id=$1', [idProg]);
