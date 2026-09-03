@@ -5244,19 +5244,21 @@ Germano`;
 
         <div class="az-gruppo">
           <div class="az-nome">Contratto</div>
-          <div class="az-btns">
-            ${/* ⛔ 03/09 — VIA IL PULSANTE «Prepara il contratto». Germano:
-                  «non serve (e non è mai servito) il pulsante genera contratto:
-                  quel lavoro è contenuto in invia Mail 2».
-                  ⭐ Aveva ragione, e il difetto era proprio lì: quel pulsante
-                  apriva un PDF che poi moriva nel browser — «una volta aperto
-                  non succede niente, l'ho salvato io sulla mia scrivania».
-                  Adesso i tre documenti si guardano DENTRO la finestrella della
-                  Mail 2, dove poi partono davvero. Un solo posto, un solo giro. */ ''}
-            <button onclick="openMail2()" class="btn btn-primary btn-sm">✉️ Prepara e invia (Mail 2)</button>
-          </div>
+          ${/* ⛔ 03/09 — QUI NON CI VA NESSUN PULSANTE, e ci sono due ragioni.
+                  1. Germano: «non serve (e non è mai servito) il pulsante genera
+                     contratto: quel lavoro è contenuto in invia Mail 2». Il
+                     vecchio «Prepara il contratto» apriva un PDF che poi moriva
+                     nel browser — «l'ho salvato io sulla mia scrivania».
+                  2. 🔴 E il pulsante che ci avevo messo al suo posto era un
+                     DOPPIONE: «Rivedi e invia Mail 2» esisteva già a due
+                     riquadri di distanza, e chiamava la stessa funzione. Se n'è
+                     accorto Germano guardando la pagina: «ora ci sono 2 pulsanti
+                     relativi all'invio del contratto».
+                  ⭐ Un riquadro può dire A CHE PUNTO SIAMO senza offrire una
+                     seconda porta per la stessa stanza. Qui si legge lo stato;
+                     si agisce da «Documenti al cliente», dove stanno le mail. */ ''}
           <div style="font-size:11.5px;color:var(--hint);margin-top:5px">
-            Contratto e informativa privacy nascono <strong>dentro la Mail 2</strong>, dove si guardano prima di partire.
+            Contratto e informativa privacy nascono <strong>dentro la Mail 2</strong> — qui accanto, in «Documenti al cliente» — dove si guardano prima di partire.
           </div>
           ${/* Fetta 6a — lo stato della bozza, con gli stessi pulsanti della card
                 del progetto: la cella la disegna `contratti-stato`, non questa
@@ -5666,6 +5668,23 @@ Germano`;
         <div class="form-group"><label>Sessioni previste</label><input id="p-sessioni" type="number" step="1" min="1" value="8"></div>
         <div class="form-group" id="p-prezzo-box"><label id="p-prezzo-label">Prezzo a sessione (€)</label><input id="p-prezzo" type="number" step="0.01" placeholder="es. 150"></div>
         <div class="form-group" id="p-scambio-box" style="display:none"><label>Cosa eroga il Cliente in cambio</label><input id="p-scambio" type="text" placeholder="es. consulenza in ambito risorse umane"><div style="font-size:11px;color:#8a94a6;margin-top:4px">Finisce nel contratto, al punto sul compenso. Senza, quello spazio resta in bianco.</div></div>
+        ${/* ⭐ 03/09 — LE RATE SONO PARTE DEL PERCORSO, non un'appendice.
+              Germano, dopo averlo provato: «prima crei il percorso e gli dai un
+              valore, poi in Amministrazione vai a dare i valori alle quote. Mi
+              sembra un modo troppo complicato e inutile. Le informazioni sulle
+              quote dovrebbero essere inseribili nella prima fase.»
+              ⚠️ Ma le rate si agganciano al percorso, e un percorso non ha
+              un'identità finché non è salvato: scriverle PRIMA è impossibile.
+              ➜ Allora si salva e la finestrella del piano si apre DA SOLA,
+              subito dopo. Un gesto solo, dal suo punto di vista.
+              ⛔ E NON si scrive un secondo editor delle rate qui dentro: è la
+              stessa finestrella di Amministrazione (piano-ui.js). Due posti
+              dove si scrivono le rate direbbero cose diverse, ed è la regola
+              che questo codice si è già dato per le sezioni e per i contratti. */ ''}
+        <div id="p-piano-box" style="display:none;border:1px solid var(--line);border-radius:8px;padding:9px 11px;margin-bottom:12px;font-size:12.5px">
+          <div id="p-piano-testo" style="color:var(--muted)"></div>
+          <button type="button" id="p-piano-btn" onclick="apriPianoDaPercorso()" class="btn btn-neutral btn-sm" style="margin-top:7px;display:none">Apri il piano delle rate</button>
+        </div>
       </div>
       <div class="form-group" id="p-ore-box"><label>Ore già svolte (percorsi iniziati prima dell'Hub)</label><input id="p-ore" type="number" step="0.5" min="0" value="0"></div>
       ${progetti.length ? `<div class="form-group"><label>Progetto (facoltativo)</label>
@@ -5871,7 +5890,7 @@ Germano`;
     const PERM_ORE = ${PERMESSO_ORE_SESSIONE};
     const SEDUTE = ${JSON.stringify(Object.fromEntries(sedute.map(s => [s.id, { id: s.id, percorso_id: s.percorso_id, tipo: s.tipo, data: s.data, ore: Number(s.ore), obiettivo: s.obiettivo || '', argomenti: s.argomenti || '', attivita: s.attivita || '', scadenza: s.scadenza || '', prossima_ora: s.prossima_ora || '', eseguita: s.eseguita || '', note: s.note || '' }]))).replace(/</g, '\\u003c')};
     // Dati dei percorsi per riempire la finestra quando si preme "Modifica".
-    const PERCORSI_DATI = ${JSON.stringify(Object.fromEntries(percorsi.map(p => [p.id, { id: p.id, tipo: p.tipo || 'Individuale', modalita: p.modalita || 'Standard', prezzo: p.prezzo === null || p.prezzo === undefined ? '' : String(p.prezzo), n_sessioni_previste: Number(p.n_sessioni_previste) || 8, promo: !!p.promo, sconto_note: p.sconto_note || '', data_inizio: p.data_inizio ? String(p.data_inizio).slice(0, 10) : '', prestazione_scambio: p.prestazione_scambio || '' }]))).replace(/</g, '\\u003c')};
+    const PERCORSI_DATI = ${JSON.stringify(Object.fromEntries(percorsi.map(p => [p.id, { id: p.id, tipo: p.tipo || 'Individuale', modalita: p.modalita || 'Standard', prezzo: p.prezzo === null || p.prezzo === undefined ? '' : String(p.prezzo), n_sessioni_previste: Number(p.n_sessioni_previste) || 8, promo: !!p.promo, sconto_note: p.sconto_note || '', data_inizio: p.data_inizio ? String(p.data_inizio).slice(0, 10) : '', prestazione_scambio: p.prestazione_scambio || '', nRate: trPerc.filter(t => t.percorso_id === p.id).length }]))).replace(/</g, '\\u003c')};
     const ORE_TIPO = { Intake: 2, Ongoing: 1, Final: null };
     function oreAuto() {
       const t = document.getElementById('s-tipo').value;
@@ -6257,6 +6276,33 @@ Germano`;
           (m === 'Pacchetto') ? 'Prezzo del pacchetto (€)' : 'Prezzo a sessione (€)';
         document.getElementById('p-prezzo').placeholder = (m === 'Pacchetto') ? 'es. 900' : 'es. 150';
       }
+      // Le rate esistono SOLO nel Pacchetto: negli altri casi non se ne parla,
+      // perche' invitare a dividere in rate una cifra che non c'e' e' peggio che tacere.
+      const pbox = document.getElementById('p-piano-box');
+      const pid  = document.getElementById('p-id').value;
+      const dati = pid ? PERCORSI_DATI[pid] : null;
+      if (m !== 'Pacchetto') { pbox.style.display = 'none'; return; }
+      pbox.style.display = '';
+      const btn = document.getElementById('p-piano-btn');
+      const testo = document.getElementById('p-piano-testo');
+      if (!pid) {
+        btn.style.display = 'none';
+        testo.innerHTML = '💶 <strong>Le rate si scrivono subito dopo:</strong> appena salvi, si apre da sola la finestrella del piano, col prezzo gia\\' dentro.';
+      } else if (dati && dati.nRate > 0) {
+        btn.style.display = '';
+        testo.innerHTML = '💶 Piano dei pagamenti: <strong>' + dati.nRate + (dati.nRate === 1 ? ' rata' : ' rate') + '</strong>.';
+      } else {
+        btn.style.display = '';
+        testo.innerHTML = '💶 <strong>Nessun piano dei pagamenti.</strong> Senza, il contratto non nominera\\' nessuna rata.';
+      }
+    }
+    // Apre la finestrella del piano da QUI, senza chiudere niente a mano: e' la
+    // stessa di Amministrazione, non una seconda.
+    function apriPianoDaPercorso() {
+      const pid = document.getElementById('p-id').value;
+      if (!pid) return;
+      document.getElementById('modal-percorso').style.display = 'none';
+      apriPianoPacchetto(pid);
     }
     function openPercorso() {
       document.getElementById('p-titolo').textContent = 'Nuovo percorso';
@@ -6317,6 +6363,15 @@ Germano`;
       const d = await r.json().catch(()=>({}));
       if (d && d.error) { alert(d.error); return; }
       if (d && d.driveWarning) alert(d.driveWarning);
+      // ⭐ Salvato un PACCHETTO, il piano delle rate si apre da solo. La pagina
+      //    deve ricaricarsi comunque (il percorso nuovo non e' ancora nei dati
+      //    del browser), quindi il compito si passa all'indirizzo: al
+      //    ricaricamento chi trova «?piano=…» apre la finestrella.
+      const idPiano = pid || (d && d.id);
+      if (modalita === 'Pacchetto' && idPiano) {
+        location.href = location.pathname + '?piano=' + encodeURIComponent(idPiano);
+        return;
+      }
       location.reload();
     }
     async function chiudiPercorso(pid, fineIso, fineIt) {
@@ -6371,6 +6426,20 @@ Germano`;
       .filter(Boolean).forEach(m=>{
         m.addEventListener('click',e=>{ if(e.target===m) m.style.display='none'; });
       });
+
+    // ⭐ IL SEGUITO DEL SALVATAGGIO DI UN PACCHETTO: «savePercorso» ricarica la
+    //    pagina su «?piano=…», e qui si raccoglie il testimone aprendo la
+    //    finestrella delle rate. Cosi' per Germano e' un gesto solo: salva il
+    //    percorso, gli si chiede subito come si paga.
+    // ⚠️ L'indirizzo si ripulisce, altrimenti ogni ricaricamento successivo
+    //    riaprirebbe la finestrella — e un F5 che rifa' sempre la stessa cosa
+    //    e' il modo piu' rapido per far odiare una funzione utile.
+    (function () {
+      var q = new URLSearchParams(location.search).get('piano');
+      if (!q) return;
+      history.replaceState(null, '', location.pathname);
+      if (typeof apriPianoPacchetto === 'function') apriPianoPacchetto(q);
+    })();
   </script>
   </body></html>`;
 }
