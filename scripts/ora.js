@@ -31,7 +31,9 @@ const adesso = new Date();
 const roma = new Date(adesso.toLocaleString('en-US', { timeZone: 'Europe/Rome' }));
 const hhmm = `${String(roma.getHours()).padStart(2, '0')}:${String(roma.getMinutes()).padStart(2, '0')}`;
 const giorno = `${GIORNI[roma.getDay()]} ${roma.getDate()} ${MESI[roma.getMonth()]} ${roma.getFullYear()}`;
-const dataIso = roma.toISOString().slice(0, 10);
+// ⚠️ Non toISOString(): darebbe la data UTC, che fra mezzanotte e le 02:00 di Roma è ancora quella di IERI
+// (l'avviso «è cambiato il giorno» non scattava proprio nella finestra per cui esiste). Come fa punto.js:
+const dataIso = adesso.toLocaleDateString('en-CA', { timeZone: 'Europe/Rome' });
 
 let prima = null;
 try { prima = JSON.parse(fs.readFileSync(MEMORIA, 'utf8')); } catch (_) { /* primo messaggio */ }
