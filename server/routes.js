@@ -24,6 +24,7 @@ const incassi = require('./incassi');
 // La finestrella del piano di pagamento: una sola, usata dalla scheda del
 // progetto E da quella del cliente (fetta C, 15/08). Vedi piano-ui.js.
 const pianoUi = require('./piano-ui');
+const sedute = require('./sedute');   // lo stato di una seduta (bozza/confermata), in un posto solo
 
 const router = express.Router();
 
@@ -1064,9 +1065,12 @@ router.post('/dashboard/clients/:id/percorsi/:pid', requireCoach, express.json()
 router.post('/dashboard/clients/:id/percorsi/:pid/chiudi', requireCoach, express.json(), async (req, res) => {
   try {
     const d = req.body && /^\d{4}-\d{2}-\d{2}$/.test(String(req.body.data_fine || '')) ? req.body.data_fine : null;
-    await db.query(
-      "UPDATE percorsi SET stato='concluso', data_fine=COALESCE($2::date, data_fine, CURRENT_DATE) WHERE id=$1",
-      [req.params.pid, d]);
+    // ⭐ 0.3 — anche il cliente nel filtro: le rotte gemelle di modifica e
+    // cancellazione lo avevano, questa no, e chiudeva il percorso di chiunque.
+    const r = await db.query(
+      "UPDATE percorsi SET stato='concluso', data_fine=COALESCE($3::date, data_fine, CURRENT_DATE) WHERE id=$1 AND client_id=$2",
+      [req.params.pid, req.params.id, d]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Percorso non trovato in questa scheda.' });
     res.json({ ok: true });
   } catch (err) {
     console.error(err);
@@ -1142,7 +1146,8 @@ router.post('/dashboard/clients/:id/percorsi/:pid/sedute', requireCoach, express
        // Una sessione con data nel futuro è FISSATA, non fatta: nasce in bozza, così
        // non conta ore né sessioni finché non avviene, e quando arriva il suo report
        // è questa riga a riempirsi (server/scan.js → rigaDaRiempire).
-       (req.body.data && String(req.body.data) > oggiIso()) ? 'bozza' : 'confermata']
+       // ⭐ 0.3 — la regola sta in sedute.js, la stessa delle rotte collettive.
+       sedute.statoDallaData(req.body.data, oggiIso())]
     );
     await recomputePercorso(req.params.pid);
     res.json({ ok: true, id: sid });
@@ -1155,10 +1160,17 @@ router.post('/dashboard/clients/:id/percorsi/:pid/sedute/:sid', requireCoach, ex
     const t = normTipo(req.body.tipo);
     const f = sedutaFields(req.body);
     await db.query(
-      `UPDATE sedute SET tipo=$1, data=$2, ore=$3, obiettivo=$4, argomenti=$5, attivita=$6, scadenza=$7, prossima_ora=$8, eseguita=$9, note=$10
+      // ⭐ 0.3 — spostare la data ricalcola lo stato, ma SOLO su una riga scritta a
+      // mano: una riga con un report dietro (source_file_id) sta in bozza perché
+      // aspetta l'approvazione del coach, e correggerle la data non deve approvarla.
+      // La regola è sedute.statoDopoModifica; qui è scritta in SQL per farla in un
+      // colpo solo, senza rileggere la riga prima.
+      `UPDATE sedute SET tipo=$1, data=$2, ore=$3, obiettivo=$4, argomenti=$5, attivita=$6, scadenza=$7, prossima_ora=$8, eseguita=$9, note=$10,
+              stato = CASE WHEN source_file_id IS NULL THEN $13 ELSE stato END
        WHERE id=$11 AND percorso_id=$12`,
       [t, req.body.data || null, oreForTipo(t, req.body.ore),
-       f.obiettivo, f.argomenti, f.attivita, f.scadenza, f.prossima_ora, f.eseguita, f.note, req.params.sid, req.params.pid]
+       f.obiettivo, f.argomenti, f.attivita, f.scadenza, f.prossima_ora, f.eseguita, f.note, req.params.sid, req.params.pid,
+       sedute.statoDallaData(req.body.data, oggiIso())]
     );
     await recomputePercorso(req.params.pid);
     res.json({ ok: true });
@@ -1528,10 +1540,14 @@ router.post('/dashboard/progetti/:id/percorsi/:pid/sedute', requireCoach, expres
     const f = sedutaFields(req.body);
     const sid = uuidv4();
     await db.query(
-      `INSERT INTO sedute (id, percorso_id, client_id, tipo, data, ore, obiettivo, argomenti, attivita, scadenza, prossima_ora, eseguita, note)
-       VALUES ($1,$2,NULL,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      // ⭐ 0.3 — prima qui lo stato non veniva passato e valeva il default
+      // 'confermata': una sessione di team fissata per il mese prossimo contava
+      // già ore e sessioni ICF. Stessa regola della gemella individuale.
+      `INSERT INTO sedute (id, percorso_id, client_id, tipo, data, ore, obiettivo, argomenti, attivita, scadenza, prossima_ora, eseguita, note, stato)
+       VALUES ($1,$2,NULL,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
       [sid, req.params.pid, t, req.body.data || null, oreForTipo(t, req.body.ore),
-       f.obiettivo, f.argomenti, f.attivita, f.scadenza, f.prossima_ora, f.eseguita, f.note]
+       f.obiettivo, f.argomenti, f.attivita, f.scadenza, f.prossima_ora, f.eseguita, f.note,
+       sedute.statoDallaData(req.body.data, oggiIso())]
     );
     await recomputePercorso(req.params.pid);
     res.json({ ok: true, id: sid });
@@ -1543,10 +1559,17 @@ router.post('/dashboard/progetti/:id/percorsi/:pid/sedute/:sid', requireCoach, e
     const t = normTipo(req.body.tipo);
     const f = sedutaFields(req.body);
     await db.query(
-      `UPDATE sedute SET tipo=$1, data=$2, ore=$3, obiettivo=$4, argomenti=$5, attivita=$6, scadenza=$7, prossima_ora=$8, eseguita=$9, note=$10
+      // ⭐ 0.3 — spostare la data ricalcola lo stato, ma SOLO su una riga scritta a
+      // mano: una riga con un report dietro (source_file_id) sta in bozza perché
+      // aspetta l'approvazione del coach, e correggerle la data non deve approvarla.
+      // La regola è sedute.statoDopoModifica; qui è scritta in SQL per farla in un
+      // colpo solo, senza rileggere la riga prima.
+      `UPDATE sedute SET tipo=$1, data=$2, ore=$3, obiettivo=$4, argomenti=$5, attivita=$6, scadenza=$7, prossima_ora=$8, eseguita=$9, note=$10,
+              stato = CASE WHEN source_file_id IS NULL THEN $13 ELSE stato END
        WHERE id=$11 AND percorso_id=$12`,
       [t, req.body.data || null, oreForTipo(t, req.body.ore),
-       f.obiettivo, f.argomenti, f.attivita, f.scadenza, f.prossima_ora, f.eseguita, f.note, req.params.sid, req.params.pid]
+       f.obiettivo, f.argomenti, f.attivita, f.scadenza, f.prossima_ora, f.eseguita, f.note, req.params.sid, req.params.pid,
+       sedute.statoDallaData(req.body.data, oggiIso())]
     );
     await recomputePercorso(req.params.pid);
     res.json({ ok: true });
@@ -1743,25 +1766,13 @@ router.post('/dashboard/progetti/:id/percorsi/:pid/previste', requireCoach, expr
   } catch (err) { console.error('[previste]', err); res.status(500).json({ error: 'Errore' }); }
 });
 
-// Gancio per l'automazione (report → scheda). Disattivo finché AUTOMATION_SECRET
-// non è configurato: è il canale che userà il flusso automatico (Parte 2 / OAuth).
-router.post('/api/sedute', express.json(), async (req, res) => {
-  try {
-    const secret = process.env.AUTOMATION_SECRET;
-    if (!secret || req.body.secret !== secret) return res.status(401).json({ error: 'non autorizzato' });
-    const { percorso_id, client_id } = req.body;
-    if (!percorso_id || !client_id) return res.status(400).json({ error: 'percorso_id e client_id obbligatori' });
-    const t = normTipo(req.body.tipo);
-    const sid = uuidv4();
-    await db.query(
-      `INSERT INTO sedute (id, percorso_id, client_id, tipo, data, ore, scheda)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-      [sid, percorso_id, client_id, t, req.body.data || null, oreForTipo(t, req.body.ore), (req.body.scheda || '').trim()]
-    );
-    await recomputePercorso(percorso_id);
-    res.json({ ok: true, id: sid });
-  } catch (err) { console.error(err); res.status(500).json({ error: 'Errore' }); }
-});
+// ⛔ 03/09/2026 (fetta 0.3) — TOLTA `POST /api/sedute`, l'unica rotta senza login.
+// Era il gancio pensato per un'automazione «da fuori» che non è mai nata: dal 9
+// luglio l'automazione dei report gira DENTRO il server (scan.js), la chiave
+// AUTOMATION_SECRET non è mai stata configurata su Railway e nessuno la chiamava
+// nei due repository. Finché esisteva, bastava impostare quella chiave per creare
+// sedute «confermate» senza report e senza controllare che il cliente fosse del
+// percorso. (La prova viva controlla che risponda 404.)
 
 // ⛔ 31/08 — TOLTE LE TRE ROTTE DEI PAGAMENTI A MANO (POST payments, /ricevuto,
 // DELETE). Non erano raggiungibili da nessuna pagina: il pulsante «+ Pagamento»

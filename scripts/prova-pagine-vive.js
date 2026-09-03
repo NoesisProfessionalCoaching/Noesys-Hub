@@ -445,7 +445,76 @@ const chiama = async (metodo, url, corpo) => {
     rateOra = (await rateDb('percorso_id', idPacc)).rows;
     dice(rateOra.length === 3 && rateOra[0].id === acconto.id && rateOra[0].ordine === 0, '  tre rate, e l’acconto è sempre lui, al primo posto');
 
-    console.log('\n19. 🔬 Adesso la rompo apposta');
+    // ═══ FETTA 0.3 DEL RIORDINO (03/09/2026) — SEDUTE COERENTI (B2) ═══
+    // «Una sessione con data nel futuro è fissata, non fatta» valeva in UNA rotta
+    // sola e non si ricalcolava mai. Qui si fa il giro coi pulsanti sulle rotte
+    // collettive e individuali, si controlla che le ore ICF seguano, che una riga
+    // nata da un report resti in bozza, che chiudere un percorso guardi di chi è,
+    // e che la rotta senza login non esista più.
+    console.log('\n19. Sedute coerenti: lo stato viene dalla data, in tutte le rotte (fetta 0.3)');
+    const oreDi = async (pid) => { const x = await db.query('SELECT ore_fatte::float AS ore, n_sessioni_fatte::int AS n FROM percorsi WHERE id=$1', [pid]); return x.rows[0]; };
+    const statoSed = async (sid) => (await db.query('SELECT stato FROM sedute WHERE id=$1', [sid])).rows[0].stato;
+    const ieri = new Date(Date.now() - 86400000).toLocaleDateString('en-CA', { timeZone: 'Europe/Rome' });
+    const fraUnMese = new Date(Date.now() + 30 * 86400000).toLocaleDateString('en-CA', { timeZone: 'Europe/Rome' });
+    const collSedute = `/dashboard/progetti/${idProg}/percorsi/${idPerc}/sedute`;
+
+    // Collettiva: nasce nel futuro → bozza, e le ore NON salgono.
+    const prima = await oreDi(idPerc);
+    r = await chiama('POST', collSedute, { tipo: 'Ongoing', data: fraUnMese, ore: 1 });
+    const sidColl = r.dati && r.dati.id;
+    dice(r.stato === 200 && !!sidColl, 'una sessione COLLETTIVA fissata fra un mese si registra', r.stato + ' ' + r.testo.slice(0, 120));
+    dice(await statoSed(sidColl) === 'bozza', '🔴 e nasce in BOZZA: è fissata, non fatta', 'stato ' + await statoSed(sidColl));
+    let ora = await oreDi(idPerc);
+    dice(ora.ore === prima.ore && ora.n === prima.n, '  e le ore ICF del percorso non sono salite', `${prima.ore}h/${prima.n} → ${ora.ore}h/${ora.n}`);
+    // La sposto a ieri → è avvenuta → confermata, ore salite.
+    r = await chiama('POST', `${collSedute}/${sidColl}`, { tipo: 'Ongoing', data: ieri, ore: 1 });
+    dice(r.stato === 200 && await statoSed(sidColl) === 'confermata', '🔴 spostata a ieri diventa FATTA', 'stato ' + await statoSed(sidColl));
+    ora = await oreDi(idPerc);
+    dice(ora.ore === prima.ore + 1 && ora.n === prima.n + 1, '  e adesso conta: un’ora e una sessione in più', `${ora.ore}h/${ora.n}`);
+    // La rimando avanti → torna bozza, le ore tornano giù.
+    r = await chiama('POST', `${collSedute}/${sidColl}`, { tipo: 'Ongoing', data: fraUnMese, ore: 1 });
+    dice(r.stato === 200 && await statoSed(sidColl) === 'bozza', 'rimandata avanti torna in bozza', 'stato ' + await statoSed(sidColl));
+    ora = await oreDi(idPerc);
+    dice(ora.ore === prima.ore && ora.n === prima.n, '  e le ore tornano quelle di prima', `${ora.ore}h/${ora.n}`);
+
+    // Una riga nata da un REPORT (source_file_id) sta in bozza perché aspetta
+    // l'approvazione: correggerle la data non deve approvarla al posto del coach.
+    // (L'automazione legge Drive, che qui non c'è: la riga si scrive come la
+    // scriverebbe lei, con file di origine, stato bozza e origine auto.)
+    const auto = await db.query(
+      `INSERT INTO sedute (id, percorso_id, client_id, tipo, data, ore, stato, origine, source_file_id)
+       VALUES (gen_random_uuid(), $1, NULL, 'Ongoing', $2::date, 1, 'bozza', 'auto', $3) RETURNING id`,
+      [idPerc, ieri, 'PROVA-FILE-' + PORTA]);
+    const sidAuto = auto.rows[0].id;
+    r = await chiama('POST', `${collSedute}/${sidAuto}`, { tipo: 'Ongoing', data: ieri, ore: 1.5 });
+    dice(r.stato === 200 && await statoSed(sidAuto) === 'bozza', '⛔ una riga con un report dietro, corretta, RESTA in bozza: la approva il coach', 'stato ' + await statoSed(sidAuto));
+    ora = await oreDi(idPerc);
+    dice(ora.ore === prima.ore && ora.n === prima.n, '  e non ha contato niente', `${ora.ore}h/${ora.n}`);
+
+    // Individuale: la stessa regola, sul percorso a Pacchetto del cliente.
+    const indSedute = `/dashboard/clients/${idCli}/percorsi/${idPacc}/sedute`;
+    const primaInd = await oreDi(idPacc);
+    r = await chiama('POST', indSedute, { tipo: 'Ongoing', data: fraUnMese, ore: 1 });
+    const sidInd = r.dati && r.dati.id;
+    dice(r.stato === 200 && await statoSed(sidInd) === 'bozza', 'una sessione INDIVIDUALE futura nasce in bozza (già così)', 'stato ' + (sidInd && await statoSed(sidInd)));
+    r = await chiama('POST', `${indSedute}/${sidInd}`, { tipo: 'Ongoing', data: ieri, ore: 1 });
+    dice(r.stato === 200 && await statoSed(sidInd) === 'confermata', '🔴 spostata a ieri diventa fatta anche lei', 'stato ' + await statoSed(sidInd));
+    ora = await oreDi(idPacc);
+    dice(ora.n === primaInd.n + 1, '  e il percorso conta una sessione in più', `${primaInd.n} → ${ora.n}`);
+
+    // Chiudere un percorso guarda DI CHI è.
+    r = await chiama('POST', `/dashboard/clients/00000000-0000-0000-0000-000000000000/percorsi/${idPacc}/chiudi`, { data_fine: ieri });
+    let st = (await db.query('SELECT stato FROM percorsi WHERE id=$1', [idPacc])).rows[0].stato;
+    dice(st === 'attivo', '🔴 chiudere il percorso dalla scheda di un ALTRO cliente non chiude niente', 'stato ' + st + ' (risposta ' + r.stato + ')');
+    r = await chiama('POST', `/dashboard/clients/${idCli}/percorsi/${idPacc}/chiudi`, { data_fine: ieri });
+    st = (await db.query('SELECT stato FROM percorsi WHERE id=$1', [idPacc])).rows[0].stato;
+    dice(r.stato === 200 && st === 'concluso', '  dalla scheda giusta si chiude', 'stato ' + st);
+
+    // La rotta senza login non esiste più.
+    r = await chiama('POST', '/api/sedute', { secret: 'x', percorso_id: idPacc, client_id: idCli, tipo: 'Ongoing' });
+    dice(r.stato === 404, '⛔ la rotta senza login /api/sedute non esiste più', 'ha risposto ' + r.stato);
+
+    console.log('\n20. 🔬 Adesso la rompo apposta');
     for (const [corpo, et] of [
       [{ tipo: 'boh',         soggetto_id: idProg, stato: 'da_inviare' }, 'un tipo inventato'],
       [{ tipo: 'committente', soggetto_id: idProg, stato: 'firmata'    }, 'uno stato che non esiste più'],
@@ -464,7 +533,7 @@ const chiama = async (metodo, url, corpo) => {
   } catch (e) {
     ko++; console.log('\n🔴 ECCEZIONE: ' + e.message + '\n' + e.stack.split('\n')[1]);
   } finally {
-    console.log('\n20. Pulizia (solo le righe create da questa prova)');
+    console.log('\n21. Pulizia (solo le righe create da questa prova)');
     try {
       // Le proforme nate nella sezione 18 (i numeri bruciati nel database di PROVA
       // restano bruciati: qui non è un problema). Prima le righe, poi i documenti,

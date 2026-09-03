@@ -10,11 +10,12 @@
     "prova-pagine": "node --env-file=.env scripts/prova-pagine-vive.js",
     "prova-fiscale": "node scripts/prova-fiscale.js",
     "prova-proforma": "node scripts/prova-proforma.js",
-    "prova": "npm run prova-file && npm run prova-js && npm run prova-pagine && npm run prova-fiscale && npm run prova-proforma && npm run prova-tranche && npm run prova-incassi && npm run prova-appuntamenti && npm run prova-final-programmata && npm run prova-migrazione && npm run prova-barriere && npm run prova-timbro",
+    "prova": "npm run prova-file && npm run prova-js && npm run prova-pagine && npm run prova-fiscale && npm run prova-proforma && npm run prova-tranche && npm run prova-incassi && npm run prova-sedute && npm run prova-appuntamenti && npm run prova-final-programmata && npm run prova-migrazione && npm run prova-barriere && npm run prova-timbro",
     "prova-final-programmata": "node --env-file=.env scripts/prova-final-programmata.js",
     "prova-tranche": "node scripts/prova-tranche.js",
     "prova-incassi": "node scripts/prova-incassi.js",
     "prova-appuntamenti": "node --env-file=.env scripts/prova-appuntamenti.js",
+    "prova-sedute": "node scripts/prova-sedute.js",
     "prova-barriere": "node scripts/prova-barriere.js",
     "prova-timbro": "node scripts/prova-timbro.js"
   },
