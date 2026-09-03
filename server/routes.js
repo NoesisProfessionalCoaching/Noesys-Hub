@@ -947,28 +947,65 @@ router.post('/dashboard/clients/:id/mail2/invia', requireCoach, express.json(), 
     if (!to) return res.status(400).json({ error: 'Manca il destinatario.' });
     if (!subject) return res.status(400).json({ error: "Manca l'oggetto." });
 
-    const cr = await db.query('SELECT nome, name FROM clients WHERE id=$1', [req.params.id]);
-    const row = cr.rows[0];
-    if (!row) return res.status(404).json({ error: 'Cliente non trovato.' });
-    const nome = (row.nome && row.nome.trim()) || String(row.name || '').trim().split(/\s+/)[0];
+    const cr = await db.query('SELECT * FROM clients WHERE id=$1', [req.params.id]);
+    const cliente = cr.rows[0];
+    if (!cliente) return res.status(404).json({ error: 'Cliente non trovato.' });
+    const nome = (cliente.nome && cliente.nome.trim()) || String(cliente.name || '').trim().split(/\s+/)[0];
     if (!nome) return res.status(400).json({ error: "Il cliente non ha un nome per l'agenda." });
 
-    const modelli = await drive.findModelliFolder();
-    if (!modelli) return res.status(500).json({ error: 'Cartella "Modelli" non trovata su Drive.' });
+    // 🔴 03/09 — PRIMA QUI SI SCARICAVA `Contratto Coaching OK.pdf` DA DRIVE:
+    //    il modello GENERICO, uguale per tutti, che non nomina né il cliente né
+    //    la sua modalità né il suo prezzo. Nel frattempo l'Hub sapeva già
+    //    costruire il contratto vero, ma quello restava un'anteprima che moriva
+    //    nel browser. Germano se n'è accorto usandolo: «il contratto viene bene,
+    //    ma una volta aperto non succede niente».
+    const pq = await db.query('SELECT * FROM percorsi WHERE client_id=$1 ORDER BY created_at', [req.params.id]);
+    const percorso = scegliPercorsoContratto(pq.rows);
+    if (!percorso) {
+      return res.status(400).json({
+        error: 'Questo cliente non ha un percorso individuale: senza percorso il contratto non ' +
+               'saprebbe dire né la modalità né il prezzo. ⛔ Non mando il modello generico al suo posto.',
+      });
+    }
 
     const attachments = [];
-    // Contratto: allegato tale e quale dal modello.
-    const contrModel = 'Contratto Coaching OK.pdf';
-    const cf = await drive.findFileByName(modelli.id, contrModel);
-    if (!cf) return res.status(500).json({ error: 'Modello contratto non trovato su Drive: ' + contrModel });
-    const cbuf = await drive.downloadFileBuffer(cf.id);
-    attachments.push({ filename: 'Contratto per Servizi di Coaching.pdf', content: cbuf, contentType: 'application/pdf' });
+    // ⭐ Lo STESSO PDF dell'anteprima: si manda quello che si è guardato.
+    attachments.push({
+      filename: nomeFilePulito('Contratto', cliente),
+      content: await pdfContrattoCliente(cliente, percorso),
+      contentType: 'application/pdf',
+    });
+    // L'informativa privacy: il testo c'era dal 27/08, ma non la allegava nessuno.
+    attachments.push({
+      filename: nomeFilePulito('Informativa privacy', cliente),
+      content: await pdfLetteraPrivacy(),
+      contentType: 'application/pdf',
+    });
     // Agenda: personalizzata col nome.
     const agenda = await documenti.generaAgenda({ nome });
     attachments.push({ filename: 'Agenda di sessione.pdf', content: agenda.bytes, contentType: 'application/pdf' });
 
     await mailer.sendMail({ to, subject, text: body, attachments });
     await db.query('UPDATE clients SET mail2_inviata_data = NOW() WHERE id=$1', [req.params.id]);
+
+    // ⭐ MANDARE È UN FATTO, e lo stato del contratto si ricava dai fatti: se la
+    //    mail è partita, quel contratto è «in attesa di approvazione». Prima
+    //    bisognava ricordarsi di spostarlo a mano, cioè ricordarsi di dire alla
+    //    macchina una cosa che la macchina aveva appena fatto.
+    // ⚠️ Dopo l'invio: se questo passo fallisce la mail è comunque partita, e
+    //    non si annulla una mail. Perciò non butta all'aria la risposta.
+    try {
+      const agg = await db.query(
+        `UPDATE contratti SET stato='in_attesa', data_invio=CURRENT_DATE, updated_at=NOW()
+          WHERE tipo='cliente' AND percorso_id=$1 AND stato <> 'approvata'`, [percorso.id]);
+      if (!agg.rowCount) {
+        await db.query(
+          `INSERT INTO contratti (id, tipo, percorso_id, stato, data_invio)
+           VALUES ($1,'cliente',$2,'in_attesa',CURRENT_DATE)
+           ON CONFLICT DO NOTHING`, [uuidv4(), percorso.id]);
+      }
+    } catch (e) { console.error('[mail2] stato contratto non aggiornato:', e.message); }
+
     res.json({ ok: true, to, allegati: attachments.map(a => a.filename) });
   } catch (err) {
     console.error('[mail2]', err);
@@ -1176,42 +1213,132 @@ router.post('/dashboard/scan-drive', requireCoach, express.json(), async (req, r
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// IL CONTRATTO — l'Hub lo costruisce da zero e lo mostra. Non lo manda.
+// IL CONTRATTO — l'Hub lo costruisce da zero, lo mostra, e lo ALLEGA alla Mail 2.
 //
 // ⭐ Germano (09/08): «il contratto è una VISTA sui dati dell'Hub, non un foglio
 //    da riempire». Quindi qui non si corregge niente: se un dato è sbagliato si
 //    corregge DOVE VIVE (anagrafica o percorso) e si rigenera. Un secondo posto
 //    dove scrivere il prezzo sarebbe un secondo posto dove sbagliarlo.
-// 🔴 Non c'è nessuna rotta che spedisca questo PDF: la Mail 2 è un altro passo,
-//    e finché la banda «BOZZA NON VALIDATA» è accesa non deve partire a nessuno.
+//
+// 🔴 CAMBIATO IL 03/09/2026, e il motivo lo ha detto Germano provandolo:
+//    «il contratto viene bene, ma una volta aperto non succede niente. Non si
+//    salva, non si può inviare. L'ho salvato io sulla mia scrivania.»
+//    Aveva ragione, ed era per costruzione: questa rotta apriva un'anteprima e
+//    basta. Intanto la Mail 2 mandava sì un contratto, ma il MODELLO GENERICO
+//    scaricato da Drive — non quello costruito per QUESTO cliente.
+//    ➜ Adesso il contratto nasce in UN SOLO POSTO (le funzioni qui sotto) e da
+//      lì lo prendono sia l'anteprima sia la Mail 2. Se fossero due strade, un
+//      giorno manderemmo al cliente un documento diverso da quello guardato.
+// ⭐ E la distinzione che ha sciolto il nodo, sempre sua: **il meccanismo è
+//    lavoro nostro, i testi sono del commercialista e del legale.** Le due cose
+//    erano rimaste legate insieme, e teneva fermo il lavoro sbagliato.
+// ⚠️ La banda «BOZZA NON VALIDATA» resta un interruttore in `contratto.js`
+//    (`BOZZA_NON_VALIDATA`): si spegne quando lo decide Germano, non è una
+//    conseguenza tecnica di questa modifica.
+
+/**
+ * SU QUALE PERCORSO SI FA IL CONTRATTO — regola scritta una volta sola.
+ * La usano la scheda cliente (per il pulsante e gli avvisi) e la Mail 2 (per
+ * l'allegato): se ognuna scegliesse per conto suo, il contratto mostrato e
+ * quello spedito potrebbero riguardare percorsi diversi.
+ * ⛔ Mai un percorso legato a un progetto: quello ha il suo contratto, che
+ *    nasce dalla partecipazione e non da qui.
+ */
+function scegliPercorsoContratto(percorsi) {
+  const suoi = (percorsi || []).filter(p => !p.progetto_id);
+  return suoi.find(p => p.stato === 'attivo') || suoi.slice(-1)[0] || null;
+}
+
+/** Il PDF del contratto di un cliente individuale, già firmato da Germano. */
+async function pdfContrattoCliente(cliente, percorso) {
+  const trq = await db.query(
+    'SELECT ordine, etichetta, importo, innesco, giorni FROM tranche_progetto WHERE percorso_id=$1 ORDER BY ordine',
+    [percorso.id]
+  );
+  const blocchi = contrattoTesti.personaFisica({ cliente, percorso, rate: trq.rows });
+  return contratto.costruisci(blocchi, { firmato: true });
+}
+
+/**
+ * Il PDF dell'informativa privacy del cliente individuale.
+ * 🔴 Il testo esisteva dal 27/08 (`letteraPrivacy`), ma NESSUNA pagina lo
+ *    chiamava: l'unico a usarlo era lo script delle bozze per il commercialista.
+ *    Germano il 03/09: «si dovrebbe creare in automatico anche la lettera per la
+ *    privacy. Non è successo.» Non era rotta — non era mai stata attaccata a
+ *    niente. ⭐ Una funzione senza chiamanti può essere morta o NON ANCORA NATA:
+ *    qui era la seconda.
+ */
+async function pdfLetteraPrivacy() {
+  return contratto.costruisci(contrattoTesti.letteraPrivacy(), { firmato: true });
+}
+
+/** Il nome del file che arriva al cliente. Niente caratteri che rompono la posta. */
+const nomeFilePulito = (base, cliente) =>
+  base + ' - ' + String(cliente.name || 'cliente').replace(/[^\w àèéìòù]/gi, '').trim() + '.pdf';
+
 router.get('/dashboard/clients/:id/percorsi/:pid/contratto', requireCoach, async (req, res) => {
   try {
-    const [cq, pq, trq] = await Promise.all([
+    // Le rate le legge `pdfContrattoCliente`, che è l'unico posto dove il
+    // contratto nasce: leggerle anche qui vorrebbe dire due query per lo stesso
+    // dato, e un giorno due risposte diverse.
+    const [cq, pq] = await Promise.all([
       db.query('SELECT * FROM clients WHERE id=$1', [req.params.id]),
       db.query('SELECT * FROM percorsi WHERE id=$1 AND client_id=$2', [req.params.pid, req.params.id]),
-      // Il piano delle rate del percorso. Esiste solo per i PACCHETTI: la rotta
-      // che lo salva rifiuta le altre modalità, quindi qui basta leggerlo.
-      db.query('SELECT ordine, etichetta, importo, innesco, giorni FROM tranche_progetto WHERE percorso_id=$1 ORDER BY ordine', [req.params.pid]),
     ]);
     const cliente = cq.rows[0];
     const percorso = pq.rows[0];
     if (!cliente || !percorso) return res.status(404).send('Cliente o percorso non trovato');
 
-    const blocchi = contrattoTesti.personaFisica({ cliente, percorso, rate: trq.rows });
-    // Il contratto esce GIÀ FIRMATO (Germano, 27/08). Non c'è un passo di
-    // approvazione da proteggere: questo PDF non si salva da nessuna parte —
-    // nasce alla richiesta, si apre nel browser e sparisce. Quando la Mail 2
-    // allegherà il contratto generato, LÌ servirà l'approvazione.
-    const pdf = await contratto.costruisci(blocchi, { firmato: true });
-    // inline: si apre nel browser, non si scarica. È un'anteprima, non un file
-    // da archiviare: il file nasce quando lo si manda, e quel passo non c'è ancora.
+    // ⭐ Lo stesso identico PDF che allegherà la Mail 2: una strada sola.
+    const pdf = await pdfContrattoCliente(cliente, percorso);
+    // inline: si apre nel browser. È l'anteprima — si guarda PRIMA di mandare,
+    // ed è il passo che ha senso tenere: si manda ciò che si è visto.
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition',
-      'inline; filename="Contratto ' + (cliente.name || 'cliente').replace(/[^\w ]/g, '') + '.pdf"');
+      'inline; filename="' + nomeFilePulito('Contratto', cliente) + '"');
     res.send(pdf);
   } catch (err) {
     console.error('[contratto]', err);
     res.status(500).send('Non sono riuscito a preparare il contratto: ' + err.message);
+  }
+});
+
+// L'informativa privacy del cliente individuale — anteprima, come il contratto.
+// Non dipende dal percorso: parla di come tratto i dati, non di quanto si paga.
+router.get('/dashboard/clients/:id/lettera-privacy', requireCoach, async (req, res) => {
+  try {
+    const cq = await db.query('SELECT * FROM clients WHERE id=$1', [req.params.id]);
+    const cliente = cq.rows[0];
+    if (!cliente) return res.status(404).send('Cliente non trovato');
+    const pdf = await pdfLetteraPrivacy();
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition',
+      'inline; filename="' + nomeFilePulito('Informativa privacy', cliente) + '"');
+    res.send(pdf);
+  } catch (err) {
+    console.error('[lettera-privacy]', err);
+    res.status(500).send("Non sono riuscito a preparare l'informativa: " + err.message);
+  }
+});
+
+// L'agenda, per guardarla prima di mandarla. È lo stesso file che finisce in
+// allegato: col nome del cliente già dentro.
+// ⚠️ Per ora si prende dal modello e ci si scrive il nome; un giorno l'Hub la
+//    genererà per intero (Germano, 03/09: «è un altro pezzo»).
+router.get('/dashboard/clients/:id/agenda', requireCoach, async (req, res) => {
+  try {
+    const cq = await db.query('SELECT nome, name FROM clients WHERE id=$1', [req.params.id]);
+    const row = cq.rows[0];
+    if (!row) return res.status(404).send('Cliente non trovato');
+    const nome = (row.nome && row.nome.trim()) || String(row.name || '').trim().split(/\s+/)[0];
+    if (!nome) return res.status(400).send("Il cliente non ha un nome da scrivere sull'agenda.");
+    const agenda = await documenti.generaAgenda({ nome });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'inline; filename="Agenda di sessione.pdf"');
+    res.send(agenda.bytes);
+  } catch (err) {
+    console.error('[agenda]', err);
+    res.status(500).send("Non sono riuscito a preparare l'agenda: " + err.message);
   }
 });
 
@@ -4348,15 +4475,23 @@ Germano`;
     ? itDate(new Date(client.mail1_inviata_data).toISOString()) : '';
 
   // ── Mail 2 (Fetta 2): contratto + agenda, dopo l'Intake ──
-  const mail2Subject = 'Contratto per Servizi di Coaching e Agenda di sessione';
+  // ⚠️ 03/09 — L'INFORMATIVA È ENTRATA FRA GLI ALLEGATI, e il testo va con lei.
+  //    Trovato GUARDANDO la finestrella, non leggendo il codice: avevo aggiunto
+  //    il terzo allegato e lasciato una mail che ne annunciava due. Il cliente
+  //    avrebbe ricevuto un documento di cui nessuno gli parlava — e per giunta
+  //    proprio quello che gli spiega come tratto i suoi dati.
+  // ⭐ Quando cambiano gli allegati cambia anche il testo che li elenca: sono
+  //    due facce della stessa cosa, e vivono a 1.100 righe di distanza.
+  const mail2Subject = 'Contratto, informativa privacy e Agenda di sessione';
   const mail2Body =
 `Ciao ${mailNome},
 
 come anticipato, ti invio i documenti per formalizzare e accompagnare il tuo percorso di Coaching. In allegato a questa mail trovi:
 • il Contratto per Servizi di Coaching
+• l'Informativa sul trattamento dei dati personali
 • l'Agenda di sessione
 
-Ti chiederei di leggere con attenzione il contratto, firmarlo e rimandarmelo a questo stesso indirizzo.
+Ti chiederei di leggere con attenzione il contratto e l'informativa, firmarli e rimandarmeli a questo stesso indirizzo.
 
 L'Agenda è uno strumento prezioso per monitorare il tuo percorso: ti aiuta a mettere a fuoco gli impegni presi e a dare continuità al lavoro tra una sessione e l'altra. Ti chiederei di compilarla e inviarmela entro la sera prima del giorno della sessione successiva, così potrò arrivare preparato al nostro incontro.
 
@@ -5016,8 +5151,11 @@ Germano`;
   // ce n'è nessuno l'ultimo creato. Il riquadro dice a quale si riferisce,
   // perché un cliente può averne più di uno e sbagliare percorso vorrebbe dire
   // mandargli il contratto di un altro pezzo del suo lavoro.
-  const percorsoContratto = percorsi.find(p => p.stato === 'attivo' && !p.progetto_id)
-    || percorsi.filter(p => !p.progetto_id).slice(-1)[0] || null;
+  // ⭐ La regola sta in UN posto solo (`scegliPercorsoContratto`, accanto al
+  //    contratto): la usa questa pagina per il pulsante e la Mail 2 per
+  //    l'allegato. Se scegliessero per conto loro, un giorno il contratto
+  //    mostrato e quello spedito riguarderebbero percorsi diversi.
+  const percorsoContratto = scegliPercorsoContratto(percorsi);
   // I campi che finirebbero a puntini nel documento. Non è un errore: un
   // contratto con dei puntini si stampa lo stesso e si riempie a penna. Ma
   // meglio saperlo PRIMA di mandarlo, che è il difetto che stiamo togliendo.
@@ -5032,6 +5170,57 @@ Germano`;
   const prezzoMancante = percorsoContratto
     && ['Standard', 'Pacchetto'].includes(modalitaContratto)
     && (percorsoContratto.prezzo == null || Number(percorsoContratto.prezzo) === 0);
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // COSA RENDE UN CONTRATTO DIVERSO DA UN ALTRO — le SEI variabili.
+  //
+  // ⭐ Germano (03/09) ne aveva elencate quattro a memoria e ha chiesto se ne
+  //    mancava qualcuna. Aperto `contratto-testi.js`: tutto il resto del
+  //    documento è testo fisso, uguale per tutti. A cambiare sono solo queste.
+  //    Ne mancavano TRE: il prezzo, il numero di sessioni e — la più importante —
+  //    la prestazione dello scambio, cioè il campo vuoto che il 03/09 ha fatto
+  //    uscire il contratto di Giuliano coi puntini.
+  // ⚠️ E una delle sue non serve: la TIPOLOGIA di percorso («Individuale») non
+  //    entra nel contratto individuale. Guardarla non fa male, ma non cambia una
+  //    virgola: quello che cambia il documento è la MODALITÀ.
+  // ➜ Si mostrano PRIMA di mandare, in chiaro: controllare sei righe è più
+  //    veloce e più sicuro che cercare i puntini dentro sei pagine di PDF.
+  const rateDelPercorso = percorsoContratto
+    ? (fatt.tranchePercorsi || []).filter(t => t.percorso_id === percorsoContratto.id)
+    : [];
+  const vuoto = '<span style="color:#a4342a;font-weight:600">manca</span>';
+  const seiVariabili = !percorsoContratto ? [] : [
+    ['Dati anagrafici', mancantiContratto.length
+      ? `<span style="color:#a4342a;font-weight:600">manca ${mancantiContratto.join(', ')}</span>`
+      : '<span style="color:#2f6b46">completi</span>'],
+    ['Modalità di pagamento', modalitaContratto ? esc(modalitaContratto) : vuoto],
+    ['Prezzo', percorsoContratto.prezzo != null && Number(percorsoContratto.prezzo) > 0
+      ? '€ ' + fiscale.euro(percorsoContratto.prezzo) + ' + IVA'
+      : (['Scambio servizi', 'Pro bono'].includes(modalitaContratto)
+          ? '<span style="color:#8a94a6">non previsto in questa modalità</span>' : vuoto)],
+    ['Sessioni previste', percorsoContratto.n_sessioni_previste
+      ? String(percorsoContratto.n_sessioni_previste) : vuoto],
+    ['Cosa dà il Cliente in cambio', modalitaContratto === 'Scambio servizi'
+      ? (percorsoContratto.prestazione_scambio && String(percorsoContratto.prestazione_scambio).trim()
+          ? esc(percorsoContratto.prestazione_scambio)
+          : '<span style="color:#a4342a;font-weight:600">manca — nel contratto resteranno i puntini</span>')
+      : '<span style="color:#8a94a6">non è uno scambio di servizi</span>'],
+    ['Rateazione', rateDelPercorso.length
+      ? `${rateDelPercorso.length} rate`
+      : (modalitaContratto === 'Pacchetto'
+          ? '<span style="color:#8a6d1e">nessun piano: il contratto non nominerà nessuna rata</span>'
+          : '<span style="color:#8a94a6">non prevista in questa modalità</span>')],
+  ];
+  // Quello che uscirebbe A PUNTINI o in bianco. È l'avviso che serve PRIMA,
+  // non la scoperta sfogliando il PDF.
+  const guaiContratto = [
+    ...(mancantiContratto.length ? ['nell\'intestazione mancano: ' + mancantiContratto.join(', ')] : []),
+    ...(prezzoMancante ? ['il prezzo è vuoto e la modalità lo richiede'] : []),
+    ...(modalitaContratto === 'Scambio servizi'
+        && !(percorsoContratto && percorsoContratto.prestazione_scambio
+             && String(percorsoContratto.prestazione_scambio).trim())
+      ? ['non è scritto cosa dà il Cliente in cambio'] : []),
+  ];
 
   const statoAnagrafica = bozza
     ? `<strong style="color:#8a6d1e">Scheda Anagrafica aggiornata da verificare</strong> — qui sotto, nel riquadro «Dati letti dai documenti».`
@@ -5056,9 +5245,18 @@ Germano`;
         <div class="az-gruppo">
           <div class="az-nome">Contratto</div>
           <div class="az-btns">
-            ${percorsoContratto
-              ? `<a href="/dashboard/clients/${client.id}/percorsi/${percorsoContratto.id}/contratto" target="_blank" class="btn btn-primary btn-sm" style="text-decoration:none">📄 Prepara il contratto</a>`
-              : `<button class="btn btn-off btn-sm" disabled title="Serve un percorso individuale: il contratto prende da lì la modalità, il prezzo e il numero di sessioni">📄 Prepara il contratto</button>`}
+            ${/* ⛔ 03/09 — VIA IL PULSANTE «Prepara il contratto». Germano:
+                  «non serve (e non è mai servito) il pulsante genera contratto:
+                  quel lavoro è contenuto in invia Mail 2».
+                  ⭐ Aveva ragione, e il difetto era proprio lì: quel pulsante
+                  apriva un PDF che poi moriva nel browser — «una volta aperto
+                  non succede niente, l'ho salvato io sulla mia scrivania».
+                  Adesso i tre documenti si guardano DENTRO la finestrella della
+                  Mail 2, dove poi partono davvero. Un solo posto, un solo giro. */ ''}
+            <button onclick="openMail2()" class="btn btn-primary btn-sm">✉️ Prepara e invia (Mail 2)</button>
+          </div>
+          <div style="font-size:11.5px;color:var(--hint);margin-top:5px">
+            Contratto e informativa privacy nascono <strong>dentro la Mail 2</strong>, dove si guardano prima di partire.
           </div>
           ${/* Fetta 6a — lo stato della bozza, con gli stessi pulsanti della card
                 del progetto: la cella la disegna `contratti-stato`, non questa
@@ -5085,7 +5283,7 @@ Germano`;
           </div>
           <div class="az-stato">
             ${mail1SentTxt ? `<span class="az-fatto">✓ Mail 1 inviata il ${mail1SentTxt}</span>` : 'Mail 1 non inviata'} — lettera · scheda anagrafica · Codice ICF<br>
-            ${mail2SentTxt ? `<span class="az-fatto">✓ Mail 2 inviata il ${mail2SentTxt}</span>` : 'Mail 2 non inviata'} — contratto · agenda
+            ${mail2SentTxt ? `<span class="az-fatto">✓ Mail 2 inviata il ${mail2SentTxt}</span>` : 'Mail 2 non inviata'} — contratto · informativa privacy · agenda
           </div>
         </div>
 
@@ -5403,18 +5601,52 @@ Germano`;
   <!-- MODAL MAIL 2 — RIVEDI E INVIA -->
   <div id="modal-mail2" class="modal-overlay">
     <div class="modal-box" style="width:560px">
-      <h2 style="margin-bottom:4px">Rivedi e invia — Mail 2 (contratto + agenda)</h2>
+      <h2 style="margin-bottom:4px">Rivedi e invia — Mail 2</h2>
       <p style="margin:0 0 14px;font-size:12px;color:#8a94a6">L'invio è reale: la mail parte davvero al destinatario qui sotto.</p>
       <div class="form-group"><label>A (destinatario)</label><input id="m2-to" type="email" value="${attr(client.email)}" placeholder="email del cliente"></div>
       <div class="form-group"><label>Oggetto</label><input id="m2-subject" type="text" value="${attr(mail2Subject)}"></div>
-      <div class="form-group"><label>Testo della mail</label><textarea id="m2-body" style="min-height:230px;font-family:inherit">${esc(mail2Body)}</textarea></div>
-      <div style="font-size:12px;color:#6B7280;background:#f7f9fc;border-radius:8px;padding:9px 12px;margin-bottom:12px">
-        📎 Allegati (2): <strong>Contratto per Servizi di Coaching</strong> · <strong>Agenda di sessione</strong> <span style="color:#aaa">(l'agenda riporta il nome del cliente)</span>
+      <div class="form-group"><label>Testo della mail</label><textarea id="m2-body" style="min-height:200px;font-family:inherit">${esc(mail2Body)}</textarea></div>
+
+      ${/* ⭐ 03/09 — IL CONTROLLO PRIMA DELL'INVIO, disegno di Germano.
+            «Il pulsante genera contratto non serve e non è mai servito: quel
+            lavoro è contenuto in invia Mail 2. L'unica cosa che deve cambiare è
+            che i pdf generati per essere inviati possano essere controllati.»
+            ➜ Qui non si corregge niente: si GUARDA. Se qualcosa non torna si va
+            a correggerlo dove vive e si riapre. Un secondo posto dove scrivere
+            il prezzo sarebbe un secondo posto dove sbagliarlo. */ ''}
+      ${!percorsoContratto ? `
+      <div class="flash-error" style="margin-bottom:12px">
+        Questo cliente non ha un percorso individuale: senza percorso il contratto non saprebbe dire
+        né la modalità né il prezzo. <strong>La mail non parte.</strong>
+      </div>` : `
+      <div style="border:1px solid var(--line);border-radius:8px;padding:11px 13px;margin-bottom:12px">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#8a94a6;margin-bottom:7px">
+          Cosa rende diverso questo contratto — le sei cose da controllare
+        </div>
+        <div style="display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:12.5px;align-items:baseline">
+          ${seiVariabili.map(([et, val]) => `<span style="color:#8a94a6">${et}</span><span>${val}</span>`).join('')}
+        </div>
+        ${guaiContratto.length ? `
+        <div style="margin-top:9px;padding:7px 10px;background:#fdf3f2;border-radius:6px;font-size:12px;color:#a4342a">
+          ⚠️ Così com'è, nel contratto resteranno degli spazi vuoti: ${guaiContratto.join(' · ')}.
+          Si correggono nella scheda o nel percorso, poi si riapre questa finestrella.
+        </div>` : ''}
       </div>
+      <div style="font-size:12px;color:#6B7280;background:#f7f9fc;border-radius:8px;padding:10px 12px;margin-bottom:12px">
+        <div style="margin-bottom:6px">📎 <strong>Tre allegati</strong> — aprili e controllali prima di mandare:</div>
+        <div style="display:flex;flex-wrap:wrap;gap:7px">
+          <a href="/dashboard/clients/${client.id}/percorsi/${percorsoContratto.id}/contratto" target="_blank" class="btn btn-neutral btn-sm" style="text-decoration:none">📄 Contratto</a>
+          <a href="/dashboard/clients/${client.id}/lettera-privacy" target="_blank" class="btn btn-neutral btn-sm" style="text-decoration:none">🔒 Informativa privacy</a>
+          <a href="/dashboard/clients/${client.id}/agenda" target="_blank" class="btn btn-neutral btn-sm" style="text-decoration:none">🗓️ Agenda</a>
+        </div>
+        <div style="margin-top:6px;color:#aaa">Sono gli stessi identici file che partiranno in allegato.</div>
+      </div>`}
       <div id="mail2-error" style="display:none" class="flash-error"></div>
       <div style="display:flex;gap:8px;margin-top:4px">
         <button onclick="document.getElementById('modal-mail2').style.display='none'" class="btn btn-neutral" style="flex:1">Annulla</button>
-        <button id="m2-send" onclick="sendMail2()" class="btn btn-primary" style="flex:1">✉️ Invia adesso</button>
+        ${percorsoContratto
+          ? `<button id="m2-send" onclick="sendMail2()" class="btn btn-primary" style="flex:1">✉️ Approva e invia</button>`
+          : `<button class="btn btn-off" style="flex:1" disabled title="Serve un percorso individuale">✉️ Approva e invia</button>`}
       </div>
     </div>
   </div>
@@ -5827,16 +6059,16 @@ Germano`;
         subject: document.getElementById('m2-subject').value,
         body: document.getElementById('m2-body').value,
       };
-      if (!confirm('Invio la Mail 2 (contratto + agenda) a ' + to + '?')) return;
+      if (!confirm('Invio a ' + to + ' contratto, informativa privacy e agenda?')) return;
       const btn = document.getElementById('m2-send');
       btn.disabled = true; btn.textContent = 'Invio in corso…'; err.style.display='none';
       try {
         const r = await fetch('/dashboard/clients/'+CID+'/mail2/invia',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
         const d = await r.json().catch(()=>({}));
-        if (!r.ok || d.error) { err.textContent = d.error || ('Errore ' + r.status); err.style.display='block'; btn.disabled=false; btn.textContent='✉️ Invia adesso'; return; }
+        if (!r.ok || d.error) { err.textContent = d.error || ('Errore ' + r.status); err.style.display='block'; btn.disabled=false; btn.textContent='✉️ Approva e invia'; return; }
         alert('Mail inviata a ' + d.to + '.\\nAllegati: ' + (d.allegati||[]).join(', '));
         location.reload();
-      } catch(e) { err.textContent='Errore di rete: ' + e.message; err.style.display='block'; btn.disabled=false; btn.textContent='✉️ Invia adesso'; }
+      } catch(e) { err.textContent='Errore di rete: ' + e.message; err.style.display='block'; btn.disabled=false; btn.textContent='✉️ Approva e invia'; }
     }
     async function saveClient() {
       const nome    = document.getElementById('e-nome').value.trim();
