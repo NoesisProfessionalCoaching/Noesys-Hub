@@ -11,6 +11,7 @@ const contratto = require('./contratto');            // l'impaginatore: disegna 
 const contrattoTesti = require('./contratto-testi');  // le parole del contratto
 const contrattiStato = require('./contratti-stato'); // gli stati della bozza
 const collaudo = require('./collaudo');               // i record di prova fuori dai numeri (fetta 1.4)
+const chiamaUi = require('./chiama-ui');              // la chiamata che legge la risposta (fetta 2.1)
 const documenti = require('./documenti');
 const mailer = require('./mailer');
 const moduli = require('./moduli');
@@ -6098,12 +6099,12 @@ Germano`;
       const g = id => document.getElementById(id).value;
       const body = { tipo: g('s-tipo'), data: g('s-data') || null, ore: g('s-ore') || 0, obiettivo: g('s-obiettivo'), argomenti: g('s-argomenti'), attivita: g('s-attivita'), scadenza: g('s-scadenza'), prossima_ora: g('s-ora'), eseguita: g('s-eseguita'), note: g('s-note') };
       const url = '/dashboard/clients/' + CID + '/percorsi/' + pid + '/sedute' + (sid ? ('/' + sid) : '');
-      await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (!await chiamaHub(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })) return;
       location.reload();
     }
     async function delSeduta(sid, pid) {
       if (!confirm('Eliminare questa sessione dal diario? Le ore si ricalcolano.')) return;
-      await fetch('/dashboard/clients/' + CID + '/percorsi/' + pid + '/sedute/' + sid, { method: 'DELETE' }); location.reload();
+      if (!await chiamaHub('/dashboard/clients/' + CID + '/percorsi/' + pid + '/sedute/' + sid, { method: 'DELETE' })) return; location.reload();
     }
     async function approvaSeduta(sid, pid) {
       if (!confirm('Approvare questa scheda? Da bozza diventa una sessione confermata e le ore entrano nel conteggio ICF.')) return;
@@ -6112,12 +6113,15 @@ Germano`;
       // Era la Final e il percorso risulta ancora aperto: lo faccio notare qui,
       // che è il momento in cui te ne accorgi. Se dici di no non succede nulla.
       if (d.proponiChiusura && confirm('Questa era la sessione Final. Chiudo anche il percorso, con data ' + d.dataFineIt + '?')) {
-        await fetch('/dashboard/clients/' + CID + '/percorsi/' + pid + '/chiudi',
+        // L'approvazione è già avvenuta: se la chiusura viene rifiutata lo si dice,
+        // ma la pagina si ricarica lo stesso, per mostrare la sessione approvata.
+        await chiamaHub('/dashboard/clients/' + CID + '/percorsi/' + pid + '/chiudi',
           { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data_fine: d.dataFine }) });
       }
       location.reload();
     }
     ${collaudo.js()}
+    ${chiamaUi.js()}
     // Fetta 6a — muove lo stato della bozza di contratto. Stessa rotta della card
     // del progetto: una sola porta per tutti e tre i tipi di contratto.
     // ⚠️ Qui il tipo è sempre 'cliente' e non congela niente: le specifiche di
@@ -6317,7 +6321,7 @@ Germano`;
             pagina (è successo l'08/08: scheda cliente inerte, nessun pulsante
             rispondeva). Vedi la prova che ora controlla il JS renderizzato. */ ''}
       if (!confirm('Scarto quello che i documenti dicono? La scheda resta com\\'è.')) return;
-      await fetch('/dashboard/clients/'+CID+'/bozza-anagrafica/scarta', { method:'POST' });
+      if (!await chiamaHub('/dashboard/clients/'+CID+'/bozza-anagrafica/scarta', { method:'POST' })) return;
       location.reload();
     }
 
@@ -6427,12 +6431,12 @@ Germano`;
     }
     async function chiudiPermesso(id) {
       if (!confirm('Chiudo questo permesso? Da subito il cliente non potrà più aprirlo.')) return;
-      await fetch('/dashboard/clients/'+CID+'/permessi/'+id+'/chiudi', { method: 'POST' });
+      if (!await chiamaHub('/dashboard/clients/'+CID+'/permessi/'+id+'/chiudi', { method: 'POST' })) return;
       location.reload();
     }
     async function deleteClient() {
       if (!confirm('Eliminare ${attr(client.name)} e tutti i suoi dati? Operazione irreversibile.')) return;
-      await fetch('/dashboard/clients/'+CID,{method:'DELETE'}); location.href='/dashboard/individuali';
+      if (!await chiamaHub('/dashboard/clients/'+CID,{method:'DELETE'})) return; location.href='/dashboard/individuali';
     }
     // Il prezzo è un campo solo che cambia significato con la modalità: qui si limita
     // a cambiare etichetta, e sparisce del tutto quando non c'è nessuna cifra da dire.
@@ -6552,13 +6556,13 @@ Germano`;
         ? ("Chiudere questo percorso? La data di fine sarà " + fineIt + ", il giorno dell'ultima sessione.")
         : 'Chiudere questo percorso? Non ci sono sessioni registrate, quindi la data di fine sarà oggi.';
       if(!confirm(msg)) return;
-      await fetch('/dashboard/clients/'+CID+'/percorsi/'+pid+'/chiudi',
-        {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({data_fine: fineIso || null})});
+      if (!await chiamaHub('/dashboard/clients/'+CID+'/percorsi/'+pid+'/chiudi',
+        {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({data_fine: fineIso || null})})) return;
       location.reload();
     }
     async function delPercorso(pid) {
       if(!confirm('Eliminare questo percorso? Le sue ore spariscono dall\\'estratto ICF. Operazione irreversibile.')) return;
-      await fetch('/dashboard/clients/'+CID+'/percorsi/'+pid,{method:'DELETE'}); location.reload();
+      if (!await chiamaHub('/dashboard/clients/'+CID+'/percorsi/'+pid,{method:'DELETE'})) return; location.reload();
     }
     // ⛔ 15/08 — tolte openPayment/savePayment/segnaRicevuto/deletePayment
     // insieme al pulsante «+ Pagamento» e alla sua finestrella. Lasciare
@@ -6717,6 +6721,7 @@ function leadsPage(leads, req) {
   </div>
 
   <script>
+    ${chiamaUi.js()}
     function filtra() {
       const q = document.getElementById('cerca').value.trim().toLowerCase();
       document.querySelectorAll('tbody tr').forEach(tr => {
@@ -6756,7 +6761,7 @@ function leadsPage(leads, req) {
       };
       const id = document.getElementById('lead-id').value;
       const url = id ? '/dashboard/leads/'+id : '/dashboard/leads';
-      await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      if (!await chiamaHub(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)})) return;
       location.reload();
     }
     let convertingLeadId = null;
@@ -6777,7 +6782,7 @@ function leadsPage(leads, req) {
     }
     async function deleteLead(id) {
       if(!confirm('Eliminare questo lead?')) return;
-      await fetch('/dashboard/leads/'+id,{method:'DELETE'}); location.reload();
+      if (!await chiamaHub('/dashboard/leads/'+id,{method:'DELETE'})) return; location.reload();
     }
     document.getElementById('modal-lead').addEventListener('click',e=>{ if(e.target===document.getElementById('modal-lead')) closeLeadModal(); });
     document.getElementById('modal-area').addEventListener('click',e=>{ if(e.target===document.getElementById('modal-area')) closeAreaModal(); });
@@ -7790,6 +7795,7 @@ function committentiPage(committenti, req) {
 
   <script>
     ${collaudo.js()}
+    ${chiamaUi.js()}
     const F = ['tipo','denominazione','referente','ruolo','email','telefono','codice_fiscale','partita_iva','indirizzo','note',
                'regime','natura_giuridica','cap','citta','provincia','pec','codice_sdi','paese','identificativo_estero'];
     const ID = { tipo:'c-tipo', denominazione:'c-denominazione', referente:'c-referente', ruolo:'c-ruolo',
@@ -8945,19 +8951,20 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
       const g = id => document.getElementById(id).value;
       const body = { tipo: g('s-tipo'), data: g('s-data') || null, ore: g('s-ore') || 0, obiettivo: g('s-obiettivo'), argomenti: g('s-argomenti'), attivita: g('s-attivita'), scadenza: g('s-scadenza'), prossima_ora: g('s-ora'), eseguita: g('s-eseguita'), note: g('s-note') };
       const url = '/dashboard/progetti/' + PID + '/percorsi/' + COLL_PID + '/sedute' + (sid ? ('/' + sid) : '');
-      await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (!await chiamaHub(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })) return;
       ricaricaConservando();
     }
     async function delSeduta(sid, pid) {
       if (!confirm('Eliminare questa sessione? Le ore si ricalcolano.')) return;
-      await fetch('/dashboard/progetti/' + PID + '/percorsi/' + pid + '/sedute/' + sid, { method: 'DELETE' }); ricaricaConservando();
+      if (!await chiamaHub('/dashboard/progetti/' + PID + '/percorsi/' + pid + '/sedute/' + sid, { method: 'DELETE' })) return; ricaricaConservando();
     }
     async function approvaSeduta(sid, pid) {
       if (!confirm('Approvare questa scheda? Da bozza diventa una sessione confermata e le ore entrano nel conteggio (categoria Team/Group).')) return;
       const r = await fetch('/dashboard/progetti/' + PID + '/percorsi/' + pid + '/sedute/' + sid + '/approva', { method: 'POST' });
       let d = {}; try { d = await r.json(); } catch (e) {}
       if (d.proponiChiusura && confirm('Questa era la sessione Final. Chiudo anche il percorso, con data ' + d.dataFineIt + '?')) {
-        await fetch('/dashboard/progetti/' + PID + '/percorsi/' + pid + '/chiudi',
+        // Come nella scheda cliente: approvata già; la chiusura rifiutata si dice, e si ricarica.
+        await chiamaHub('/dashboard/progetti/' + PID + '/percorsi/' + pid + '/chiudi',
           { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data_fine: d.dataFine }) });
       }
       ricaricaConservando();
@@ -8967,14 +8974,15 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
         ? ("Concludere il percorso di gruppo? La data di fine sarà " + COLL_FINE_IT + ", il giorno dell'ultima sessione.")
         : 'Concludere il percorso di gruppo? Non ci sono sessioni registrate, quindi la data di fine sarà oggi.';
       if (!confirm(msg)) return;
-      await fetch('/dashboard/progetti/' + PID + '/percorsi/' + COLL_PID + '/chiudi',
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data_fine: COLL_FINE_ISO || null }) });
+      if (!await chiamaHub('/dashboard/progetti/' + PID + '/percorsi/' + COLL_PID + '/chiudi',
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data_fine: COLL_FINE_ISO || null }) })) return;
       ricaricaConservando();
     }
     // Fetta 4 — quante sessioni prevede il percorso condiviso. Fino al 29/08
     // quel numero non si poteva cambiare da nessuna schermata: nasceva a 8 (il
     // valore di riserva del database) e restava 8 per sempre.
     ${collaudo.js()}
+    ${chiamaUi.js()}
     // Fetta 6a — muove lo stato di una bozza di contratto.
     // ⚠️ Approvare il contratto del COMMITTENTE congela le specifiche del
     //    progetto: è l'unico passaggio che si fa confermare, perché è l'unico
@@ -9208,21 +9216,24 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
         location.reload();
       } catch (e) { err.textContent = 'Errore di rete: ' + e.message; err.style.display = 'block'; }
     }
-    // Fetta B fix (2026-07-23) — salva in silenzio (best-effort) i valori dell'Amministrazione
-    // già in pagina (quota totale/committente + quote dei clienti), SENZA avvisi. Serve prima
+    // Fetta B fix (2026-07-23) — salva (best-effort) i valori dell'Amministrazione
+    // già in pagina (quota totale/committente + quote dei clienti). Serve prima
     // di una ricarica strutturale (aggiungi/togli partecipante, crea cartelle, fasi): la
     // ricarica ripesca i valori dal DB, quindi senza questo le modifiche non ancora salvate
     // col pulsante "Salva" sparirebbero (era il bug segnalato).
+    // ⚠️ Fetta 2.1 (04/09): non è più «senza avvisi». Se il server rifiuta (per esempio
+    //    il progetto è congelato), chiamaHub lo DICE; la ricarica prosegue lo stesso,
+    //    perché l'azione principale è un'altra e non deve restare a metà.
     async function salvaAmmSilenzioso() {
       try {
         const qt = document.getElementById('q-totale');
         if (qt) {
           const qc = document.getElementById('q-comm');
-          await fetch('/dashboard/progetti/'+PID+'/quota', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ quota_totale: qt.value, quota_committente: qc ? qc.value : '' }) });
+          await chiamaHub('/dashboard/progetti/'+PID+'/quota', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ quota_totale: qt.value, quota_committente: qc ? qc.value : '' }) });
         }
         const quote = coacheeInputs().map(i => ({ part_id: i.getAttribute('data-part'), quota: i.value }));
         if (quote.length) {
-          await fetch('/dashboard/progetti/'+PID+'/quote-coachee', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ quote }) });
+          await chiamaHub('/dashboard/progetti/'+PID+'/quote-coachee', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ quote }) });
         }
       } catch (e) { /* best-effort: non deve bloccare la ricarica */ }
     }

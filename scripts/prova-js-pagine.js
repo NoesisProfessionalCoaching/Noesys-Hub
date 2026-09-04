@@ -73,6 +73,7 @@ const daiModuli = [
     codice: () => pianoUi.js({ piani: [], dataFirma: '2026-01-01', quotaPerPagatore: true }) },
   { nome: 'piano-ui.js — la finestrella dell’incasso', codice: () => pianoUi.jsIncasso() },
   { nome: 'collaudo.js — l’interruttore vero/di collaudo', codice: () => require('../server/collaudo').js() },
+  { nome: 'chiama-ui.js — la chiamata che legge la risposta', codice: () => require('../server/chiama-ui').js() },
 ];
 // ⚠️ Qui il codice arriva GIÀ come lo vedrà il browser: le interpolazioni sono
 // state risolte da JavaScript e gli escape sono già sciolti. Passarci sopra i
@@ -172,6 +173,22 @@ const bene = (t) => console.log('✓ ' + t);
   } catch (e) {
     guaio('il JavaScript della finestrella non gira nel documento finto: ' + e.message);
   }
+}
+
+// 4 · UN SALVATAGGIO MUTO (fetta 2.1, 04/09/2026). `await fetch(…); location.reload();`
+//     chiama il server e ricarica senza guardare la risposta: se il server ha detto
+//     no, la pagina si ricarica uguale e il coach non lo sa. Ogni chiamata deve
+//     leggere la risposta: `chiamaHub(…)` (server/chiama-ui.js) lo fa per tutti.
+//     Qui si cerca nel SORGENTE la forma muta: la riga che comincia con `await fetch(`.
+{
+  const muti = [];
+  for (const f of [path.join(__dirname, '..', 'server', 'routes.js'), path.join(__dirname, '..', 'server', 'piano-ui.js')]) {
+    fs.readFileSync(f, 'utf8').split('\n').forEach((riga, n) => {
+      if (/^\s*await fetch\(/.test(riga)) muti.push(path.basename(f) + ':' + (n + 1));
+    });
+  }
+  if (muti.length) guaio(`${muti.length} salvataggi MUTI: chiamano il server e non leggono la risposta`, muti.join(' · '));
+  else bene('nessun salvataggio muto: ogni chiamata al server legge la risposta');
 }
 
 console.log(`\n${guai ? '✗' : '✓'} ${guai} trappole trovate.`);
