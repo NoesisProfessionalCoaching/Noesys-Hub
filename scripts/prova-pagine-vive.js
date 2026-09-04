@@ -26,7 +26,37 @@ const cookieParser = require('cookie-parser');
 
 const routes = require('../server/routes');
 const db = require('../server/db');
+// ⭐ Fetta 1.2 (04/09) — LA POSTA È FINTA. `.env` non ha le chiavi Gmail e non
+//    deve averle: qui si sostituisce il solo `sendMail` con uno che mette la mail
+//    in un cestino, così la rotta della proforma può fare il suo giro intero
+//    (mandare → incassare → fatturare) senza che nulla parta davvero. Le rotte che
+//    guardano `mailerReady()` (Mail 1 e 2) continuano a dire «posta non
+//    configurata»: quella funzione non si tocca.
+const mailer = require('../server/mailer');
+const postaFinta = [];
+mailer.sendMail = async (m) => { postaFinta.push(m); return { finta: true }; };
+// ⭐ E LA CARTA INTESTATA È BIANCA. Il PDF della proforma si appoggia sulla carta
+//    intestata scaricata da Drive: qui, senza chiavi, si danno le tre funzioni che
+//    servono a quel solo scarico una pagina A4 vuota. Tutto il resto di Drive
+//    (l'archiviazione della copia, le cartelle del cliente) resta vero e fallisce
+//    come deve: la prova controlla che la rotta lo DICA.
+const drive = require('../server/google-drive');
+const { PDFDocument } = require('pdf-lib');
+let cartaBianca = null;
+drive.findModelliFolder = async () => ({ id: 'modelli-finti' });
+drive.findFileByName = async (parentId, name) => ({ id: 'carta-finta', name });
+drive.downloadFileBuffer = async () => {
+  if (!cartaBianca) {
+    const d = await PDFDocument.create();
+    // Un rettangolo invisibile: senza un contenuto qualsiasi la pagina non si
+    // può appoggiare come sfondo («missing Contents»).
+    d.addPage([595.28, 841.89]).drawRectangle({ x: 0, y: 0, width: 1, height: 1, opacity: 0 });
+    cartaBianca = Buffer.from(await d.save());
+  }
+  return cartaBianca;
+};
 const { signToken, COOKIE_NAME } = require('../server/auth');
+const { v4: uuidv4 } = require('uuid');
 
 const app = express();
 app.use(cookieParser());
@@ -605,6 +635,132 @@ const chiama = async (metodo, url, corpo) => {
     dice(r.stato === 404, '🔴 aprire un LINK non crea più cartelle su Drive (GET → 404)', 'ha risposto ' + r.stato);
     r = await chiama('POST', '/dashboard/diag/drive/test-create');
     dice(r.stato === 200 && /Variabili mancanti|Cartella di prova/.test(r.testo), '  la stessa prova si fa con un pulsante (POST), e qui senza chiavi Google lo dice', r.stato + ' ' + r.testo.slice(0, 80));
+
+    // ══ Fetta 1.2 (04/09/2026) — LA PROVA DEI SOLDI ═══════════════════════════
+    // La catena intera della proforma coi pulsanti veri: nasce → PDF → si manda
+    // (posta finta) → si incassa a pezzi → si scrive il numero di fattura; e la
+    // seconda: nasce → si annulla → le sessioni tornano da chiedere → rinasce con
+    // un numero NUOVO (quello bruciato non si riusa). Metà dei controlli sono
+    // rifiuti: incassare prima di mandare, incassare più del dovuto, mandare o
+    // incassare un documento annullato.
+    // 🔴 IL NUMERO: fino al 04/09 lo componeva l'SQL con lpad(n, 3, '0'), che
+    //    oltre 999 TRONCA (Postgres: lpad('1000',3,'0') = '100'). Per vederlo qui
+    //    si porta il contatore dell'anno a 999 con una riga finta — l'unica cosa
+    //    di questa sezione che non si fa con un pulsante, perché nessun pulsante
+    //    fa 999 proforme — e poi si crea la millesima col pulsante.
+    console.log('\n20b. 💶 La prova dei soldi: proforma dalla nascita alla fattura (fetta 1.2)');
+    r = await chiama('POST', `/dashboard/clients/${idCli}/percorsi`,
+      { tipo: 'Individuale', modalita: 'Standard', prezzo: 100, data_inizio: '2026-08-01', n_sessioni_previste: 8 });
+    const idStd = r.dati && r.dati.id;
+    dice(r.stato === 200 && !!idStd, 'un percorso Standard a 100 € a sessione', r.stato + ' ' + r.testo.slice(0, 100));
+    const giorniFa = (n) => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
+    r = await chiama('POST', `/dashboard/clients/${idCli}/percorsi/${idStd}/sedute`, { tipo: 'Intake', data: giorniFa(10), ore: 2 });
+    dice(r.stato === 200, 'un Intake di dieci giorni fa (vale due sessioni)', r.stato);
+    r = await chiama('POST', `/dashboard/clients/${idCli}/percorsi/${idStd}/sedute`, { tipo: 'Ongoing', data: giorniFa(3), ore: 1 });
+    dice(r.stato === 200, 'e un Ongoing di tre giorni fa', r.stato);
+    r = await chiama('GET', '/dashboard/amministrazione/proforma');
+    dice(r.stato === 200, 'la pagina Proforma risponde 200', r.stato + ' ' + r.testo.slice(0, 100));
+    dice(r.testo.includes("D&#39;Amico " + marca) || r.testo.includes("D'Amico " + marca), '  e il cliente compare fra quelli con qualcosa da chiedere');
+
+    const anno = new Date().toISOString().slice(0, 4);
+    await db.query(`INSERT INTO proforme (id, numero, anno, progressivo, client_id, data_emissione, stato)
+                    VALUES ($1, $2, $3::int, 999, $4, CURRENT_DATE, 'annullata') ON CONFLICT DO NOTHING`,
+      [uuidv4(), anno + '/999', anno, idCli]);
+    const prossimo = async () => Number((await db.query('SELECT COALESCE(MAX(progressivo),0)+1 AS n FROM proforme WHERE anno=$1::int', [anno])).rows[0].n);
+    let nAtteso = await prossimo();
+    r = await chiama('POST', `/dashboard/clients/${idCli}/proforma`);
+    const pf1 = r.dati || {};
+    dice(r.stato === 200 && !!pf1.id, 'la proforma delle sessioni nasce dal pulsante', r.stato + ' ' + r.testo.slice(0, 160));
+    dice(pf1.numero === anno + '/' + String(nAtteso).padStart(3, '0'),
+      `🔴 e il numero è ${anno}/${nAtteso}, non troncato (oltre 999 lpad tagliava)`, 'numero: ' + pf1.numero);
+    let d1 = (await db.query('SELECT * FROM proforme WHERE id=$1', [pf1.id])).rows[0];
+    dice(d1 && d1.progressivo === nAtteso && d1.numero === pf1.numero, '  e nel database numero e progressivo combaciano');
+    const righe1 = await db.query('SELECT quantita, importo::numeric AS importo FROM proforma_righe WHERE proforma_id=$1 ORDER BY ordine', [pf1.id]);
+    dice(righe1.rows.length === 2 && Number(righe1.rows[0].quantita) === 2, '  due righe, e l\'Intake conta quantità 2');
+    dice(Number(d1.imponibile) === 300, '  imponibile 300 € (100 × 2 + 100)', 'imponibile ' + d1.imponibile);
+    r = await chiama('GET', `/dashboard/proforma/${pf1.id}/pdf`);
+    dice(r.stato === 200 && r.testo.startsWith('%PDF'), 'il PDF si rigenera dai dati congelati', r.stato + ' ' + r.testo.slice(0, 20));
+    r = await chiama('GET', '/dashboard/amministrazione/proforma');
+    dice(r.stato === 200 && r.testo.includes(pf1.numero) && r.testo.includes('Da rileggere e mandare'), 'la pagina la mette fra quelle «da rileggere e mandare»',
+      r.stato + ' numero:' + r.testo.includes(pf1.numero));
+    r = await chiama('POST', `/dashboard/clients/${idCli}/proforma`);
+    dice(r.stato === 400, '🔬 chiederle di nuovo è rifiutato: le sessioni sono già in un documento vivo', 'ha risposto ' + r.stato);
+
+    // mandare
+    r = await chiama('POST', `/dashboard/proforma/${pf1.id}/incasso`, { importo: 100, data_incasso: giorniFa(1) });
+    dice(r.stato === 400 && /prima si manda/.test(r.testo), '🔬 incassare PRIMA di mandare è rifiutato', r.stato + ' ' + r.testo.slice(0, 100));
+    r = await chiama('POST', `/dashboard/proforma/${pf1.id}/invia`, {});
+    dice(r.stato === 400, '🔬 mandare senza destinatario è rifiutato', 'ha risposto ' + r.stato);
+    const primaPosta = postaFinta.length;
+    r = await chiama('POST', `/dashboard/proforma/${pf1.id}/invia`, { to: 'prova@example.invalid' });
+    dice(r.stato === 200 && r.dati && r.dati.ok, 'si manda (con la posta finta)', r.stato + ' ' + r.testo.slice(0, 160));
+    const ultima = postaFinta[postaFinta.length - 1] || {};
+    dice(postaFinta.length === primaPosta + 1 && ultima.to === 'prova@example.invalid'
+         && (ultima.attachments || []).some(a => a.filename.includes(pf1.numero.replace('/', '-'))),
+      '  la mail finta ha il PDF in allegato, col numero nel nome', JSON.stringify((ultima.attachments || []).map(a => a.filename)));
+    dice(r.dati && r.dati.driveErrore, '  e la risposta DICE che la copia su Drive non è riuscita (qui non ci sono le chiavi)');
+    d1 = (await db.query('SELECT * FROM proforme WHERE id=$1', [pf1.id])).rows[0];
+    dice(d1.stato === 'inviata' && !!d1.inviata_data && d1.inviata_a === 'prova@example.invalid', '  nel database è «inviata», con quando e a chi');
+    r = await chiama('GET', '/dashboard/amministrazione/proforma');
+    dice(r.testo.includes('Mandate, in attesa di incasso') && r.testo.includes(pf1.numero), '  e la pagina la mette fra le «mandate, in attesa di incasso»');
+
+    // incassare
+    const dovuto = Number(d1.da_pagare);
+    const meta = Math.round(dovuto * 50) / 100;
+    for (const [corpo, et] of [
+      [{ importo: dovuto + 0.01, data_incasso: giorniFa(1) }, 'più del dovuto'],
+      [{ importo: 0, data_incasso: giorniFa(1) }, 'zero'],
+      [{ importo: 10 }, 'senza il giorno'],
+    ]) { r = await chiama('POST', `/dashboard/proforma/${pf1.id}/incasso`, corpo); dice(r.stato === 400, `🔬 incassare ${et} è rifiutato`, 'ha risposto ' + r.stato); }
+    r = await chiama('POST', `/dashboard/proforma/${pf1.id}/incasso`, { importo: meta, data_incasso: giorniFa(2) });
+    dice(r.stato === 200 && r.dati.saldata === false, `metà (${meta} €) entra, e il documento NON è saldato`, r.stato + ' ' + r.testo.slice(0, 120));
+    const idInc1 = (await db.query('SELECT id FROM incassi WHERE proforma_id=$1', [pf1.id])).rows[0].id;
+    r = await chiama('POST', `/dashboard/incassi/${idInc1}/togli`);
+    dice(r.stato === 200, 'un incasso sbagliato si toglie', r.stato);
+    r = await chiama('POST', `/dashboard/proforma/${pf1.id}/incasso`, { importo: meta, data_incasso: giorniFa(2) });
+    dice(r.stato === 200 && r.dati.saldata === false, '  e si rimette', r.stato);
+    r = await chiama('POST', `/dashboard/proforma/${pf1.id}/incasso`, { importo: Math.round((dovuto - meta) * 100) / 100, data_incasso: giorniFa(1) });
+    dice(r.stato === 200 && r.dati.saldata === true && Number(r.dati.residuo) === 0, 'col resto è SALDATA, residuo zero', r.stato + ' ' + r.testo.slice(0, 120));
+    r = await chiama('POST', `/dashboard/proforma/${pf1.id}/incasso`, { importo: 1, data_incasso: giorniFa(1) });
+    dice(r.stato === 400 && /già saldato/.test(r.testo), '🔬 un soldo in più su un documento saldato è rifiutato', r.stato + ' ' + r.testo.slice(0, 100));
+    r = await chiama('GET', '/dashboard/amministrazione/proforma');
+    dice(r.testo.includes('Incassate, da fatturare') && r.testo.includes(pf1.numero), 'la pagina la mette fra le «incassate, da fatturare»');
+
+    // fatturare
+    r = await chiama('POST', `/dashboard/proforma/${pf1.id}/fattura`, { numero: 'FT-PROVA-1' });
+    d1 = (await db.query('SELECT fattura_numero, fattura_data FROM proforme WHERE id=$1', [pf1.id])).rows[0];
+    dice(r.stato === 200 && d1.fattura_numero === 'FT-PROVA-1' && !!d1.fattura_data, 'il numero della fattura (fatta in SuperBill) si scrive, con la data di oggi');
+    r = await chiama('POST', `/dashboard/proforma/${pf1.id}/fattura`, { numero: '' });
+    d1 = (await db.query('SELECT fattura_numero, fattura_data FROM proforme WHERE id=$1', [pf1.id])).rows[0];
+    dice(r.stato === 200 && d1.fattura_numero === null && d1.fattura_data === null, '  e si può cancellare: torna «da fatturare», senza data fantasma');
+
+    // la seconda: nasce, si annulla, le sessioni tornano da chiedere, rinasce con un numero nuovo
+    r = await chiama('POST', `/dashboard/clients/${idCli}/percorsi/${idStd}/sedute`, { tipo: 'Ongoing', data: giorniFa(1), ore: 1 });
+    dice(r.stato === 200, 'una nuova sessione di ieri', r.stato);
+    nAtteso = await prossimo();
+    r = await chiama('POST', `/dashboard/clients/${idCli}/proforma`);
+    const pf2 = r.dati || {};
+    dice(r.stato === 200 && pf2.numero === anno + '/' + String(nAtteso).padStart(3, '0'), `la seconda proforma nasce col numero successivo (${pf2.numero})`, r.stato + ' ' + r.testo.slice(0, 120));
+    dice((await db.query('SELECT count(*)::int AS n FROM proforma_righe WHERE proforma_id=$1', [pf2.id])).rows[0].n === 1, '  con dentro SOLO la sessione nuova: le altre due sono già chieste');
+    r = await chiama('POST', `/dashboard/proforma/${pf2.id}/annulla`);
+    dice(r.stato === 200, 'si annulla', r.stato);
+    r = await chiama('POST', `/dashboard/proforma/${pf2.id}/annulla`);
+    dice(r.stato === 404, '🔬 annullarla due volte: 404', 'ha risposto ' + r.stato);
+    r = await chiama('POST', `/dashboard/proforma/${pf2.id}/invia`, { to: 'prova@example.invalid' });
+    dice(r.stato === 400, '🔬 mandare un documento annullato è rifiutato', 'ha risposto ' + r.stato);
+    r = await chiama('POST', `/dashboard/proforma/${pf2.id}/incasso`, { importo: 10, data_incasso: giorniFa(1) });
+    dice(r.stato === 400, '🔬 incassarci sopra è rifiutato', 'ha risposto ' + r.stato);
+    r = await chiama('GET', '/dashboard/amministrazione/proforma');
+    dice(r.testo.includes('Annullata, mai mandata') && r.testo.includes(pf2.numero), 'la pagina la mostra «annullata, mai mandata», col suo numero');
+    nAtteso = await prossimo();
+    r = await chiama('POST', `/dashboard/clients/${idCli}/proforma`);
+    const pf3 = r.dati || {};
+    dice(r.stato === 200 && pf3.numero === anno + '/' + String(nAtteso).padStart(3, '0') && pf3.numero !== pf2.numero,
+      `🔴 la sessione torna da chiedere, e il nuovo documento ha un numero NUOVO (${pf3.numero}): quello bruciato non si riusa`, r.stato + ' ' + r.testo.slice(0, 120));
+    dice((await db.query('SELECT count(*)::int AS n FROM proforma_righe WHERE proforma_id=$1', [pf3.id])).rows[0].n === 1, '  con dentro quella sessione sola');
+    // ⚠️ Segnato, non toccato: annullare una proforma CON incassi sopra oggi è
+    //    permesso (la rotta guarda solo «non già annullata»). È la fetta 0.2
+    //    (cancellazioni guardate), rimandata a ottobre per decisione di Germano.
 
     console.log('\n21. 🔬 Adesso la rompo apposta');
     for (const [corpo, et] of [

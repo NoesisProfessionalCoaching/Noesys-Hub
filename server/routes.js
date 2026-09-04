@@ -2208,6 +2208,14 @@ router.get('/dashboard/amministrazione', requireCoach, async (req, res) => {
 });
 
 // ── Le proforma (Fatturazione, Fase 3) ─────────────────
+// Il prossimo progressivo dell'anno, letto DENTRO la transazione che lo scrive.
+// Due richieste insieme leggerebbero lo stesso numero: la seconda si ferma sul
+// vincolo UNIQUE(anno, progressivo) e la sua transazione torna indietro — è la
+// stessa rete di prima, quando il numero lo componeva l'SQL.
+async function prossimoProgressivo(q, anno) {
+  const r = await q('SELECT COALESCE(MAX(progressivo), 0) + 1 AS n FROM proforme WHERE anno = $1::int', [anno]);
+  return Number(r.rows[0].n);
+}
 // Una proforma raccoglie TUTTE le sessioni a pagamento non ancora chieste, non
 // solo quelle di un mese (scelta di Germano): un mese rimasto indietro non deve
 // sparire. Il perno è `proforma_righe.seduta_id` — una sessione che sta già in
@@ -2250,17 +2258,20 @@ router.post('/dashboard/clients/:id/proforma', requireCoach, async (req, res) =>
 
     // Documento e righe nascono insieme o non nascono: senza le righe resterebbe
     // un numero bruciato su un foglio vuoto. Il progressivo si legge e si scrive
-    // nella stessa istruzione, e il vincolo UNIQUE(anno, progressivo) è la rete.
+    // nella stessa transazione, e il vincolo UNIQUE(anno, progressivo) è la rete.
+    // 🔴 Fetta 1.2 (04/09/2026): il numero lo compone `proforma.numeroProforma`,
+    //    non più l'SQL con lpad(n, 3, '0') — che oltre 999 TRONCA (Postgres:
+    //    lpad('1000', 3, '0') = '100'). La regola del numero sta in un posto solo,
+    //    quello che `prova-proforma` copre già.
     const creata = await db.transazione(async (q) => {
+      const n = await prossimoProgressivo(q, anno);
       const ins = await q(`
         INSERT INTO proforme (id, numero, anno, progressivo, client_id, data_emissione,
           periodo_da, periodo_a, categoria_fiscale, emittente_dati, destinatario_dati,
           imponibile, iva, ritenuta, bollo, totale_documento, da_pagare, scadenza)
-        SELECT $1, $2::text || '/' || lpad(x.n::text, 3, '0'), $2::int, x.n, $3, $4::date,
+        VALUES ($1, $16, $2::int, $17, $3, $4::date,
                $5::date, $6::date, $7, $8::jsonb, $9::jsonb,
-               $10, $11, $12, $13, $14, $15, $4::date
-          FROM (SELECT COALESCE(MAX(progressivo), 0) + 1 AS n
-                  FROM proforme WHERE anno = $2::int) x
+               $10, $11, $12, $13, $14, $15, $4::date)
         RETURNING id, numero`,
         // ⭐ C4 — la scadenza di un mese di sessioni è il giorno stesso: chi paga
         // per sé lo fa a RIMESSA DIRETTA (modello dei soldi, 10/08). Il promemoria
@@ -2269,7 +2280,8 @@ router.post('/dashboard/clients/:id/proforma', requireCoach, async (req, res) =>
         [uuidv4(), anno, cliente.id, oggi, d.periodoDa, d.periodoA, d.categoria,
          JSON.stringify(d.emittenteDati), JSON.stringify(d.destinatarioDati),
          d.conti.imponibile, d.conti.iva, d.conti.ritenuta, d.conti.bollo,
-         d.conti.totaleDocumento, d.conti.daPagare]);
+         d.conti.totaleDocumento, d.conti.daPagare,
+         proforma.numeroProforma(anno, n), n]);
       const pf = ins.rows[0];
       for (const r of d.righe) {
         await q(`INSERT INTO proforma_righe
@@ -2390,22 +2402,23 @@ router.post('/dashboard/tranche/:id/proforma', requireCoach, async (req, res) =>
     const scadenza = tranche.scadenza(t, riferimento);
 
     const creata = await db.transazione(async (q) => {
+      // Stesso numero, stessa regola della proforma delle sessioni (fetta 1.2).
+      const n = await prossimoProgressivo(q, anno);
       const ins = await q(`
         INSERT INTO proforme (id, numero, anno, progressivo, client_id, committente_id,
           progetto_id, data_emissione, periodo_da, periodo_a, categoria_fiscale,
           emittente_dati, destinatario_dati,
           imponibile, iva, ritenuta, bollo, totale_documento, da_pagare, scadenza)
-        SELECT $1, $2::text || '/' || lpad(x.n::text, 3, '0'), $2::int, x.n, $3, $4, $5,
+        VALUES ($1, $19, $2::int, $20, $3, $4, $5,
                $6::date, $7::date, $8::date, $9, $10::jsonb, $11::jsonb,
-               $12, $13, $14, $15, $16, $17, $18::date
-          FROM (SELECT COALESCE(MAX(progressivo), 0) + 1 AS n
-                  FROM proforme WHERE anno = $2::int) x
+               $12, $13, $14, $15, $16, $17, $18::date)
         RETURNING id, numero`,
         [uuidv4(), anno, clientId, committenteId, progettoId, oggi,
          d.periodoDa, d.periodoA, d.categoria,
          JSON.stringify(d.emittenteDati), JSON.stringify(d.destinatarioDati),
          d.conti.imponibile, d.conti.iva, d.conti.ritenuta, d.conti.bollo,
-         d.conti.totaleDocumento, d.conti.daPagare, scadenza]);
+         d.conti.totaleDocumento, d.conti.daPagare, scadenza,
+         proforma.numeroProforma(anno, n), n]);
       const pf = ins.rows[0];
       for (const r of d.righe) {
         await q(`INSERT INTO proforma_righe
