@@ -14,8 +14,15 @@ const os = require('os');
 const { execFileSync } = require('child_process');
 const path = require('path');
 
-const file = process.argv[2] || path.join(__dirname, '..', 'server', 'routes.js');
-const src = fs.readFileSync(file, 'utf8');
+// ⭐ 4.1 (04/09/2026): le pagine stanno in server/pagine/*.js, le rotte in routes.js.
+//    Si legge tutto: un blocco <script> può stare in qualunque di questi file.
+const FILES = process.argv[2] ? [process.argv[2]] : [
+  path.join(__dirname, '..', 'server', 'routes.js'),
+  ...fs.readdirSync(path.join(__dirname, '..', 'server', 'pagine')).filter(f => f.endsWith('.js')).sort()
+    .map(f => path.join(__dirname, '..', 'server', 'pagine', f)),
+];
+const file = FILES[0];
+const src = FILES.map(f => `// ═══ ${path.basename(f)} ═══\n` + fs.readFileSync(f, 'utf8')).join('\n');
 const tmpDir = path.join(os.tmpdir(), 'noesys-prova-js-pagine');
 fs.rmSync(tmpDir, { recursive: true, force: true });
 fs.mkdirSync(tmpDir, { recursive: true });
@@ -189,7 +196,7 @@ const bene = (t) => console.log('✓ ' + t);
 //     Qui si cerca nel SORGENTE la forma muta: la riga che comincia con `await fetch(`.
 {
   const muti = [];
-  for (const f of [path.join(__dirname, '..', 'server', 'routes.js'), path.join(__dirname, '..', 'server', 'piano-ui.js')]) {
+  for (const f of [...FILES, path.join(__dirname, '..', 'server', 'piano-ui.js')]) {
     fs.readFileSync(f, 'utf8').split('\n').forEach((riga, n) => {
       if (/^\s*await fetch\(/.test(riga)) muti.push(path.basename(f) + ':' + (n + 1));
     });

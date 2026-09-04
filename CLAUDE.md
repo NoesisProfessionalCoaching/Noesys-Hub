@@ -6,10 +6,14 @@ memoria automatica (`noesys-mappa-cantieri`). Qui c'è solo **come è fatta ques
 
 ## Com'è fatta
 
-- **Tutto l'HTML è renderizzato dal server** dentro `server/routes.js` (~9.800 righe al 04/09/2026;
-  il numero vero sta in `INVENTARIO.md`, che `npm run prova` rigenera): ogni pagina è una **template
-  literal** che contiene anche il `<script>` del browser. Niente file CSS separati: lo stile sta in
-  `baseStyle()`, che è dentro ogni pagina.
+- **Tutto l'HTML è renderizzato dal server.** Dal 04/09/2026 (fetta 4.1) le **rotte** stanno in
+  `server/routes.js` (~3.700 righe) e le **pagine** in `server/pagine/` — `home.js`, `clienti.js`,
+  `lead.js`, `amministrazione.js`, `progetti.js` — con `pagine/comune.js` per ciò che condividono
+  (stile `baseStyle()`, barra `headerNoesys()`, `esc`/`attr`/`jsStr`, date, costanti, anteprima degli
+  strumenti). Il JavaScript che più pagine ripetevano sta in `pagina-js.js`, `chiama-ui.js`,
+  `stato-ui.js`, `collaudo.js`, `piano-ui.js`. I numeri veri stanno in `INVENTARIO.md`, che
+  `npm run prova` rigenera. Ogni pagina è una **template literal** che contiene anche il `<script>`
+  del browser. Niente file CSS separati.
 - I moduli in `server/` sono **puri dove possibile**, così si possono provare senza database:
   `fiscale.js` (i conti: IVA, ritenuta, bollo) · `proforma.js` · `incassi.js` · `tranche.js` ·
   `sedute.js` · `contratti-stato.js` · `collaudo.js` · `chiama-ui.js` · `piano-ui.js` (la finestrella

@@ -14,6 +14,9 @@ const path = require('path');
 const REPO = path.join(__dirname, '..');
 const src = fs.readFileSync(path.join(REPO, 'server', 'routes.js'), 'utf8');
 const righe = src.split('\n');
+// ⭐ 4.1: le pagine stanno in server/pagine/*.js
+const PAGINE_DIR = path.join(REPO, 'server', 'pagine');
+const filePagine = fs.existsSync(PAGINE_DIR) ? fs.readdirSync(PAGINE_DIR).filter(f => f.endsWith('.js')).sort() : [];
 
 // Le rotte: metodo e indirizzo, nell'ordine del file.
 const rotte = [];
@@ -21,7 +24,12 @@ for (const m of src.matchAll(/^router\.(get|post|delete|put)\('([^']+)'/gm)) rot
 
 // Le pagine: le funzioni che finiscono in «Page», con la riga dove cominciano.
 const pagine = [];
-righe.forEach((r, i) => { const m = r.match(/^function ([A-Za-z]+Page)\(/); if (m) pagine.push({ nome: m[1], riga: i + 1 }); });
+righe.forEach((r, i) => { const m = r.match(/^function ([A-Za-z]+Page)\(/); if (m) pagine.push({ nome: m[1], file: 'routes.js', riga: i + 1 }); });
+let righePagine = 0;
+for (const f of filePagine) {
+  const t = fs.readFileSync(path.join(PAGINE_DIR, f), 'utf8').split('\n'); righePagine += t.length;
+  t.forEach((r, i) => { const m = r.match(/^function ([A-Za-z]+Page)\(/); if (m) pagine.push({ nome: m[1], file: 'pagine/' + f, riga: i + 1 }); });
+}
 
 // I moduli del server, con le righe e chi tocca il database.
 const moduli = fs.readdirSync(path.join(REPO, 'server')).filter(f => f.endsWith('.js')).sort().map(f => {
@@ -47,11 +55,11 @@ for (const r of rotte) { const k = perMondo(r.path); if (!gruppi.has(k)) gruppi.
 let out = '';
 out += '# Inventario dell\'Hub — generato da `scripts/inventario.js`\n\n';
 out += 'Non si modifica a mano: lo riscrive `npm run prova`. Se un numero qui non torna con quello che ricordi, è cambiato il codice.\n\n';
-out += `- \`server/routes.js\`: **${righe.length} righe**, **${pagine.length} pagine**, **${rotte.length} rotte**\n`;
+out += `- \`server/routes.js\`: **${righe.length} righe**, **${rotte.length} rotte**; \`server/pagine/\`: **${filePagine.length} file**, **${righePagine} righe**, **${pagine.length} pagine**\n`;
 out += `- moduli in \`server/\`: **${moduli.length}** (${moduli.filter(m => m.db).length} usano \`db.js\`, ${moduli.filter(m => !m.db).length} no)\n`;
 out += `- prove in \`npm run prova\`: **${catena.length}**, in questo ordine: ${catena.join(' → ')}\n\n`;
-out += '## Le pagine (funzioni che finiscono in Page, nell\'ordine del file)\n\n';
-out += pagine.map(p => `- \`${p.nome}\` (riga ${p.riga})`).join('\n') + '\n\n';
+out += '## Le pagine (funzioni che finiscono in Page)\n\n';
+out += pagine.map(p => `- \`${p.nome}\` (${p.file}, riga ${p.riga})`).join('\n') + '\n\n';
 out += '## Le rotte, per mondo\n\n';
 for (const [k, lista] of gruppi) {
   out += `### ${k} (${lista.length})\n\n`;
@@ -68,5 +76,5 @@ if (process.argv.includes('--verifica')) {
   console.log('✓ INVENTARIO.md è aggiornato al codice.');
 } else {
   fs.writeFileSync(dest, out);
-  console.log(`✓ INVENTARIO.md riscritto: ${righe.length} righe, ${pagine.length} pagine, ${rotte.length} rotte, ${moduli.length} moduli, ${catena.length} prove.`);
+  console.log(`✓ INVENTARIO.md riscritto: routes.js ${righe.length} righe e ${rotte.length} rotte; pagine ${filePagine.length} file, ${righePagine} righe, ${pagine.length} pagine; ${moduli.length} moduli; ${catena.length} prove.`);
 }

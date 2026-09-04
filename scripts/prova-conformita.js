@@ -85,7 +85,7 @@ prova('le tre tabelle', ['clients', 'committenti', 'progetti'], Object.values(co
 console.log('\n— UNO STRUMENTO NUOVO SI REGISTRA IN SEI PUNTI —');
 const fs = require('fs');
 const path = require('path');
-const HUB_ROUTES = path.join(__dirname, '..', 'server', 'routes.js');
+const HUB_ROUTES = path.join(__dirname, '..', 'server', 'pagine', 'comune.js');   // 4.1: l'elenco STRUMENTI e l'anteprima stanno qui
 const TOOLS_REPO = path.join(__dirname, '..', '..', 'Coaching-Tools');
 
 /** Le key dell'elenco STRUMENTI e quelle dei `case` dell'anteprima, lette dal sorgente. */

@@ -2,27 +2,27 @@
 
 Non si modifica a mano: lo riscrive `npm run prova`. Se un numero qui non torna con quello che ricordi, è cambiato il codice.
 
-- `server/routes.js`: **9697 righe**, **15 pagine**, **92 rotte**
+- `server/routes.js`: **3697 righe**, **92 rotte**; `server/pagine/`: **6 file**, **6135 righe**, **15 pagine**
 - moduli in `server/`: **30** (8 usano `db.js`, 22 no)
 - prove in `npm run prova`: **17**, in questo ordine: prova-file → prova-js → prova-pagine → prova-fiscale → prova-proforma → prova-tranche → prova-incassi → prova-sedute → prova-appuntamenti → prova-final-programmata → prova-migrazione → prova-barriere → prova-conformita → prova-automazione → prova-comuni → inventario → prova-timbro
 
-## Le pagine (funzioni che finiscono in Page, nell'ordine del file)
+## Le pagine (funzioni che finiscono in Page)
 
-- `loginPage` (riga 4102)
-- `homePage` (riga 4121)
-- `dashboardPage` (riga 4327)
-- `driveDiagPage` (riga 4477)
-- `clientDetailPage` (riga 4600)
-- `leadsPage` (riga 6605)
-- `anomaliePage` (riga 6805)
-- `proformaPage` (riga 6959)
-- `contrattiAmmPage` (riga 7444)
-- `emittentePage` (riga 7559)
-- `committentiPage` (riga 7655)
-- `progettiPage` (riga 7843)
-- `progettoDettaglioPage` (riga 8199)
-- `cercaPage` (riga 9560)
-- `icfPage` (riga 9642)
+- `anomaliePage` (pagine/amministrazione.js, riga 14)
+- `proformaPage` (pagine/amministrazione.js, riga 77)
+- `contrattiAmmPage` (pagine/amministrazione.js, riga 562)
+- `emittentePage` (pagine/amministrazione.js, riga 677)
+- `loginPage` (pagine/clienti.js, riga 24)
+- `dashboardPage` (pagine/clienti.js, riga 42)
+- `driveDiagPage` (pagine/clienti.js, riga 192)
+- `clientDetailPage` (pagine/clienti.js, riga 239)
+- `cercaPage` (pagine/clienti.js, riga 2251)
+- `icfPage` (pagine/clienti.js, riga 2333)
+- `homePage` (pagine/home.js, riga 18)
+- `leadsPage` (pagine/lead.js, riga 9)
+- `committentiPage` (pagine/progetti.js, riga 16)
+- `progettiPage` (pagine/progetti.js, riga 204)
+- `progettoDettaglioPage` (pagine/progetti.js, riga 560)
 
 ## Le rotte, per mondo
 
@@ -164,7 +164,7 @@ Non si modifica a mano: lo riscrive `npm run prova`. Se un numero qui non torna 
 | `pagina-js.js` | 155 | no |
 | `piano-ui.js` | 598 | no |
 | `proforma.js` | 584 | no |
-| `routes.js` | 9697 | sì |
+| `routes.js` | 3697 | sì |
 | `scan-moduli.js` | 215 | sì |
 | `scan.js` | 416 | sì |
 | `sedute.js` | 53 | no |
