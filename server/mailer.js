@@ -64,10 +64,13 @@ async function sendMail({ to, subject, text, attachments }) {
   const rawBuf = await buildRaw({ from, to, subject, text, attachments });
   const raw = rawBuf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   const token = await getAccessToken();
+  // ⏱ Fetta 2.3: un limite di tempo. Niente ritentativo: una mail ripetuta
+  //    arriverebbe due volte, e non si annulla una mail.
   const res = await fetch(SEND_URL, {
     method: 'POST',
     headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
     body: JSON.stringify({ raw }),
+    signal: AbortSignal.timeout(30000),
   });
   const d = await res.json();
   if (!res.ok) {

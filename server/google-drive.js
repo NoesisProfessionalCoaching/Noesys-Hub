@@ -16,6 +16,52 @@ const NOESYS_ROOT_ID = '1zNO4d1FyUeLBq-Z2KXA9RFojeeDas5IT'; // radice "Noesys" (
 let cachedToken = null;
 let cachedExpiry = 0;
 
+// ── ⏱ TIMEOUT E RITENTATIVO — fetta 2.3 del riordino (04/09/2026) ──────────
+// Fino al 04/09 nessuna chiamata a Drive aveva un limite di tempo e nessuna
+// veniva ritentata: un 503 di un istante faceva saltare la passata intera, e
+// una risposta che non arrivava mai teneva fermo tutto. Qui: ogni chiamata ha
+// un limite, e gli intoppi PASSEGGERI (429, 5xx, rete) si ritentano UNA volta.
+// Gli errori veri (401, 403, 404) si dicono subito: ritentarli sarebbe insistere.
+const TIMEOUT_MS = 25000;
+const segnale = () => AbortSignal.timeout(TIMEOUT_MS);
+const passeggero = (e) => {
+  const st = Number(e && e.status);
+  if (st === 429 || (st >= 500 && st < 600)) return true;
+  // rete: fetch fallita, timeout, connessione caduta
+  return /fetch failed|timeout|TimeoutError|ECONNRESET|ETIMEDOUT|EAI_AGAIN/i.test(String((e && e.name) || '') + ' ' + String((e && e.message) || ''));
+};
+/** Esegue `fn`; se l'errore è passeggero aspetta e riprova una volta sola. */
+async function conRitentativo(fn, { attesaMs = 1500 } = {}) {
+  try { return await fn(); }
+  catch (e) {
+    if (!passeggero(e)) throw e;
+    await new Promise(r => setTimeout(r, attesaMs));
+    return fn();
+  }
+}
+/** Un errore dell'API con dentro lo status, così `passeggero` può leggerlo. */
+const erroreApi = (prefisso, status, dettaglio) => {
+  const e = new Error(prefisso + ' ' + status + ': ' + dettaglio);
+  e.status = status;
+  return e;
+};
+/**
+ * Tutte le pagine di un elenco Drive. `chiedi(token)` restituisce
+ * { files, nextPageToken }: si va avanti finché c'è un segnalibro (con un
+ * tetto, perché un segnalibro che si ripete non deve far girare in tondo).
+ */
+async function raccogliPagine(chiedi, { maxPagine = 50 } = {}) {
+  const tutti = [];
+  let token = undefined;
+  for (let i = 0; i < maxPagine; i++) {
+    const data = (await chiedi(token)) || {};
+    tutti.push(...(data.files || []));
+    if (!data.nextPageToken) break;
+    token = data.nextPageToken;
+  }
+  return tutti;
+}
+
 function missingEnv() {
   return ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_REFRESH_TOKEN']
     .filter(k => !process.env[k]);
@@ -51,21 +97,24 @@ async function getAccessToken() {
 }
 
 // Chiamata autenticata all'API Drive. `endpoint` è il pezzo dopo /drive/v3 (es. '/files?...').
+// In LETTURA: con timeout e un ritentativo sugli intoppi passeggeri (fetta 2.3).
 async function driveFetch(endpoint) {
-  const token = await getAccessToken();
-  const res = await fetch(DRIVE_API + endpoint, {
-    headers: { Authorization: 'Bearer ' + token },
+  return conRitentativo(async () => {
+    const token = await getAccessToken();
+    const res = await fetch(DRIVE_API + endpoint, {
+      headers: { Authorization: 'Bearer ' + token },
+      signal: segnale(),
+    });
+    const data = await res.json();
+    if (!res.ok) throw erroreApi('Drive API', res.status, data.error?.message || 'errore');
+    return data;
   });
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error('Drive API ' + res.status + ': ' + (data.error?.message || 'errore'));
-  }
-  return data;
 }
 
 // Come driveFetch ma in POST con corpo JSON (per creare cartelle: SCRITTURA).
 async function driveFetchPost(endpoint, body) {
   const token = await getAccessToken();
+  // ⏱ timeout sì, ritentativo NO: una scrittura ripetuta farebbe due cartelle.
   const res = await fetch(DRIVE_API + endpoint, {
     method: 'POST',
     headers: {
@@ -73,25 +122,28 @@ async function driveFetchPost(endpoint, body) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(body),
+    signal: segnale(),
   });
   const data = await res.json();
-  if (!res.ok) {
-    throw new Error('Drive API ' + res.status + ': ' + (data.error?.message || 'errore'));
-  }
+  if (!res.ok) throw erroreApi('Drive API', res.status, data.error?.message || 'errore');
   return data;
 }
 
 // Elenca i file/cartelle DENTRO una cartella (per id). Ordinati: prima le cartelle.
+// ⭐ Fetta 2.3: TUTTE le pagine. Prima si leggeva solo la prima (100 elementi):
+//    oltre il 100° file di una cartella i report e i moduli non esistevano.
 async function listChildren(folderId) {
   const q = `'${folderId}' in parents and trashed = false`;
-  const params = new URLSearchParams({
-    q,
-    fields: 'files(id,name,mimeType,modifiedTime)',
-    orderBy: 'folder,name',
-    pageSize: '100',
+  return raccogliPagine(async (pageToken) => {
+    const params = new URLSearchParams({
+      q,
+      fields: 'nextPageToken,files(id,name,mimeType,modifiedTime)',
+      orderBy: 'folder,name',
+      pageSize: '100',
+    });
+    if (pageToken) params.set('pageToken', pageToken);
+    return driveFetch('/files?' + params.toString());
   });
-  const data = await driveFetch('/files?' + params.toString());
-  return data.files || [];
 }
 
 // Verifica di raggiungibilità della radice "Noesys" (usata dalla pagina di diagnosi).
@@ -280,6 +332,7 @@ async function uploadFileToFolder(name, mimeType, buffer, targetFolderId) {
     method: 'POST',
     headers: { Authorization: 'Bearer ' + token, 'Content-Type': `multipart/related; boundary=${boundary}` },
     body,
+    signal: segnale(),   // ⏱ timeout sì, ritentativo no: è una scrittura
   });
   const data = await res.json();
   if (!res.ok) throw new Error('Upload Drive ' + res.status + ': ' + (data.error?.message || 'errore'));
@@ -288,15 +341,19 @@ async function uploadFileToFolder(name, mimeType, buffer, targetFolderId) {
 
 // Scarica i BYTE grezzi di un file (es. un .docx) per estrarne poi il testo.
 async function downloadFileBuffer(fileId) {
-  const token = await getAccessToken();
-  const res = await fetch(DRIVE_API + '/files/' + fileId + '?alt=media', {
-    headers: { Authorization: 'Bearer ' + token },
+  // Una lettura: timeout e un ritentativo (fetta 2.3).
+  return conRitentativo(async () => {
+    const token = await getAccessToken();
+    const res = await fetch(DRIVE_API + '/files/' + fileId + '?alt=media', {
+      headers: { Authorization: 'Bearer ' + token },
+      signal: segnale(),
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => '');
+      throw erroreApi('Download Drive', res.status, t.slice(0, 200));
+    }
+    return Buffer.from(await res.arrayBuffer());
   });
-  if (!res.ok) {
-    const t = await res.text().catch(() => '');
-    throw new Error('Download Drive ' + res.status + ': ' + t.slice(0, 200));
-  }
-  return Buffer.from(await res.arrayBuffer());
 }
 
 // Elimina un file DEFINITIVAMENTE, senza passare dal cestino (scelta di Germano
@@ -309,6 +366,7 @@ async function deleteFileForever(fileId) {
   const res = await fetch(DRIVE_API + '/files/' + fileId + '?supportsAllDrives=true', {
     method: 'DELETE',
     headers: { Authorization: 'Bearer ' + token },
+    signal: segnale(),   // ⏱ timeout sì, ritentativo no
   });
   if (!res.ok && res.status !== 404) {
     const t = await res.text().catch(() => '');
@@ -330,6 +388,7 @@ function folderIdFromUrl(url) {
 
 module.exports = {
   NOESYS_ROOT_ID,
+  TIMEOUT_MS, conRitentativo, raccogliPagine,   // fetta 2.3, provati in prova-automazione
   missingEnv,
   getAccessToken,
   driveFetch,

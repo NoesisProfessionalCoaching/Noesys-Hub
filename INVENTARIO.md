@@ -4,7 +4,7 @@ Non si modifica a mano: lo riscrive `npm run prova`. Se un numero qui non torna 
 
 - `server/routes.js`: **9789 righe**, **15 pagine**, **92 rotte**
 - moduli in `server/`: **25** (7 usano `db.js`, 18 no)
-- prove in `npm run prova`: **15**, in questo ordine: prova-file → prova-js → prova-pagine → prova-fiscale → prova-proforma → prova-tranche → prova-incassi → prova-sedute → prova-appuntamenti → prova-final-programmata → prova-migrazione → prova-barriere → prova-conformita → inventario → prova-timbro
+- prove in `npm run prova`: **16**, in questo ordine: prova-file → prova-js → prova-pagine → prova-fiscale → prova-proforma → prova-tranche → prova-incassi → prova-sedute → prova-appuntamenti → prova-final-programmata → prova-migrazione → prova-barriere → prova-conformita → prova-automazione → inventario → prova-timbro
 
 ## Le pagine (funzioni che finiscono in Page, nell'ordine del file)
 
@@ -151,17 +151,17 @@ Non si modifica a mano: lo riscrive `npm run prova`. Se un numero qui non torna 
 | `db.js` | 1075 | no |
 | `documenti.js` | 112 | no |
 | `fiscale.js` | 501 | no |
-| `google-drive.js` | 358 | no |
+| `google-drive.js` | 417 | no |
 | `incassi.js` | 271 | no |
 | `index.js` | 82 | sì |
 | `logo.js` | 37 | no |
-| `mailer.js` | 80 | no |
+| `mailer.js` | 83 | no |
 | `maturato.js` | 142 | sì |
 | `moduli.js` | 180 | no |
 | `piano-ui.js` | 598 | no |
 | `proforma.js` | 591 | no |
 | `routes.js` | 9789 | sì |
 | `scan-moduli.js` | 215 | sì |
-| `scan.js` | 375 | sì |
+| `scan.js` | 410 | sì |
 | `sedute.js` | 55 | no |
 | `tranche.js` | 279 | no |

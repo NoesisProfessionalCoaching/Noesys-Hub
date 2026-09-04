@@ -26,21 +26,25 @@ function isDocxReport(f) {
 
 // `folderName` è il nome della cartella diretta che contiene il file — serve a estrarre
 // la data della seduta quando le cartelle-data sono nominate `YYYY-MM-DD`.
-async function collectDocx(folderId, tipo, out, folderName) {
+async function collectDocx(folderId, tipo, out, folderName, cartella) {
   const items = await drive.listChildren(folderId);
   for (const it of items) {
-    if (drive.isFolder(it)) await collectDocx(it.id, tipo, out, it.name);
-    else if (isDocxReport(it)) out.push({ id: it.id, name: it.name, tipo, modifiedTime: it.modifiedTime, folderName });
+    if (drive.isFolder(it)) await collectDocx(it.id, tipo, out, it.name, cartella);
+    else if (isDocxReport(it)) out.push({ id: it.id, name: it.name, tipo, modifiedTime: it.modifiedTime, folderName, ...(cartella || {}) });
   }
 }
 
 // Report dentro una cartella-percorso: tipo = nome della sottocartella Intake/Ongoing/Final.
-async function findReportsInPercorso(percorsoFolderId, out) {
+// ⭐ Fetta 2.3: ogni report si porta dietro la cartella-percorso in cui sta
+//    (`percorsoFolderId`, `percorsoFolderName`): è così che finisce nel percorso
+//    giusto e non nell'attivo più recente.
+async function findReportsInPercorso(percorsoFolderId, out, percorsoFolderName) {
   const subs = await drive.listChildren(percorsoFolderId);
+  const cartella = percorsoFolderName ? { percorsoFolderId, percorsoFolderName } : null;
   for (const s of subs) {
     if (!drive.isFolder(s)) continue;
     const tipo = TIPI.find(t => t.toLowerCase() === s.name.toLowerCase());
-    if (tipo) await collectDocx(s.id, tipo, out, s.name);
+    if (tipo) await collectDocx(s.id, tipo, out, s.name, cartella);
   }
 }
 
@@ -50,12 +54,41 @@ async function reportsForClient(folderId) {
   const percorsiFolder = top.find(f => drive.isFolder(f) && f.name.toLowerCase() === 'percorsi');
   if (percorsiFolder) {
     const percorsi = await drive.listChildren(percorsiFolder.id);
-    for (const p of percorsi) if (drive.isFolder(p)) await findReportsInPercorso(p.id, out);
+    for (const p of percorsi) if (drive.isFolder(p)) await findReportsInPercorso(p.id, out, p.name);
   } else {
     // struttura semplificata: Intake/Ongoing/Final direttamente sotto la cartella cliente
     await findReportsInPercorso(folderId, out);
   }
   return out;
+}
+
+/**
+ * A QUALE PERCORSO VA UN REPORT — fetta 2.3 (04/09/2026), pura.
+ * Fino al 04/09 lo scanner prendeva UN percorso per cliente (l'attivo più
+ * recente) ma leggeva le cartelle di TUTTI i percorsi: un report arrivato in
+ * ritardo in un percorso concluso finiva nel percorso nuovo. Ora: prima la
+ * cartella (l'id dentro `drive_url` del percorso), poi il nome della cartella,
+ * poi — come prima — l'attivo più recente. `percorsi` arriva già ordinato
+ * (attivi prima, poi i più recenti).
+ */
+function percorsoPerReport(percorsi, rep) {
+  const lista = percorsi || [];
+  if (!lista.length) return null;
+  const r = rep || {};
+  if (r.percorsoFolderId) {
+    const perId = lista.find(p => drive.folderIdFromUrl(p.drive_url || '') === r.percorsoFolderId);
+    if (perId) return perId;
+  }
+  if (r.percorsoFolderName) {
+    const nome = String(r.percorsoFolderName).trim().toLowerCase();
+    const perNome = lista.find(p => String(p.nome_cartella || p.titolo || '').trim().toLowerCase() === nome);
+    if (perNome) return perNome;
+  }
+  // La regola di prima, senza fidarsi dell'ordine con cui arriva la lista:
+  // l'attivo più recente; se nessuno è attivo, il più recente.
+  const recente = (arr) => arr.slice().sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))[0];
+  const attivi = lista.filter(p => p.stato === 'attivo');
+  return recente(attivi.length ? attivi : lista);
 }
 
 function oreDefault(tipo) { return tipo === 'Intake' ? 2 : tipo === 'Ongoing' ? 1 : 0; }
@@ -169,11 +202,12 @@ async function scanClientReports({ onlyClientId } = {}) {
     const folderId = drive.folderIdFromUrl(cliente.drive_url);
     if (!folderId) { result.errors.push({ cliente: cliente.name, err: 'link Drive non valido' }); continue; }
 
+    // ⭐ Fetta 2.3: TUTTI i percorsi del cliente, e il percorso si sceglie
+    //    REPORT PER REPORT (`percorsoPerReport`), dalla cartella in cui sta.
     const pq = await db.query(
-      "SELECT * FROM percorsi WHERE client_id=$1 ORDER BY (stato='attivo') DESC, created_at DESC LIMIT 1",
+      "SELECT * FROM percorsi WHERE client_id=$1 ORDER BY (stato='attivo') DESC, created_at DESC",
       [cliente.id]);
-    const percorso = pq.rows[0];
-    if (!percorso) { result.errors.push({ cliente: cliente.name, err: 'nessun percorso nell\'Hub' }); continue; }
+    if (!pq.rows.length) { result.errors.push({ cliente: cliente.name, err: 'nessun percorso nell\'Hub' }); continue; }
 
     let reports;
     try { reports = await reportsForClient(folderId); }
@@ -192,9 +226,10 @@ async function scanClientReports({ onlyClientId } = {}) {
         const { value: reportText } = await mammoth.extractRawText({ buffer: buf });
         if (!reportText || !reportText.trim()) throw new Error('Word vuoto o illeggibile');
         const riga = await claude.generaRiga({ tipo: rep.tipo, cliente, reportText, strumentiText });
+        const percorso = percorsoPerReport(pq.rows, rep);
         const { sid, riempita } = await salvaRigaReport({ percorso, cliente, rep, riga });
         done.add(rep.id);
-        result.processed.push({ cliente: cliente.name, tipo: rep.tipo, file: rep.name, sid, riempita });
+        result.processed.push({ cliente: cliente.name, tipo: rep.tipo, file: rep.name, sid, riempita, percorso: percorso.id });
 
       } catch (e) {
         result.errors.push({ cliente: cliente.name, file: rep.name, err: e.message });
@@ -371,4 +406,4 @@ async function scanCollectiveReports({ onlyProjectId } = {}) {
   return result;
 }
 
-module.exports = { scanClientReports, scanProjectReports, scanCollectiveReports, rigaDaRiempire, salvaRigaReport };
+module.exports = { scanClientReports, scanProjectReports, scanCollectiveReports, rigaDaRiempire, salvaRigaReport, percorsoPerReport };
