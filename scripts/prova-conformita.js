@@ -74,5 +74,70 @@ prova('e altrimenti conta i record di collaudo per tipo', true, /8 record di col
 prova('e dice che i non classificati contano come veri', true, /1 record non ancora classificato conta/.test(cart) && /come vero/.test(cart));
 prova('le tre tabelle', ['clients', 'committenti', 'progetti'], Object.values(co.TABELLE));
 
+// ── UNO STRUMENTO NUOVO SI REGISTRA IN SEI PUNTI (fetta 1.1, 04/09/2026) ─────
+// Regola del CLAUDE.md dell'Hub: «Uno strumento nuovo va registrato in sei punti
+// (quattro in Coaching-Tools, due qui). Dimenticarne uno = uno strumento
+// invisibile da qualche parte.» Era una riga di prosa: qui diventa un controllo
+// che legge i SORGENTI. Nell'Hub: l'elenco STRUMENTI e i `case` dell'anteprima
+// (renderSessionData). In Coaching-Tools, se il repo è sul Mac: l'elenco degli
+// strumenti, le famiglie del portale, le etichette in pagina, l'elenco con la
+// descrizione, e il file HTML dello strumento.
+console.log('\n— UNO STRUMENTO NUOVO SI REGISTRA IN SEI PUNTI —');
+const fs = require('fs');
+const path = require('path');
+const HUB_ROUTES = path.join(__dirname, '..', 'server', 'routes.js');
+const TOOLS_REPO = path.join(__dirname, '..', '..', 'Coaching-Tools');
+
+/** Le key dell'elenco STRUMENTI e quelle dei `case` dell'anteprima, lette dal sorgente. */
+function puntiHub(src) {
+  const blocco = (src.match(/const STRUMENTI = \[([\s\S]*?)\];/) || [])[1] || '';
+  const elenco = [...blocco.matchAll(/key:\s*'([\w-]+)'/g)].map(m => m[1]);
+  const corpo = (src.match(/function renderSessionData\([\s\S]*?\n\}\n/) || [])[0] || '';
+  const anteprima = [...corpo.matchAll(/case '([\w-]+)':/g)].map(m => m[1]);
+  return { elenco, anteprima };
+}
+/** Chi manca da dove: vuoto se i due punti dicono le stesse key. */
+function mancantiHub(src) {
+  const { elenco, anteprima } = puntiHub(src);
+  const out = [];
+  for (const k of elenco) if (!anteprima.includes(k)) out.push(`«${k}» è nell'elenco STRUMENTI ma l'anteprima non sa disegnarlo`);
+  for (const k of anteprima) if (!elenco.includes(k)) out.push(`«${k}» ha un'anteprima ma non è nell'elenco STRUMENTI`);
+  if (!elenco.length) out.push('elenco STRUMENTI non trovato nel sorgente');
+  if (!anteprima.length) out.push('i case dell\'anteprima non sono stati trovati nel sorgente');
+  return out;
+}
+const srcHub = fs.readFileSync(HUB_ROUTES, 'utf8');
+const { elenco: keysHub } = puntiHub(srcHub);
+prova('l\'Hub conosce almeno dieci strumenti', true, keysHub.length >= 10);
+prova('nell\'Hub elenco e anteprima dicono le stesse key', [], mancantiHub(srcHub));
+// 🔬 e il controllo sa fallire: un case tolto apposta deve farsi notare
+prova('🔬 rotto apposta: senza il case del genogramma il controllo se ne accorge',
+  ['«genogramma» è nell\'elenco STRUMENTI ma l\'anteprima non sa disegnarlo'],
+  mancantiHub(srcHub.replace("case 'genogramma': {", "{")));
+
+if (fs.existsSync(path.join(TOOLS_REPO, 'server', 'routes.js'))) {
+  const srcTools = fs.readFileSync(path.join(TOOLS_REPO, 'server', 'routes.js'), 'utf8');
+  /** I quattro punti di Coaching-Tools per una key. */
+  function puntiTools(src, k) {
+    const q = k.replace(/[-]/g, '\\-');
+    const elenco = new RegExp(`\\{\\s*key:\\s*'${q}',\\s*label:`).test(src);
+    const famiglia = new RegExp(`keys:\\s*\\[[^\\]]*'${q}'`).test(src);
+    const etichetta = new RegExp(`(?:^|[{,])\\s*'?${q}'?\\s*:\\s*'[^']+'`, 'm').test(src);
+    const descrizione = new RegExp(`key:\\s*'${q}',\\s*label:\\s*'[^']+',\\s*desc:`).test(src);
+    const file = fs.existsSync(path.join(TOOLS_REPO, 'public', 'tools', k + '.html'));
+    return { elenco, famiglia, etichetta, descrizione, file };
+  }
+  const mancanti = [];
+  for (const k of keysHub) {
+    const p = puntiTools(srcTools, k);
+    for (const [nome, ok] of Object.entries(p)) if (!ok) mancanti.push(`«${k}»: manca in Coaching-Tools → ${nome}`);
+  }
+  prova('ogni strumento dell\'Hub è registrato nei quattro punti di Coaching-Tools, col suo file', [], mancanti);
+  prova('🔬 rotto apposta: uno strumento inventato manca ovunque', 5,
+    Object.values(puntiTools(srcTools, 'strumento-inventato')).filter(v => !v).length);
+} else {
+  console.log('   (Coaching-Tools non è su questo Mac: i suoi quattro punti non si controllano qui)');
+}
+
 console.log(falliti ? `\n🔴 ${falliti} prove fallite` : '\n✅ conformità: tutte le prove passano');
 process.exit(falliti ? 1 : 0);

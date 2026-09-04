@@ -92,6 +92,8 @@ niente, ⛔ non si usa «update the image yourself». L'unica cosa che si fa è 
 
 Uno **strumento** nuovo va registrato in **sei punti** (quattro in Coaching-Tools, due qui:
 elenco strumenti e `case` dell'anteprima). Dimenticarne uno = uno strumento invisibile da qualche parte.
+➜ Dal 04/09 lo controlla `npm run prova` (`prova-conformita.js`): legge i sorgenti dei due repo e
+dice quale punto manca. Non serve ricordarselo: serve che la prova passi.
 
 ## 🚀 Pubblicazione
 
