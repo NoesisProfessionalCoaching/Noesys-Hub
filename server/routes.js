@@ -12,6 +12,7 @@ const contrattoTesti = require('./contratto-testi');  // le parole del contratto
 const contrattiStato = require('./contratti-stato'); // gli stati della bozza
 const collaudo = require('./collaudo');               // i record di prova fuori dai numeri (fetta 1.4)
 const chiamaUi = require('./chiama-ui');              // la chiamata che legge la risposta (fetta 2.1)
+const statoUi = require('./stato-ui');                // filtro e sezioni aperte non si perdono (fetta 2.4)
 const documenti = require('./documenti');
 const mailer = require('./mailer');
 const moduli = require('./moduli');
@@ -4389,6 +4390,7 @@ function dashboardPage(clients, req, { individuali = false, tutti = false } = {}
   <div id="toast" style="display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--navy);color:#fff;padding:10px 20px;border-radius:20px;font-size:13px;font-weight:600;z-index:200">Link copiato!</div>
 
   <script>
+    ${statoUi.js()}
     const PLATFORM_URL = ${JSON.stringify(PLATFORM_URL)};
     function filtra() {
       const q = document.getElementById('cerca').value.trim().toLowerCase();
@@ -5949,6 +5951,7 @@ Germano`;
 
   <div id="toast" style="display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--navy);color:#fff;padding:10px 20px;border-radius:20px;font-size:13px;font-weight:600;z-index:200">Fatto!</div>
   <script>
+    ${statoUi.js()}
     ${jsModalePdf()}
     const CID = '${client.id}';
     // Fetta 0.5 (04/09): il percorso di cui la finestrella della Mail 2 apre
@@ -6721,6 +6724,7 @@ function leadsPage(leads, req) {
   </div>
 
   <script>
+    ${statoUi.js()}
     ${chiamaUi.js()}
     function filtra() {
       const q = document.getElementById('cerca').value.trim().toLowerCase();
@@ -7794,6 +7798,7 @@ function committentiPage(committenti, req) {
   </div>
 
   <script>
+    ${statoUi.js()}
     ${collaudo.js()}
     ${chiamaUi.js()}
     const F = ['tipo','denominazione','referente','ruolo','email','telefono','codice_fiscale','partita_iva','indirizzo','note',
@@ -7950,6 +7955,7 @@ function progettiPage(progetti, committenti, req) {
   </div>
 
   <script>
+    ${statoUi.js()}
     const F = ['committente_id','titolo','area','tipo','stato','data_inizio','note','referente_modo','referente_nome','referente_ruolo','referente_email'];
     const ID = { committente_id:'p-committente', titolo:'p-titolo', area:'p-area', tipo:'p-tipo',
       stato:'p-stato', data_inizio:'p-data', note:'p-note',
@@ -8887,6 +8893,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
   <div id="toast" style="display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#223B6E;color:#fff;padding:10px 18px;border-radius:22px;font-size:13px;z-index:200">Link copiato!</div>
 
   <script>
+    ${statoUi.js()}
     const PID = ${JSON.stringify(p.id)};
 
     ${/* ⭐ 15/08 — LA FINESTRELLA DEL PIANO NON STA PIÙ QUI DENTRO.

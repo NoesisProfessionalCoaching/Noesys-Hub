@@ -2,27 +2,27 @@
 
 Non si modifica a mano: lo riscrive `npm run prova`. Se un numero qui non torna con quello che ricordi, è cambiato il codice.
 
-- `server/routes.js`: **9789 righe**, **15 pagine**, **92 rotte**
-- moduli in `server/`: **25** (7 usano `db.js`, 18 no)
+- `server/routes.js`: **9796 righe**, **15 pagine**, **92 rotte**
+- moduli in `server/`: **26** (7 usano `db.js`, 19 no)
 - prove in `npm run prova`: **16**, in questo ordine: prova-file → prova-js → prova-pagine → prova-fiscale → prova-proforma → prova-tranche → prova-incassi → prova-sedute → prova-appuntamenti → prova-final-programmata → prova-migrazione → prova-barriere → prova-conformita → prova-automazione → inventario → prova-timbro
 
 ## Le pagine (funzioni che finiscono in Page, nell'ordine del file)
 
-- `loginPage` (riga 4062)
-- `homePage` (riga 4081)
-- `dashboardPage` (riga 4304)
-- `driveDiagPage` (riga 4458)
-- `clientDetailPage` (riga 4602)
-- `leadsPage` (riga 6624)
-- `anomaliePage` (riga 6823)
-- `proformaPage` (riga 6977)
-- `contrattiAmmPage` (riga 7462)
-- `emittentePage` (riga 7577)
-- `committentiPage` (riga 7673)
-- `progettiPage` (riga 7860)
-- `progettoDettaglioPage` (riga 8215)
-- `cercaPage` (riga 9652)
-- `icfPage` (riga 9734)
+- `loginPage` (riga 4063)
+- `homePage` (riga 4082)
+- `dashboardPage` (riga 4305)
+- `driveDiagPage` (riga 4460)
+- `clientDetailPage` (riga 4604)
+- `leadsPage` (riga 6627)
+- `anomaliePage` (riga 6827)
+- `proformaPage` (riga 6981)
+- `contrattiAmmPage` (riga 7466)
+- `emittentePage` (riga 7581)
+- `committentiPage` (riga 7677)
+- `progettiPage` (riga 7865)
+- `progettoDettaglioPage` (riga 8221)
+- `cercaPage` (riga 9659)
+- `icfPage` (riga 9741)
 
 ## Le rotte, per mondo
 
@@ -160,8 +160,9 @@ Non si modifica a mano: lo riscrive `npm run prova`. Se un numero qui non torna 
 | `moduli.js` | 180 | no |
 | `piano-ui.js` | 598 | no |
 | `proforma.js` | 591 | no |
-| `routes.js` | 9789 | sì |
+| `routes.js` | 9796 | sì |
 | `scan-moduli.js` | 215 | sì |
 | `scan.js` | 410 | sì |
 | `sedute.js` | 55 | no |
+| `stato-ui.js` | 59 | no |
 | `tranche.js` | 279 | no |
