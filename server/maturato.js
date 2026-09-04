@@ -84,11 +84,12 @@ async function daChiedere(clientId) {
   // I nomi si prendono dopo, in una volta sola: la query dei soldi non deve
   // portarsi dietro anche l'anagrafica per poi ripeterla su ogni riga.
   const nomi = await db.query(
-    'SELECT id, name, email FROM clients WHERE id = ANY($1::text[])', [[...per.keys()]]);
+    'SELECT id, name, email, di_collaudo FROM clients WHERE id = ANY($1::text[])', [[...per.keys()]]);
   for (const r of nomi.rows) {
     const c = per.get(r.id);
     c.name = r.name || '';
     c.email = r.email || '';
+    c.di_collaudo = r.di_collaudo;   // ⚗️ fetta 1.4: il cartellino nelle liste di lavoro
   }
 
   const out = [...per.values()];

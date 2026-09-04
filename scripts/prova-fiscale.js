@@ -152,7 +152,7 @@ prova('tutto a posto → elenco vuoto',
     clienti: [{ id: 'c1', nome: 'Mario', cognome: 'Rossi', ...base, codice_fiscale: 'X' }],
     committenti: [], progetti: [] }));
 prova('un cliente a cui manca il codice fiscale finisce nell’elenco, col suo nome',
-  [{ tipo: 'dati_cliente', ruolo: 'cliente', id: 'c1', nome: 'Mario Rossi',
+  [{ tipo: 'dati_cliente', ruolo: 'cliente', id: 'c1', collaudo: false, nome: 'Mario Rossi',
      messaggio: 'Manca: codice fiscale' }],
   f.anomalie({ clienti: [{ id: 'c1', nome: 'Mario', cognome: 'Rossi', ...base }] }));
 prova('un committente incompleto finisce nell’elenco come committente, non come cliente',

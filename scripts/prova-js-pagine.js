@@ -72,6 +72,7 @@ const daiModuli = [
   { nome: 'piano-ui.js — la finestrella del piano',
     codice: () => pianoUi.js({ piani: [], dataFirma: '2026-01-01', quotaPerPagatore: true }) },
   { nome: 'piano-ui.js — la finestrella dell’incasso', codice: () => pianoUi.jsIncasso() },
+  { nome: 'collaudo.js — l’interruttore vero/di collaudo', codice: () => require('../server/collaudo').js() },
 ];
 // ⚠️ Qui il codice arriva GIÀ come lo vedrà il browser: le interpolazioni sono
 // state risolte da JavaScript e gli escape sono già sciolti. Passarci sopra i

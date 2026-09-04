@@ -762,6 +762,70 @@ const chiama = async (metodo, url, corpo) => {
     //    permesso (la rotta guarda solo «non già annullata»). È la fetta 0.2
     //    (cancellazioni guardate), rimandata a ottobre per decisione di Germano.
 
+    // ══ Fetta 1.4 (04/09/2026) — I DATI DI COLLAUDO NON ENTRANO NEI NUMERI ═════
+    // Decisioni di Germano («1a, 2a, 3a»): i record di collaudo escono dai numeri
+    // e dai totali ma restano nelle liste di lavoro col cartellino; un record mai
+    // classificato conta come vero e la home lo dice; si classifica dall'Hub.
+    // Il cliente, il committente e il progetto di questa prova sono nati oggi dai
+    // pulsanti, quindi NON classificati: devono contare come veri, e la home deve
+    // dirlo. Poi si segnano di collaudo e devono sparire dai numeri, dall'Estratto
+    // ICF (che non può contenere ore di persone inventate) ma non dalle liste.
+    console.log('\n20c. ⚗️ I dati di collaudo non entrano nei numeri (fetta 1.4)');
+    const porte = (html) => [...html.matchAll(/hm-porta-num">(\d+)</g)].map(m => Number(m[1]));
+    let home = await chiama('GET', '/dashboard');
+    let [nInd, nProg] = porte(home.testo);
+    dice(home.stato === 200 && nInd > 0 && nProg > 0, 'la home conta i clienti e i progetti', home.stato + ' ' + JSON.stringify(porte(home.testo)));
+    dice(/record non ancora classificat/.test(home.testo), '  e dice che ci sono record non ancora classificati (i tre di questa prova)');
+    r = await chiama('GET', '/dashboard/icf');
+    dice(r.stato === 200 && r.testo.includes('D&#39;Amico ' + marca), 'l\'Estratto ICF contiene il cliente (ha ore fatte sul percorso Standard)', r.stato);
+    r = await chiama('GET', `/dashboard/clients/${idCli}`);
+    dice(r.testo.includes('non classificato') && r.testo.includes(`segnaCollaudo('cliente','${idCli}',true)`), 'la scheda del cliente ha l\'interruttore, e lo dice «non classificato»');
+
+    // si segnano tutti e tre di collaudo, dall'Hub
+    for (const [tipo, id] of [['cliente', idCli], ['committente', idComm], ['progetto', idProg]]) {
+      r = await chiama('POST', '/dashboard/collaudo', { tipo, id, di_collaudo: true });
+      dice(r.stato === 200, `il ${tipo} si segna di collaudo`, r.stato + ' ' + r.testo.slice(0, 100));
+    }
+    const dc = await db.query('SELECT (SELECT di_collaudo FROM clients WHERE id=$1) c, (SELECT di_collaudo FROM committenti WHERE id=$2) k, (SELECT di_collaudo FROM progetti WHERE id=$3) p', [idCli, idComm, idProg]);
+    dice(dc.rows[0].c === true && dc.rows[0].k === true && dc.rows[0].p === true, '  e nel database sono TRUE tutti e tre');
+    home = await chiama('GET', '/dashboard');
+    const [nInd2, nProg2] = porte(home.testo);
+    dice(nInd2 === nInd - 1 && nProg2 === nProg - 1, `🔴 la home ora conta uno in meno: clienti ${nInd}→${nInd2}, progetti ${nProg}→${nProg2}`, JSON.stringify(porte(home.testo)));
+    dice(/record di collaudo/.test(home.testo) && /non entra/.test(home.testo), '  e il cartello dice che ci sono record di collaudo fuori dai numeri');
+    r = await chiama('GET', '/dashboard/icf');
+    dice(r.stato === 200 && !r.testo.includes('D&#39;Amico ' + marca), '🔴 l\'Estratto ICF non lo contiene più', r.stato);
+    r = await chiama('GET', '/dashboard/icf/export.csv');
+    dice(r.stato === 200 && !r.testo.includes(marca), '  e nemmeno il CSV');
+    r = await chiama('GET', '/dashboard/individuali?tutti=1');
+    dice(r.testo.includes('D&#39;Amico ' + marca) && r.testo.includes('⚗️ di collaudo'), 'nell\'elenco clienti resta, col cartellino');
+    r = await chiama('GET', '/dashboard/committenti');
+    dice(r.testo.includes(marca) && r.testo.includes('⚗️ di collaudo') && r.testo.includes(`segnaCollaudo('committente','${idComm}',false)`), 'nell\'elenco committenti resta, col cartellino e l\'interruttore per tornare vero');
+    r = await chiama('GET', '/dashboard/progetti');
+    dice(r.testo.includes(marca) && r.testo.includes('⚗️ di collaudo'), 'nell\'elenco progetti resta, col cartellino');
+    r = await chiama('GET', `/dashboard/progetti/${idProg}`);
+    dice(r.testo.includes(`segnaCollaudo('progetto','${idProg}',false)`), 'la pagina del progetto ha l\'interruttore per tornare vero');
+    r = await chiama('GET', '/dashboard/amministrazione/proforma');
+    dice(r.testo.includes('⚗️ di collaudo'), 'la pagina Proforma mostra il cartellino sui documenti del cliente di collaudo');
+    r = await chiama('GET', '/dashboard/amministrazione');
+    dice(r.stato === 200, 'le anomalie rispondono 200', r.stato);
+
+    // torna vero: i numeri risalgono
+    r = await chiama('POST', '/dashboard/collaudo', { tipo: 'cliente', id: idCli, di_collaudo: false });
+    dice(r.stato === 200, 'il cliente torna vero', r.stato);
+    home = await chiama('GET', '/dashboard');
+    dice(porte(home.testo)[0] === nInd, `  e la home lo riconta (${nInd})`, JSON.stringify(porte(home.testo)));
+    r = await chiama('GET', `/dashboard/clients/${idCli}`);
+    dice(!r.testo.includes('non classificato') && r.testo.includes('segna come di collaudo'), '  e la scheda propone «segna come di collaudo»');
+    r = await chiama('POST', '/dashboard/collaudo', { tipo: 'cliente', id: idCli, di_collaudo: true });
+
+    // 🔬 rifiuti
+    r = await chiama('POST', '/dashboard/collaudo', { tipo: 'lead', id: idCli, di_collaudo: true });
+    dice(r.stato === 400, '🔬 un tipo che non ha la colonna: 400', 'ha risposto ' + r.stato);
+    r = await chiama('POST', '/dashboard/collaudo', { tipo: 'cliente', id: idCli, di_collaudo: 'forse' });
+    dice(r.stato === 400, '🔬 un valore che non è vero/falso: 400', 'ha risposto ' + r.stato);
+    r = await chiama('POST', '/dashboard/collaudo', { tipo: 'cliente', id: '00000000-0000-0000-0000-000000000000', di_collaudo: true });
+    dice(r.stato === 404, '🔬 un record che non esiste: 404', 'ha risposto ' + r.stato);
+
     console.log('\n21. 🔬 Adesso la rompo apposta');
     for (const [corpo, et] of [
       [{ tipo: 'boh',         soggetto_id: idProg, stato: 'da_inviare' }, 'un tipo inventato'],

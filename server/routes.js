@@ -10,6 +10,7 @@ const scanModuli = require('./scan-moduli');
 const contratto = require('./contratto');            // l'impaginatore: disegna le pagine
 const contrattoTesti = require('./contratto-testi');  // le parole del contratto
 const contrattiStato = require('./contratti-stato'); // gli stati della bozza
+const collaudo = require('./collaudo');               // i record di prova fuori dai numeri (fetta 1.4)
 const documenti = require('./documenti');
 const mailer = require('./mailer');
 const moduli = require('./moduli');
@@ -150,6 +151,23 @@ router.get('/dashboard/individuali', requireCoach, async (req, res) => {
   }
 });
 
+// ── ⚗️ Vero o di collaudo — fetta 1.4 (04/09/2026) ───────────────────────────
+// Una rotta per le tre tabelle. Decisione 3 di Germano: si classifica dall'Hub,
+// non più a mano nel codice a ogni record nuovo. Non passa dal congelamento del
+// progetto: dire «è di prova» non cambia niente di ciò che il contratto scrive.
+router.post('/dashboard/collaudo', requireCoach, express.json(), async (req, res) => {
+  const { tipo, id, di_collaudo: v } = req.body || {};
+  const tabella = collaudo.TABELLE[tipo];
+  if (!tabella) return res.status(400).json({ error: 'Questo tipo di record non si classifica.' });
+  if (v !== true && v !== false) return res.status(400).json({ error: 'Dire solo se è vero (false) o di collaudo (true).' });
+  if (!id) return res.status(400).json({ error: 'Manca il record.' });
+  try {
+    const r = await db.query(`UPDATE ${tabella} SET di_collaudo = $2 WHERE id = $1 RETURNING id`, [String(id), v]);
+    if (!r.rows.length) return res.status(404).json({ error: 'Record non trovato.' });
+    res.json({ ok: true, di_collaudo: v });
+  } catch (err) { console.error('[collaudo]', err); res.status(500).json({ error: 'Errore' }); }
+});
+
 // ── HOME (Fase 2) ────────────────────────────────────────────────────────────
 // Tre porte + ciò che chiede attenzione. Niente elenco clienti: quello vive nella
 // sua pagina (decisione di Germano 28/07). Nasce su /dashboard/home e diventerà la
@@ -160,15 +178,19 @@ async function mostraHome(req, res) {
     // ⚠️ `appRows` e non `appuntamenti`: qui dentro si chiama il modulo
     // `appuntamenti`, e una variabile con lo stesso nome — anche se assegnata
     // dopo — lo renderebbe irraggiungibile già mentre si compone questa lista.
+    // ⚗️ Fetta 1.4 (04/09): i NUMERI tengono fuori i record di collaudo
+    //    (`collaudo.filtro`); NULL conta come vero. Le liste qui sotto no: quelle
+    //    sono lavoro, e il cartellino dice chi è di prova.
     const [ind, prog, comm, lead, bozze, daChiudere, azioni, richiami, appRows,
-           anagrafiche, documenti] = await Promise.all([
+           anagrafiche, documenti, classif] = await Promise.all([
       db.query(`SELECT count(*)::int n FROM clients c
-                 WHERE EXISTS (SELECT 1 FROM percorsi pi WHERE pi.client_id = c.id AND pi.progetto_id IS NULL)
+                 WHERE ${collaudo.filtro('c')}
+                   AND (EXISTS (SELECT 1 FROM percorsi pi WHERE pi.client_id = c.id AND pi.progetto_id IS NULL)
                     OR NOT EXISTS (SELECT 1 FROM percorsi pt WHERE pt.client_id = c.id
                          OR EXISTS (SELECT 1 FROM percorso_partecipanti ppt
-                                     WHERE ppt.percorso_id = pt.id AND ppt.client_id = c.id))`),
-      db.query(`SELECT count(*)::int n, count(*) FILTER (WHERE stato='attivo')::int attivi FROM progetti`),
-      db.query(`SELECT count(*)::int n FROM committenti`),
+                                     WHERE ppt.percorso_id = pt.id AND ppt.client_id = c.id)))`),
+      db.query(`SELECT count(*)::int n, count(*) FILTER (WHERE p.stato='attivo')::int attivi FROM progetti p WHERE ${collaudo.filtro('p')}`),
+      db.query(`SELECT count(*)::int n FROM committenti k WHERE ${collaudo.filtro('k')}`),
       db.query(`SELECT count(*)::int n, count(*) FILTER (WHERE stato <> 'convertito')::int aperti FROM leads`),
       // Sessioni in bozza: possono essere di un cliente o di un percorso di gruppo.
       db.query(`SELECT s.id, s.data, cl.id AS client_id, cl.name AS cliente,
@@ -237,6 +259,11 @@ async function mostraHome(req, res) {
         HAVING COUNT(ml.id) FILTER (WHERE ml.esito <> 'in bianco') = 0
             OR c.consenso_privacy IS NOT TRUE
          ORDER BY c.name`),
+      // Quanti sono di collaudo e quanti mai classificati: il cartello della home.
+      db.query(`SELECT
+          (SELECT count(*) FROM clients     WHERE di_collaudo IS TRUE)::int c_prova, (SELECT count(*) FROM clients     WHERE di_collaudo IS NULL)::int c_boh,
+          (SELECT count(*) FROM committenti WHERE di_collaudo IS TRUE)::int k_prova, (SELECT count(*) FROM committenti WHERE di_collaudo IS NULL)::int k_boh,
+          (SELECT count(*) FROM progetti    WHERE di_collaudo IS TRUE)::int p_prova, (SELECT count(*) FROM progetti    WHERE di_collaudo IS NULL)::int p_boh`),
     ]);
 
     // ── Proforma create e non ancora spedite (13/08) ──────────────────────────
@@ -246,7 +273,7 @@ async function mostraHome(req, res) {
     // tre settimane. Chi decide cos'è «ferma» è `proforma.daMandare`.
     const fermeRows = await db.query(
       `SELECT pf.id, pf.numero, pf.data_emissione, pf.da_pagare, pf.drive_url, pf.stato,
-              c.id AS client_id,
+              c.id AS client_id, COALESCE(c.di_collaudo, k.di_collaudo) AS di_collaudo,
               -- ⚠️ 17/08: chi riceve puo essere un COMMITTENTE. Il nome si legge
               -- dalla fotografia congelata nel documento, sempre giusta.
               COALESCE(pf.destinatario_dati->>'denominazione', c.name, k.denominazione) AS cliente
@@ -268,6 +295,7 @@ async function mostraHome(req, res) {
     // fa sparire la riga, la fa dire quanto manca ancora.
     const attesaRows = await db.query(
       `SELECT pf.id, pf.numero, pf.stato, pf.scadenza, pf.data_emissione, pf.da_pagare,
+              COALESCE(c.di_collaudo, k.di_collaudo) AS di_collaudo,
               COALESCE(pf.destinatario_dati->>'denominazione', c.name, k.denominazione) AS cliente,
               COALESCE((SELECT SUM(i.importo) FROM incassi i
                          WHERE i.proforma_id = pf.id), 0) AS incassato
@@ -301,7 +329,7 @@ async function mostraHome(req, res) {
         const mesi  = c.mesi.filter(m => m.mese <= finestra.meseLimite);
         const bozze = c.bozze.filter(b => b.mese <= finestra.meseLimite);
         return {
-          id: c.id, name: c.name, mesi, bozze,
+          id: c.id, name: c.name, di_collaudo: c.di_collaudo, mesi, bozze,
           importo: mesi.reduce((s, m) => s + m.importo, 0),
           n: mesi.reduce((s, m) => s + m.n, 0),
           nBozze: bozze.reduce((s, b) => s + b.n, 0),
@@ -320,6 +348,10 @@ async function mostraHome(req, res) {
       nProgetti: prog.rows[0].n, nProgettiAttivi: prog.rows[0].attivi,
       nCommittenti: comm.rows[0].n,
       nLead: lead.rows[0].n, nLeadAperti: lead.rows[0].aperti,
+      classificazione: {
+        collaudo:       { clienti: classif.rows[0].c_prova, committenti: classif.rows[0].k_prova, progetti: classif.rows[0].p_prova },
+        nonClassificati:{ clienti: classif.rows[0].c_boh,   committenti: classif.rows[0].k_boh,   progetti: classif.rows[0].p_boh },
+      },
       bozze: bozze.rows, daChiudere: daChiudere.rows,
       azioni: azioni.rows, richiami: richiami.rows,
       appuntamenti: appRows,
@@ -1952,8 +1984,10 @@ async function loadIcf() {
     SELECT p.*, c.name AS client_name, c.email, c.telefono
     FROM percorsi p
     JOIN clients c ON c.id = p.client_id
-    WHERE COALESCE(p.ore_fatte, 0) > 0
-       OR EXISTS (SELECT 1 FROM sedute s WHERE s.percorso_id = p.id AND s.stato <> 'bozza')
+    -- ⚗️ Fetta 1.4: l'Estratto ICF non può contenere ore di persone inventate.
+    WHERE ${collaudo.filtro('c')}
+      AND (COALESCE(p.ore_fatte, 0) > 0
+       OR EXISTS (SELECT 1 FROM sedute s WHERE s.percorso_id = p.id AND s.stato <> 'bozza'))
     ORDER BY c.name, p.data_inizio NULLS LAST, p.created_at
   `);
   const rows = result.rows.map(p => {
@@ -2199,7 +2233,10 @@ router.get('/dashboard/amministrazione', requireCoach, async (req, res) => {
     ]);
     res.send(anomaliePage(
       fiscale.anomalie({ clienti: cl.rows, committenti: km.rows, progetti: pj.rows }),
-      { nClienti: cl.rows.length, nCommittenti: km.rows.length, nProgetti: pj.rows.length },
+      // ⚗️ Fetta 1.4: i conteggi non contano i record di collaudo; le righe restano.
+      { nClienti: cl.rows.filter(x => x.di_collaudo !== true).length,
+        nCommittenti: km.rows.filter(x => x.di_collaudo !== true).length,
+        nProgetti: pj.rows.filter(x => x.di_collaudo !== true).length },
       req));
   } catch (err) {
     console.error('[anomalie]', err);
@@ -2805,6 +2842,7 @@ router.get('/dashboard/amministrazione/proforma', requireCoach, async (req, res)
       db.query(`SELECT pf.*,
                        COALESCE(pf.destinatario_dati->>'denominazione',
                                 c.name, k.denominazione) AS cliente_nome,
+                       COALESCE(c.di_collaudo, k.di_collaudo) AS di_collaudo,
                        COALESCE(c.email, k.email) AS cliente_email,
                        -- ⭐ C4 — quanto è stato incassato su ogni documento. Da
                        -- qui si ricava «saldata», che nessuno spunta a mano.
@@ -4122,7 +4160,7 @@ function homePage(d, req) {
       ? `<strong style="color:var(--ink)">€ ${fiscale.euro(c.importo)}</strong>`
       : 'da approvare';
     return voce(`/dashboard/clients/${c.id}`,
-      `${esc(c.name)} <span style="color:var(--hint);text-transform:capitalize">${mesi}</span>${bozze}`,
+      `${esc(c.name)} ${collaudo.badge(c.di_collaudo)} <span style="color:var(--hint);text-transform:capitalize">${mesi}</span>${bozze}`,
       coda);
   }));
 
@@ -4137,7 +4175,7 @@ function homePage(d, req) {
     const insiste = p.giorni !== null && p.giorni >= proforma.GIORNI_FERMA;
     const quanto  = proforma.daQuantoFerma(p.giorni);
     return voce('/dashboard/amministrazione/proforma',
-      `${esc(p.cliente || 'Destinatario cancellato')} <span style="color:var(--hint)">· ${esc(p.numero)}</span>`,
+      `${esc(p.cliente || 'Destinatario cancellato')} ${collaudo.badge(p.di_collaudo)} <span style="color:var(--hint)">· ${esc(p.numero)}</span>`,
       `<span style="color:${insiste ? '#a4342a' : 'var(--hint)'};${insiste ? 'font-weight:700' : ''}">${quanto}</span>
        <strong style="color:var(--ink);margin-left:10px">€ ${fiscale.euro(p.da_pagare)}</strong>`);
   }));
@@ -4157,7 +4195,7 @@ function homePage(d, req) {
     const parziale = p.acconto > 0
       ? `<span style="color:var(--hint)"> · acconto di € ${fiscale.euro(p.acconto)} ricevuto</span>` : '';
     return voce('/dashboard/amministrazione/proforma',
-      `${esc(p.cliente || 'Destinatario cancellato')} <span style="color:var(--hint)">· ${esc(p.numero)}</span>${parziale}`,
+      `${esc(p.cliente || 'Destinatario cancellato')} ${collaudo.badge(p.di_collaudo)} <span style="color:var(--hint)">· ${esc(p.numero)}</span>${parziale}`,
       `<span style="color:${insiste ? '#a4342a' : 'var(--hint)'};${insiste ? 'font-weight:700' : ''}">${quanto}</span>
        <strong style="color:var(--ink);margin-left:10px">€ ${fiscale.euro(p.manca)}</strong>`);
   }));
@@ -4188,6 +4226,8 @@ function homePage(d, req) {
                 d.nLeadAperti === 1 ? 'da coltivare' : 'da coltivare',
                 'Chi ti ha contattato e non è ancora un cliente.')}
       </div>
+      ${/* ⚗️ Fetta 1.4: chi è tenuto fuori dai tre numeri, e chi non è ancora classificato. */ ''}
+      ${collaudo.cartello(d.classificazione || { collaudo: {}, nonClassificati: {} })}
     </section>
 
     <section class="hm-att">
@@ -4279,7 +4319,7 @@ function dashboardPage(clients, req, { individuali = false, tutti = false } = {}
         ? `${esc(c.p_tipo)} · ${sess} ${sess === 1 ? 'sessione' : 'sessioni'}${ore > 0 ? ` · ${fmtOre(ore)} h` : ''}${c.p_stato !== 'attivo' ? ` · <span style="color:#999">concluso</span>` : ''}${daChiudere ? `<br><span class="badge" style="background:#fff8dc;color:#7a5c00" title="La relazione è conclusa ma il percorso risulta ancora attivo">⚠ percorso da chiudere</span>` : ''}${c.p_progetto_titolo ? `<br><span class="badge" style="background:#e8f4fd;color:#1A5280">📁 ${esc(c.p_progetto_titolo)}</span>` : ''}`
         : '<span style="color:#ccc">—</span>';
       return `<tr onclick="location.href='/dashboard/clients/${c.id}'" style="cursor:pointer">
-        <td><strong>${esc(c.name)}</strong>${c.email ? `<br><span style="color:#aaa;font-size:11px">${esc(c.email)}</span>` : ''}</td>
+        <td><strong>${esc(c.name)}</strong> ${collaudo.badge(c.di_collaudo)}${c.email ? `<br><span style="color:#aaa;font-size:11px">${esc(c.email)}</span>` : ''}</td>
         <td><span class="badge" style="background:${ac}18;color:${ac}">${area}</span></td>
         <td><span class="badge ${st.cls}">${st.label}</span></td>
         <td style="font-size:12px">${percorso}</td>
@@ -5461,6 +5501,7 @@ Germano`;
         <h1 style="margin:0">${esc(client.name)}</h1>
         <span class="badge" style="background:${ac}18;color:${ac}">${area}</span>
         <span class="badge ${st.cls}">${st.label}</span>
+        <span style="margin-left:auto">${collaudo.interruttore('cliente', client.id, client.di_collaudo)}</span>
         ${/* Qui stava il bollino «🔒 Accesso off»: tolto il 31/07 insieme
               all'interruttore generale che rappresentava. Non spiegava niente e
               soprattutto non esiste più niente da rappresentare — chi entra lo
@@ -6076,6 +6117,7 @@ Germano`;
       }
       location.reload();
     }
+    ${collaudo.js()}
     // Fetta 6a — muove lo stato della bozza di contratto. Stessa rotta della card
     // del progetto: una sola porta per tutti e tre i tipi di contratto.
     // ⚠️ Qui il tipo è sempre 'cliente' e non congela niente: le specifiche di
@@ -6791,7 +6833,7 @@ function anomaliePage(anomalie, conteggi, req) {
     <div class="card" style="padding:0;overflow:hidden;margin-bottom:14px">
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:14px 18px;border-bottom:1px solid var(--line);background:#fdfcf7">
         <span class="badge" style="background:${r.bg};color:${r.color}">${r.label}</span>
-        <a href="${r.href(g)}" style="font-size:16px;font-weight:700;color:var(--blue);text-decoration:none">${esc(g.nome || '(senza nome)')}</a>
+        <a href="${r.href(g)}" style="font-size:16px;font-weight:700;color:var(--blue);text-decoration:none">${esc(g.nome || '(senza nome)')}</a> ${collaudo.badge(g.collaudo)}
         <span style="font-size:12px;color:var(--hint);margin-left:auto">${g.voci.length} ${g.voci.length === 1 ? 'cosa da sistemare' : 'cose da sistemare'}</span>
       </div>
       ${g.voci.map(v => `
@@ -6980,7 +7022,7 @@ function proformaPage(daChiedere, proforme, req) {
     return `
       <div class="card" style="margin-bottom:14px">
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:2px">
-          <a href="/dashboard/clients/${c.id}" style="font-size:16px;font-weight:700;color:var(--blue);text-decoration:none">${esc(c.name || '(senza nome)')}</a>
+          <a href="/dashboard/clients/${c.id}" style="font-size:16px;font-weight:700;color:var(--blue);text-decoration:none">${esc(c.name || '(senza nome)')}</a> ${collaudo.badge(c.di_collaudo)}
           ${c.nSessioni ? `<strong style="margin-left:auto;font-size:16px">${eur(c.totale)}</strong>` : ''}
         </div>
         ${mesi}${bozze}${azione}
@@ -7014,7 +7056,7 @@ function proformaPage(daChiedere, proforme, req) {
         <div>
           ${linkPdf(p, "font-size:16px;font-weight:700;color:var(--blue);text-decoration:none")}
           <div style="font-size:13px;color:var(--muted)">
-            ${esc(p.cliente_nome || '(destinatario cancellato)')} · ${p.data_emissione ? itDate(p.data_emissione) : ''}
+            ${esc(p.cliente_nome || '(destinatario cancellato)')} ${collaudo.badge(p.di_collaudo)} · ${p.data_emissione ? itDate(p.data_emissione) : ''}
           </div>
         </div>
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-left:auto">
@@ -7055,7 +7097,7 @@ function proformaPage(daChiedere, proforme, req) {
         <div>
           ${linkPdf(p, "font-size:16px;font-weight:700;color:var(--blue);text-decoration:none")}
           <div style="font-size:13px;color:var(--muted)">
-            ${esc(p.cliente_nome || '(destinatario cancellato)')}
+            ${esc(p.cliente_nome || '(destinatario cancellato)')} ${collaudo.badge(p.di_collaudo)}
             ${scad ? ' · scadenza ' + itDate(scad)
                    : ' · <span style="color:var(--hint)">scadenza non ancora nota</span>'}
             ${preso > 0 ? ` · <strong>acconto di ${eur(preso)} ricevuto</strong>` : ''}
@@ -7088,7 +7130,7 @@ function proformaPage(daChiedere, proforme, req) {
         <div>
           ${linkPdf(p, "font-size:16px;font-weight:700;color:var(--blue);text-decoration:none")}
           <div style="font-size:13px;color:var(--muted)">
-            ${esc(p.cliente_nome || '(destinatario cancellato)')}
+            ${esc(p.cliente_nome || '(destinatario cancellato)')} ${collaudo.badge(p.di_collaudo)}
             ${quando ? ' · incassata il ' + itDate(quando) : ''}
             ${mese ? ` · <strong>fattura di ${mese}</strong>` : ''}
           </div>
@@ -7131,7 +7173,7 @@ function proformaPage(daChiedere, proforme, req) {
       <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 0;border-top:1px solid #f1f3f6;flex-wrap:wrap">
         <div>
           ${linkPdf(p, "font-weight:700;color:var(--blue);text-decoration:none")}
-          <span style="font-size:13px;color:var(--muted);margin-left:8px">${esc(p.cliente_nome || '—')}</span>
+          <span style="font-size:13px;color:var(--muted);margin-left:8px">${esc(p.cliente_nome || '—')} ${collaudo.badge(p.di_collaudo)}</span>
           <div style="font-size:12px;color:var(--hint);margin-top:2px">
             ${quando ? 'incassata il ' + itDate(quando) : 'mandata' + (p.inviata_data ? ' il ' + itDateTime(p.inviata_data) : '')}
           </div>
@@ -7161,7 +7203,7 @@ function proformaPage(daChiedere, proforme, req) {
       <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 0;border-top:1px solid #f1f3f6;flex-wrap:wrap">
         <div>
           ${linkPdf(p, "font-weight:700;color:var(--hint);text-decoration:none")}
-          <span style="font-size:13px;color:var(--hint);margin-left:8px">${esc(p.cliente_nome || '—')}</span>
+          <span style="font-size:13px;color:var(--hint);margin-left:8px">${esc(p.cliente_nome || '—')} ${collaudo.badge(p.di_collaudo)}</span>
         </div>
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
           <span style="font-size:13px;color:var(--hint)">${eur(p.da_pagare)}</span>
@@ -7648,6 +7690,7 @@ function committentiPage(committenti, req) {
     return `<tr>
       <td><strong>${esc(k.denominazione)}</strong>
         ${k.referente ? `<br><span style="font-size:11px;color:#aaa">${esc(k.referente)}${k.ruolo ? ' — '+esc(k.ruolo) : ''}</span>` : ''}
+        <div style="margin-top:4px">${collaudo.interruttore('committente', k.id, k.di_collaudo)}</div>
       </td>
       <td><span class="badge" style="background:${tc.bg};color:${tc.color}">${tc.label}</span></td>
       <td style="font-size:12px;color:#4a5568">
@@ -7746,6 +7789,7 @@ function committentiPage(committenti, req) {
   </div>
 
   <script>
+    ${collaudo.js()}
     const F = ['tipo','denominazione','referente','ruolo','email','telefono','codice_fiscale','partita_iva','indirizzo','note',
                'regime','natura_giuridica','cap','citta','provincia','pec','codice_sdi','paese','identificativo_estero'];
     const ID = { tipo:'c-tipo', denominazione:'c-denominazione', referente:'c-referente', ruolo:'c-ruolo',
@@ -7824,7 +7868,7 @@ function progettiPage(progetti, committenti, req) {
     const ac = AREA_COL[p.area] || '#1A5280';
     const n = Number(p.n_coachee) || 0;
     return `<tr onclick="location.href='/dashboard/progetti/${p.id}'" style="cursor:pointer">
-      <td><strong>${esc(p.titolo)}</strong>
+      <td><strong>${esc(p.titolo)}</strong> ${collaudo.badge(p.di_collaudo)}
         <br><span style="font-size:11px;color:#aaa">${esc(p.committente_nome)}</span>
       </td>
       <td><span class="badge" style="background:${ac}18;color:${ac}">${esc(p.area)}</span></td>
@@ -8511,6 +8555,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
   <div class="container">
     <div style="margin-bottom:18px">
       <h1>${esc(p.titolo)}</h1>
+      <div style="margin:2px 0 6px">${collaudo.interruttore('progetto', p.id, p.di_collaudo)}</div>
       <p style="color:#aaa;font-size:13px">Committente: <strong style="color:var(--ink)">${esc(p.committente_nome)}</strong>${p.committente_email ? ` · ${esc(p.committente_email)}` : ''}</p>
       <p style="color:#aaa;font-size:13px">Referente: <strong style="color:var(--ink)">${
         (p.referente_modo || 'sponsor') === 'altra'
@@ -8929,6 +8974,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
     // Fetta 4 — quante sessioni prevede il percorso condiviso. Fino al 29/08
     // quel numero non si poteva cambiare da nessuna schermata: nasceva a 8 (il
     // valore di riserva del database) e restava 8 per sempre.
+    ${collaudo.js()}
     // Fetta 6a — muove lo stato di una bozza di contratto.
     // ⚠️ Approvare il contratto del COMMITTENTE congela le specifiche del
     //    progetto: è l'unico passaggio che si fa confermare, perché è l'unico

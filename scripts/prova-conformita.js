@@ -61,5 +61,18 @@ if (typeof ammesso === 'function') {
   prova('⛔ da uno stato inventato non si parte', false, ammesso('firmata', 'da_inviare'));
 }
 
+console.log('\n— I DATI DI COLLAUDO NON ENTRANO NEI NUMERI (fetta 1.4) —');
+const co = require('../server/collaudo');
+prova('il filtro tiene fuori solo TRUE: NULL conta come vero (decisione 2 di Germano)', 'COALESCE(c.di_collaudo, FALSE) = FALSE', co.filtro('c'));
+prova('il cartellino compare solo sui record di collaudo', true, /di collaudo/.test(co.badge(true)) && co.badge(false) === '' && co.badge(null) === '');
+prova('l\'interruttore di un record vero propone «segna come di collaudo»', true, /segna come di collaudo/.test(co.interruttore('cliente', 'x', false)) && /segnaCollaudo\('cliente','x',true\)/.test(co.interruttore('cliente', 'x', false)));
+prova('quello di un record di collaudo propone «è un record vero»', true, /è un record vero/.test(co.interruttore('cliente', 'x', true)) && /segnaCollaudo\('cliente','x',false\)/.test(co.interruttore('cliente', 'x', true)));
+prova('quello di un record non classificato propone entrambe', true, /non classificato/.test(co.interruttore('progetto', 'y', null)) && /,true\)/.test(co.interruttore('progetto', 'y', null)) && /,false\)/.test(co.interruttore('progetto', 'y', null)));
+prova('il cartello tace se non c\'è niente da dire', '', co.cartello({ collaudo: {}, nonClassificati: {} }));
+const cart = co.cartello({ collaudo: { clienti: 5, committenti: 2, progetti: 1 }, nonClassificati: { clienti: 1 } });
+prova('e altrimenti conta i record di collaudo per tipo', true, /8 record di collaudo/.test(cart) && /5 clienti · 2 committenti · 1 progetto/.test(cart));
+prova('e dice che i non classificati contano come veri', true, /1 record non ancora classificato conta/.test(cart) && /come vero/.test(cart));
+prova('le tre tabelle', ['clients', 'committenti', 'progetti'], Object.values(co.TABELLE));
+
 console.log(falliti ? `\n🔴 ${falliti} prove fallite` : '\n✅ conformità: tutte le prove passano');
 process.exit(falliti ? 1 : 0);

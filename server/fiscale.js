@@ -432,7 +432,7 @@ function anomalie({ clienti = [], committenti = [], progetti = [] } = {}) {
   for (const c of clienti) {
     const st = statoFatturabilita(daCliente(c));
     if (st.stato !== 'pronto') {
-      out.push({ tipo: 'dati_cliente', ruolo: 'cliente', id: c.id,
+      out.push({ tipo: 'dati_cliente', ruolo: 'cliente', id: c.id, collaudo: c.di_collaudo === true,
         nome: daCliente(c).denominazione, messaggio: st.messaggio });
     }
   }
@@ -440,7 +440,7 @@ function anomalie({ clienti = [], committenti = [], progetti = [] } = {}) {
   for (const k of committenti) {
     const st = statoFatturabilita(daCommittente(k));
     if (st.stato !== 'pronto') {
-      out.push({ tipo: 'dati_committente', ruolo: 'committente', id: k.id,
+      out.push({ tipo: 'dati_committente', ruolo: 'committente', id: k.id, collaudo: k.di_collaudo === true,
         nome: pulito(k.denominazione), messaggio: st.messaggio });
     }
   }
@@ -449,14 +449,14 @@ function anomalie({ clienti = [], committenti = [], progetti = [] } = {}) {
     const q = quoteProgetto(p);
     if (!q.quadra) {
       const verso = q.scarto > 0 ? 'mancano' : 'ci sono';
-      out.push({ tipo: 'quote_non_tornano', ruolo: 'progetto', id: p.id,
+      out.push({ tipo: 'quote_non_tornano', ruolo: 'progetto', id: p.id, collaudo: p.di_collaudo === true,
         nome: pulito(p.titolo),
         messaggio: `Totale € ${euro(p.quota_totale)}, ma committente + coachee fanno `
           + `€ ${euro(Number(p.quota_committente||0) + Number(p.somma_coachee||0))} `
           + `(${verso} € ${euro(Math.abs(q.scarto))})` });
     }
     if (Number(p.n_partecipanti || 0) === 0) {
-      out.push({ tipo: 'senza_partecipanti', ruolo: 'progetto', id: p.id,
+      out.push({ tipo: 'senza_partecipanti', ruolo: 'progetto', id: p.id, collaudo: p.di_collaudo === true,
         nome: pulito(p.titolo),
         messaggio: 'Nessun coachee collegato: non si sa a chi è riferita la prestazione' });
     }
@@ -485,7 +485,7 @@ function anomaliePerSoggetto(lista) {
     // id senza essere la stessa cosa.
     const chiave = a.ruolo + ':' + a.id;
     let g = gruppi.find(x => x.chiave === chiave);
-    if (!g) { g = { chiave, ruolo: a.ruolo, id: a.id, nome: a.nome, voci: [] }; gruppi.push(g); }
+    if (!g) { g = { chiave, ruolo: a.ruolo, id: a.id, nome: a.nome, collaudo: !!a.collaudo, voci: [] }; gruppi.push(g); }
     g.voci.push({ tipo: a.tipo, titolo: TIPI_ANOMALIA[a.tipo] || a.tipo, messaggio: a.messaggio });
   }
   return gruppi;

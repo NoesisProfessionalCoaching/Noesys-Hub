@@ -153,8 +153,20 @@ async function numeriVeri() {
     const [p] = await q(`SELECT count(*) FILTER (WHERE c.di_collaudo IS FALSE)::int veri,
                                 count(*) FILTER (WHERE c.di_collaudo IS FALSE AND p.stato='attivo')::int attivi
                            FROM percorsi p JOIN clients c ON c.id = p.client_id`);
-    const [k] = await q(`SELECT count(*) FILTER (WHERE di_collaudo IS NULL)::int boh FROM committenti`);
-    const [g] = await q(`SELECT count(*) FILTER (WHERE di_collaudo IS NULL)::int boh FROM progetti`);
+    // ⚗️ Fetta 1.4 (04/09): anche committenti, progetti e proforma si CONTANO,
+    //    non si dichiarano. Prima qui c'era scritto a mano «tutti i committenti ·
+    //    tutti i progetti» e «tutte di collaudo»: vero fino al primo committente
+    //    vero, poi una bugia stampata a ogni avvio.
+    const [k] = await q(`SELECT count(*) FILTER (WHERE di_collaudo IS FALSE)::int veri,
+                                count(*) FILTER (WHERE di_collaudo IS TRUE)::int prova,
+                                count(*) FILTER (WHERE di_collaudo IS NULL)::int boh FROM committenti`);
+    const [g] = await q(`SELECT count(*) FILTER (WHERE di_collaudo IS FALSE)::int veri,
+                                count(*) FILTER (WHERE di_collaudo IS TRUE)::int prova,
+                                count(*) FILTER (WHERE di_collaudo IS NULL)::int boh FROM progetti`);
+    const [pf] = await q(`SELECT count(*) FILTER (WHERE COALESCE(cl.di_collaudo, ko.di_collaudo) IS NOT TRUE)::int veri,
+                                 count(*) FILTER (WHERE COALESCE(cl.di_collaudo, ko.di_collaudo) IS TRUE)::int prova
+                            FROM proforme p LEFT JOIN clients cl ON cl.id = p.client_id
+                            LEFT JOIN committenti ko ON ko.id = p.committente_id`);
     // I soldi: veri = documenti che NON vanno a un cliente o committente di collaudo.
     const [s1] = await q(`SELECT
         COALESCE(sum(i.importo) FILTER (WHERE COALESCE(cl.di_collaudo, ko.di_collaudo) IS NOT TRUE), 0)::float veri,
@@ -164,10 +176,10 @@ async function numeriVeri() {
       LEFT JOIN committenti ko ON ko.id = pf.committente_id`);
     const [ult] = await q('SELECT numero FROM proforme ORDER BY anno DESC, progressivo DESC LIMIT 1');
     dì(`\n🔎 DATI DAL DATABASE DI ${dove} — ${host} (sola lettura)`);
-    dì(`   clienti VERI ${c.veri} (${p.veri} percorsi, ${p.attivi} attivi)`);
-    dì(`   ⚗️  di collaudo, da non contare mai: ${c.prova} clienti · tutti i committenti · tutti i progetti`);
+    dì(`   clienti VERI ${c.veri} (${p.veri} percorsi, ${p.attivi} attivi) · committenti veri ${k.veri} · progetti veri ${g.veri}`);
+    dì(`   ⚗️  di collaudo, da non contare mai: ${c.prova} clienti · ${k.prova} committenti · ${g.prova} progetti`);
     dì(`   💶 incassato VERO: € ${s1.veri.toFixed(2)}   (di collaudo: € ${s1.prova.toFixed(2)})`);
-    dì(`   proforma: ultimo numero bruciato ${ult ? ult.numero : '—'} — tutte di collaudo`);
+    dì(`   proforma: ultimo numero bruciato ${ult ? ult.numero : '—'} — ${pf.veri} vere, ${pf.prova} di collaudo`);
     const boh = c.boh + k.boh + g.boh;
     if (boh) {
       dì(`\n   🔴 ${boh} RECORD NON CLASSIFICATI (${c.boh} clienti · ${k.boh} committenti · ${g.boh} progetti)`);
