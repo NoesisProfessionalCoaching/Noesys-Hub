@@ -18,6 +18,7 @@ const IC = '/Users/macbook12/Library/Mobile Documents/com~apple~CloudDocs';
 // davvero il 03/09 — ed è la migliore dimostrazione del difetto che corregge.)
 const REALE = '.env' + '.reale';
 const HOST = 'reseau' + '.proxy.rlwy.net';
+const VAR = 'DATABASE_URL' + '_REALE';
 
 const CASI = [
   // ── DEVE BLOCCARE ────────────────────────────────────────────────────────
@@ -80,6 +81,32 @@ const CASI = [
   ['passa', 'scrivere dentro iCloud senza cancellare niente', `cp /tmp/a.pdf "${IC}/Noesys/b.pdf"`],
   ['passa', 'cancellare fuori da iCloud', 'rm -rf /tmp/_pz-tab-375'],
   ['passa', 'una prova sul database di prova', 'node --env-file=.env scripts/prova-pagine-vive.js'],
+
+  // ── LE CODE DEL 04/09/2026 (fetta barriere del riordino) ──────────────────
+  // Tre falsi allarmi in una mattina e una porta socchiusa. Il principio è lo
+  // stesso della correzione del 03/09: conta l'USO, non la PAROLA.
+  // (a) La barriera del push scattava per la sola presenza delle parole «git» e
+  //     «push» in un testo (un sed, un echo, un grep): tre volte il 03/09 sera.
+  ['passa', '🔴 le parole «git push» dentro un sed (è testo, non un push)', `sed -i '' 's/git push/git pull/' promemoria.md`],
+  ['passa', '🔴 le parole «git push» dentro un echo', 'echo "il git push non è ancora stato fatto"'],
+  ['passa', '🔴 cercare la parola «push» nel guardiano con grep', 'grep -n "git push" /Users/macbook12/.claude/hooks/barriere.js'],
+  // (b) L'esenzione guardava se il NOME dello script comparisse nel pezzo, non
+  //     se fosse lo script lanciato: bastava passarlo come argomento.
+  ['blocca', '🔴 il nome dello script di lettura passato come ARGOMENTO a un altro script',
+    `node --env-file=${REALE} scripts/tocca.js guarda-produzione.js`],
+  ['blocca', '🔴 idem col nome del backup', `node --env-file=${REALE} scripts/tocca.js backup-db.js`],
+  ['blocca', '🔴 idem col nome del punto della situazione', `node --env-file=${REALE} scripts/tocca.js punto.js`],
+  ['passa', 'la lettura lanciata col percorso assoluto', `node --env-file=/Users/macbook12/Developer/Noesys-Hub/${REALE} /Users/macbook12/Developer/Noesys-Hub/scripts/guarda-produzione.js "SELECT 1"`],
+  ['passa', 'la lettura con --env-file separato da uno spazio', `node --env-file ${REALE} scripts/guarda-produzione.js "SELECT 1"`],
+  // (c) punto.js legge la produzione con default_transaction_read_only=on, come
+  //     guarda-produzione: è una lettura, e il 04/09 veniva fermato.
+  ['passa', '🔴 il punto della situazione sul database vero (sola lettura per costruzione)', `node --env-file=${REALE} scripts/punto.js`],
+  // (d) Il NOME della variabile in un grep non usa il database: la variabile
+  //     conta quando viene ASSEGNATA o ESPANSA. (Il nome si compone a pezzi
+  //     come REALE, per lo stesso motivo.)
+  ['passa', '🔴 cercare il nome della variabile del database vero in un file', `grep -n "${VAR}" server/db.js`],
+  ['blocca', 'la variabile del database vero espansa', `psql "$${VAR}" -c "DELETE FROM clients"`],
+  ['blocca', 'la variabile del database vero esportata', `export ${VAR}=postgres://x && node tocca.js`],
 ];
 
 // ── SE MANCA impronta.js, LE BARRIERE DEVONO RESTARE VIVE (03/09/2026) ──────
@@ -98,6 +125,13 @@ const CASI_SENZA_IMPRONTA = [
     // (nella copia di prova il file si chiama «impronta-che-non-esiste.js»: si controlla la parola «impronta»)
     'git -C /Users/macbook12/Developer/Noesys-Hub push origin main', /impronta/],
   ['passa', '🔬 senza impronta.js: un comando innocuo passa', 'ls -la /tmp'],
+  // (a) del 04/09: il push si riconosce come COMANDO, pezzo per pezzo.
+  ['blocca', '🔬 senza impronta.js: un push nudo (la cartella la dice il cwd) si ferma',
+    'git push origin main', /impronta/],
+  ['blocca', '🔬 senza impronta.js: il push con opzioni in mezzo si ferma',
+    'git -C /Users/macbook12/Developer/Noesys-Hub -c user.name=x push --force-with-lease origin main', /impronta/],
+  ['passa', '🔬 senza impronta.js: un git che NON è un push passa, anche se la parola c\'è',
+    'git -C /Users/macbook12/Developer/Noesys-Hub log --oneline -3 | grep -c push'],
 ];
 
 function guardianoSenzaImpronta() {
