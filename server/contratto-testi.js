@@ -735,11 +735,7 @@ function personaGiuridica({ committente, progetto, nPartecipanti, sessioni, rate
 }
 
 /** Una DATE del database in data italiana. ⚠️ Mai `itDate` su un timestamp. */
-function dataIt(d) {
-  const s = String(d).slice(0, 10);
-  const [a, m, g] = s.split('-');
-  return `${g}/${m}/${a}`;
-}
+const dataIt = require('./date-it').dataIt;   // ⭐ 4.3: una versione sola
 
 /**
  * IL CONTRATTO DEL PARTECIPANTE A UN PROGETTO CO-FINANZIATO.

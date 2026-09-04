@@ -10,7 +10,7 @@
     "prova-pagine": "node --env-file=.env scripts/prova-pagine-vive.js",
     "prova-fiscale": "node scripts/prova-fiscale.js",
     "prova-proforma": "node scripts/prova-proforma.js",
-    "prova": "npm run prova-file && npm run prova-js && npm run prova-pagine && npm run prova-fiscale && npm run prova-proforma && npm run prova-tranche && npm run prova-incassi && npm run prova-sedute && npm run prova-appuntamenti && npm run prova-final-programmata && npm run prova-migrazione && npm run prova-barriere && npm run prova-conformita && npm run prova-automazione && npm run inventario && npm run prova-timbro",
+    "prova": "npm run prova-file && npm run prova-js && npm run prova-pagine && npm run prova-fiscale && npm run prova-proforma && npm run prova-tranche && npm run prova-incassi && npm run prova-sedute && npm run prova-appuntamenti && npm run prova-final-programmata && npm run prova-migrazione && npm run prova-barriere && npm run prova-conformita && npm run prova-automazione && npm run prova-comuni && npm run inventario && npm run prova-timbro",
     "prova-final-programmata": "node --env-file=.env scripts/prova-final-programmata.js",
     "prova-tranche": "node scripts/prova-tranche.js",
     "prova-incassi": "node scripts/prova-incassi.js",
@@ -20,7 +20,8 @@
     "prova-timbro": "node scripts/prova-timbro.js",
     "prova-conformita": "node scripts/prova-conformita.js",
     "inventario": "node scripts/inventario.js",
-    "prova-automazione": "node scripts/prova-automazione.js"
+    "prova-automazione": "node scripts/prova-automazione.js",
+    "prova-comuni": "node scripts/prova-comuni.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",

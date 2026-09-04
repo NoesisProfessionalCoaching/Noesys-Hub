@@ -36,13 +36,15 @@ function cent(v) {
   return Math.round((Number(v) || 0) * 100);
 }
 
-function euro(centesimi) {
+// ⭐ 4.3: si chiamava `euro`, come fiscale.euro, e faceva il contrario (da
+//    centesimi a euro, invece di formattare). Ora dice quello che fa.
+function daCentesimi(centesimi) {
   return Math.round(Number(centesimi) || 0) / 100;
 }
 
 /** Quanto è stato registrato su un documento. */
 function sommaIncassi(righe) {
-  return euro((righe || []).reduce((s, r) => s + cent(r && r.importo), 0));
+  return daCentesimi((righe || []).reduce((s, r) => s + cent(r && r.importo), 0));
 }
 
 /**
@@ -64,7 +66,7 @@ function statoPagamento(pf) {
 /** Quanto manca ancora. Mai negativo: un documento non si incassa all'indietro. */
 function residuo(pf) {
   const manca = cent(pf && pf.da_pagare) - cent(pf && pf.incassato);
-  return euro(manca > 0 ? manca : 0);
+  return daCentesimi(manca > 0 ? manca : 0);
 }
 
 function saldata(pf) {
@@ -186,7 +188,7 @@ function problemi(o) {
   const manca = cent(o && o.residuo);
   if (imp <= 0) out.push('L’importo dell’incasso deve essere maggiore di zero.');
   if (manca > 0 && imp > manca) {
-    out.push('Su questo documento mancano € ' + euro(manca).toLocaleString('it-IT',
+    out.push('Su questo documento mancano € ' + daCentesimi(manca).toLocaleString('it-IT',
       { minimumFractionDigits: 2, maximumFractionDigits: 2, useGrouping: 'always' })
       + ': non si può registrare di più.');
   }
@@ -263,7 +265,7 @@ function mappaRate(rows) {
 }
 
 module.exports = {
-  cent, euro, sommaIncassi, statoPagamento, residuo, saldata,
+  cent, daCentesimi, sommaIncassi, statoPagamento, residuo, saldata,
   daFatturare, dataChiudeIlConto, scadenzaDocumento, problemi, mappaRate, SQL_COLONNE,
   GIORNI_INSISTE, giorniDiRitardo, daVerificare, daQuantoScaduta,
   SQL_RATA_DEL_DOCUMENTO, conScadenza,

@@ -14,39 +14,24 @@
 
 const MailComposer = require('nodemailer/lib/mail-composer');
 
-const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const SEND_URL = 'https://gmail.googleapis.com/gmail/v1/users/me/messages/send';
 
 function mailerReady() {
   return !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GMAIL_SEND_REFRESH_TOKEN);
 }
 
-let cachedToken = null;
-let cachedExpiry = 0;
-
+// ⭐ 4.3: lo scambio del token sta in google-token.js, in comune con Drive.
+//    Il refresh token di Gmail è un altro (GMAIL_SEND_REFRESH_TOKEN): la cache è
+//    per refresh token, quindi i due non si mescolano.
+const { tokenGoogle } = require('./google-token');
 async function getAccessToken() {
   if (!mailerReady()) {
     throw new Error('Invio email non configurato: manca il collegamento Gmail (GMAIL_SEND_REFRESH_TOKEN).');
   }
-  const now = Date.now();
-  if (cachedToken && now < cachedExpiry) return cachedToken;
-  const res = await fetch(TOKEN_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      client_id: process.env.GOOGLE_CLIENT_ID,
-      client_secret: process.env.GOOGLE_CLIENT_SECRET,
-      refresh_token: process.env.GMAIL_SEND_REFRESH_TOKEN,
-      grant_type: 'refresh_token',
-    }),
+  return tokenGoogle({
+    clientId: process.env.GOOGLE_CLIENT_ID, clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    refreshToken: process.env.GMAIL_SEND_REFRESH_TOKEN, etichetta: 'Gmail',
   });
-  const d = await res.json();
-  if (!res.ok || !d.access_token) {
-    throw new Error('Rinnovo token Gmail fallito: ' + (d.error_description || d.error || res.status));
-  }
-  cachedToken = d.access_token;
-  cachedExpiry = now + (d.expires_in - 60) * 1000;
-  return cachedToken;
 }
 
 // Costruisce il messaggio MIME completo (RFC822) con eventuali allegati.

@@ -8,13 +8,10 @@
 // Questo modulo è la base che poi userà l'automazione report → scheda:
 // per ora espone solo funzioni di LETTURA (trova cartella, elenca file, scarica).
 
-const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const DRIVE_API = 'https://www.googleapis.com/drive/v3';
 const NOESYS_ROOT_ID = '1zNO4d1FyUeLBq-Z2KXA9RFojeeDas5IT'; // radice "Noesys" (dal collegamento del 2026-07-09)
 
-// Cache in memoria dell'access_token, con un margine di sicurezza prima della scadenza.
-let cachedToken = null;
-let cachedExpiry = 0;
+const { tokenGoogle } = require('./google-token');
 
 // ── ⏱ TIMEOUT E RITENTATIVO — fetta 2.3 del riordino (04/09/2026) ──────────
 // Fino al 04/09 nessuna chiamata a Drive aveva un limite di tempo e nessuna
@@ -67,33 +64,17 @@ function missingEnv() {
     .filter(k => !process.env[k]);
 }
 
+// ⭐ 4.3: lo scambio refresh_token → access_token sta in google-token.js, una
+//    volta per Drive e Gmail (con la cache per refresh token).
 async function getAccessToken() {
   const missing = missingEnv();
   if (missing.length) {
     throw new Error('Variabili Google mancanti: ' + missing.join(', '));
   }
-  const now = Date.now();
-  if (cachedToken && now < cachedExpiry) return cachedToken;
-
-  const res = await fetch(TOKEN_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      client_id: process.env.GOOGLE_CLIENT_ID,
-      client_secret: process.env.GOOGLE_CLIENT_SECRET,
-      refresh_token: process.env.GOOGLE_REFRESH_TOKEN,
-      grant_type: 'refresh_token',
-    }),
+  return tokenGoogle({
+    clientId: process.env.GOOGLE_CLIENT_ID, clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    refreshToken: process.env.GOOGLE_REFRESH_TOKEN, etichetta: 'Drive',
   });
-  const data = await res.json();
-  if (!res.ok || !data.access_token) {
-    // data.error tipico: 'invalid_grant' (refresh_token errato/revocato) o
-    // 'invalid_client' (client_id/secret incollati male). Utile in diagnosi.
-    throw new Error('Rinnovo token fallito: ' + (data.error_description || data.error || res.status));
-  }
-  cachedToken = data.access_token;
-  cachedExpiry = now + (data.expires_in - 60) * 1000; // rinnova 60s prima della scadenza reale
-  return cachedToken;
 }
 
 // Chiamata autenticata all'API Drive. `endpoint` è il pezzo dopo /drive/v3 (es. '/files?...').

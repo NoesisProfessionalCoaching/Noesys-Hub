@@ -209,16 +209,9 @@ const ORO   = rgb(0.847, 0.682, 0.180);         // #D8AE2E
 const MESI = ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno',
   'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre'];
 
-function dataIt(iso) {
-  if (!iso) return '';
-  const [a, m, g] = String(iso).slice(0, 10).split('-');
-  return `${Number(g)} ${MESI[Number(m) - 1]} ${a}`;
-}
-function dataBreve(iso) {
-  if (!iso) return '';
-  const [a, m, g] = String(iso).slice(0, 10).split('-');
-  return `${g}/${m}/${a}`;
-}
+// ⭐ 4.3: le date vivono in date-it.js. Qui «dataEstesa» è «4 settembre 2026»
+//    (l'intestazione del documento), «dataIt» è 04/09/2026 (le righe).
+const { dataEstesa, dataIt } = require('./date-it');
 const eur = v => '€ ' + fiscale.euro(v);
 
 // I caratteri di serie di pdf-lib scrivono in WinAnsi, che copre l'italiano ma
@@ -312,7 +305,7 @@ async function generaPdf(p, cartaBytes) {
   let y = Y_INIZIO;
   destra('PROFORMA', A4.w - M, y, { size: 17, f: bold, color: NAVY });
   destra('n. ' + (p.numero || ''), A4.w - M, y - 18, { size: 11, f: bold });
-  destra(dataIt(p.data_emissione), A4.w - M, y - 32, { size: 9.5, color: MUTED });
+  destra(dataEstesa(p.data_emissione), A4.w - M, y - 32, { size: 9.5, color: MUTED });
 
   testo(em.denominazione, M, y, { size: 11.5, f: bold, color: NAVY });
   y -= 16;
@@ -345,8 +338,8 @@ async function generaPdf(p, cartaBytes) {
   if (p.periodo_da) {
     const stesso = p.periodo_da === p.periodo_a;
     testo(stesso
-      ? 'Prestazioni del ' + dataIt(p.periodo_da)
-      : 'Prestazioni dal ' + dataIt(p.periodo_da) + ' al ' + dataIt(p.periodo_a),
+      ? 'Prestazioni del ' + dataEstesa(p.periodo_da)
+      : 'Prestazioni dal ' + dataEstesa(p.periodo_da) + ' al ' + dataEstesa(p.periodo_a),
       M, y, { size: 9.5, color: MUTED });
     y -= 18;
   }
@@ -364,7 +357,7 @@ async function generaPdf(p, cartaBytes) {
   y -= 15;
 
   for (const r of (p.righe || [])) {
-    testo(dataBreve(r.data), COL.data, y, { size: 9 });
+    testo(dataIt(r.data), COL.data, y, { size: 9 });
     testo(r.descrizione, COL.desc, y, { size: 9, max: COL.qta - COL.desc - 24 });
     destra(Number(r.quantita) === Math.round(Number(r.quantita))
       ? String(Number(r.quantita)) : fiscale.euro(r.quantita), COL.qta, y, { size: 9 });
@@ -469,7 +462,7 @@ function testoMail(p, righe) {
     const [a2, m2] = String(p.periodo_a || p.periodo_da).slice(0, 7).split('-');
     periodo = (a1 === a2 && m1 === m2)
       ? ' di ' + MESI[Number(m1) - 1] + ' ' + a1
-      : ' dal ' + dataBreve(p.periodo_da) + ' al ' + dataBreve(p.periodo_a);
+      : ' dal ' + dataIt(p.periodo_da) + ' al ' + dataIt(p.periodo_a);
   }
 
   // Che cosa si sta chiedendo: una rata si nomina, le sessioni si datano.

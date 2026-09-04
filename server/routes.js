@@ -14,6 +14,7 @@ const collaudo = require('./collaudo');               // i record di prova fuori
 const chiamaUi = require('./chiama-ui');              // la chiamata che legge la risposta (fetta 2.1)
 const statoUi = require('./stato-ui');                // filtro e sezioni aperte non si perdono (fetta 2.4)
 const automazione = require('./automazione');         // l'esito delle passate automatiche (fetta 2.2)
+const dateIt = require('./date-it');                  // un solo «oggi», una sola data italiana (fetta 4.3)
 const documenti = require('./documenti');
 const mailer = require('./mailer');
 const moduli = require('./moduli');
@@ -2105,7 +2106,7 @@ router.get('/dashboard/icf/export.csv', requireCoach, async (req, res) => {
     out.push(line(['Gruppo', `${tot.gruppoN}`, '', '', '', '', '', '', fmtOre(tot.gruppoOre)]));
     const csv = '﻿' + out.join('\r\n');   // BOM → accenti corretti in Excel
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="estratto-ICF-${new Date().toISOString().slice(0,10)}.csv"`);
+    res.setHeader('Content-Disposition', `attachment; filename="estratto-ICF-${dateIt.oggiRoma()}.csv"`);
     res.send(csv);
   } catch (err) {
     console.error(err);
@@ -2312,7 +2313,8 @@ router.post('/dashboard/clients/:id/proforma', requireCoach, async (req, res) =>
     const motivi = proforma.motiviCheImpediscono({ emittente, soggetto, righe });
     if (motivi.length) return res.status(400).json({ error: motivi.join(' ') });
 
-    const oggi = new Date().toISOString().slice(0, 10);
+    // ⭐ 4.3: il giorno ITALIANO, non quello di Greenwich (di notte è ancora ieri).
+    const oggi = dateIt.oggiRoma();
     const d = proforma.componiProforma({ righe, soggetto, email: cliente.email,
       emittente, dataEmissione: oggi });
     if (!d.conti) return res.status(400).json({ error: 'Non si riesce a stabilire la categoria fiscale del cliente.' });
@@ -2449,7 +2451,8 @@ router.post('/dashboard/tranche/:id/proforma', requireCoach, async (req, res) =>
       nienteDaChiedere: 'Questa rata non ha un importo.' });
     if (motivi.length) return res.status(400).json({ error: motivi.join(' ') });
 
-    const oggi = new Date().toISOString().slice(0, 10);
+    // ⭐ 4.3: il giorno ITALIANO, non quello di Greenwich (di notte è ancora ieri).
+    const oggi = dateIt.oggiRoma();
     const d = proforma.componiProforma({ righe, soggetto, email: chiRiceve.email,
       emittente, dataEmissione: oggi, periodo });
     if (!d.conti) {
@@ -4733,7 +4736,7 @@ Germano`;
   // home non compare perché la sua data è già passata.
   // Una riga per percorso attivo, anche quando l'appuntamento non c'è: è
   // proprio quel vuoto che va visto.
-  const oggiIso = new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Rome' });
+  const oggiIso = dateIt.oggiRoma();
   const appHtml = (fatt.appuntamenti || []).map(a => {
     const passato = a.scad && String(a.scad) < oggiIso;
     const quando = !a.scad
@@ -5219,7 +5222,7 @@ Germano`;
           <span class="sec-caret">▸</span>
           <span style="font-weight:700;color:var(--ink)">${TOOL_LABEL[s.tool] || esc(s.tool)}</span>
           <span style="color:#aaa;font-size:12px">· ${itDateTime(s.created_at)}</span>
-          <span style="margin-left:auto;font-size:11px;color:#aaa">agg. ${fmtDate(s.updated_at)}</span>
+          <span style="margin-left:auto;font-size:11px;color:#aaa">agg. ${itDateTime(s.updated_at)}</span>
         </summary>
         <div class="acc-body" style="line-height:1.7">${renderSessionData(s.tool, s.data)}</div>
       </details>`).join('');
@@ -9655,20 +9658,11 @@ function renderSessionData(tool, jsonStr) {
 
 // Data e ora all'italiana (12/06/2026 10:40). Prima usciva in formato tecnico
 // (2026-06-12 10:40), l'unico posto in tutto l'Hub che non parlava italiano.
-function fmtDate(d) {
-  if (!d) return '—';
-  const s = d instanceof Date ? d.toISOString() : String(d);
-  const giorno = itDate(s);
-  const ora = s.slice(11, 16);
-  return ora ? `${giorno} ${ora}` : giorno;
-}
-
-// Data 'AAAA-MM-GG' → 'GG/MM/AAAA' (formato italiano per la visualizzazione).
-// Oggi in ORA ITALIANA, come 'AAAA-MM-GG'. ⚠️ Non si usa toISOString(): quella
-// dà l'ora di Greenwich e fino alle 2 di notte scriverebbe il giorno prima.
-function oggiIso() {
-  return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Rome' }).format(new Date());
-}
+// ⭐ Fetta 4.3 (04/09/2026): le date vivono in `date-it.js`. Questi tre nomi
+//    restano perché le pagine li usano centinaia di volte; il corpo è uno solo.
+//    `fmtDate` è sparita: tagliava l'ora di Greenwich da un timestamp (e l'unico
+//    punto che la usava ora chiama itDateTime).
+function oggiIso() { return dateIt.oggiRoma(); }
 
 // Una sessione FISSATA ma non ancora avvenuta. Sta in tabella come bozza — così non
 // conta né ore né sessioni, come tutte le bozze — ma non è una proposta da approvare:
@@ -9678,26 +9672,13 @@ function isProgrammata(s) {
   return s && s.stato === 'bozza' && !!s.data && String(s.data).slice(0, 10) > oggiIso();
 }
 
-function itDate(d) {
-  if (!d) return '';
-  const s = String(d).slice(0, 10);
-  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  return m ? `${m[3]}/${m[2]}/${m[1]}` : s;
-}
+function itDate(d) { return dateIt.dataIt(d); }
 
 // Momento preciso (data + ora) in ORA ITALIANA: '11/08/2026 alle 10:30'.
 // Serve per le scadenze dei permessi, dove l'ora conta davvero. Non si può usare
 // fmtDate: quella taglia la stringa ISO, cioè mostra l'ora di Greenwich, e d'estate
 // scriverebbe due ore in meno di quella che il coach e il cliente hanno all'orologio.
-function itDateTime(d) {
-  if (!d) return '—';
-  const dt = d instanceof Date ? d : new Date(d);
-  if (isNaN(dt.getTime())) return String(d);
-  return new Intl.DateTimeFormat('it-IT', {
-    timeZone: 'Europe/Rome', day: '2-digit', month: '2-digit', year: 'numeric',
-    hour: '2-digit', minute: '2-digit',
-  }).format(dt).replace(', ', ' alle ');
-}
+function itDateTime(d) { return dateIt.dataOraIt(d); }
 
 // Data ISO (2026-07-11) → nome cartella Drive italiano con trattini (11-07-2026).
 // Trattini e non "/" perché lo slash non è ammesso nei nomi di cartella su Drive.

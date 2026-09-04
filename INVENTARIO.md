@@ -2,27 +2,27 @@
 
 Non si modifica a mano: lo riscrive `npm run prova`. Se un numero qui non torna con quello che ricordi, è cambiato il codice.
 
-- `server/routes.js`: **9906 righe**, **15 pagine**, **92 rotte**
-- moduli in `server/`: **27** (8 usano `db.js`, 19 no)
-- prove in `npm run prova`: **16**, in questo ordine: prova-file → prova-js → prova-pagine → prova-fiscale → prova-proforma → prova-tranche → prova-incassi → prova-sedute → prova-appuntamenti → prova-final-programmata → prova-migrazione → prova-barriere → prova-conformita → prova-automazione → inventario → prova-timbro
+- `server/routes.js`: **9887 righe**, **15 pagine**, **92 rotte**
+- moduli in `server/`: **30** (8 usano `db.js`, 22 no)
+- prove in `npm run prova`: **17**, in questo ordine: prova-file → prova-js → prova-pagine → prova-fiscale → prova-proforma → prova-tranche → prova-incassi → prova-sedute → prova-appuntamenti → prova-final-programmata → prova-migrazione → prova-barriere → prova-conformita → prova-automazione → prova-comuni → inventario → prova-timbro
 
 ## Le pagine (funzioni che finiscono in Page, nell'ordine del file)
 
-- `loginPage` (riga 4098)
-- `homePage` (riga 4117)
-- `dashboardPage` (riga 4350)
-- `driveDiagPage` (riga 4505)
-- `clientDetailPage` (riga 4649)
-- `leadsPage` (riga 6735)
-- `anomaliePage` (riga 6935)
-- `proformaPage` (riga 7089)
-- `contrattiAmmPage` (riga 7574)
-- `emittentePage` (riga 7689)
-- `committentiPage` (riga 7785)
-- `progettiPage` (riga 7973)
-- `progettoDettaglioPage` (riga 8329)
-- `cercaPage` (riga 9769)
-- `icfPage` (riga 9851)
+- `loginPage` (riga 4101)
+- `homePage` (riga 4120)
+- `dashboardPage` (riga 4353)
+- `driveDiagPage` (riga 4508)
+- `clientDetailPage` (riga 4652)
+- `leadsPage` (riga 6738)
+- `anomaliePage` (riga 6938)
+- `proformaPage` (riga 7092)
+- `contrattiAmmPage` (riga 7577)
+- `emittentePage` (riga 7692)
+- `committentiPage` (riga 7788)
+- `progettiPage` (riga 7976)
+- `progettoDettaglioPage` (riga 8332)
+- `cercaPage` (riga 9750)
+- `icfPage` (riga 9832)
 
 ## Le rotte, per mondo
 
@@ -147,23 +147,26 @@ Non si modifica a mano: lo riscrive `npm run prova`. Se un numero qui non torna 
 | `claude.js` | 380 | no |
 | `collaudo.js` | 82 | no |
 | `contratti-stato.js` | 113 | no |
-| `contratto-testi.js` | 900 | no |
+| `contratto-testi.js` | 896 | no |
 | `contratto.js` | 292 | no |
+| `date-it.js` | 58 | no |
 | `db.js` | 1093 | no |
 | `documenti.js` | 112 | no |
 | `fiscale.js` | 501 | no |
-| `google-drive.js` | 417 | no |
-| `incassi.js` | 271 | no |
+| `google-drive.js` | 398 | no |
+| `google-token.js` | 48 | no |
+| `incassi.js` | 273 | no |
 | `index.js` | 75 | sì |
 | `logo.js` | 37 | no |
-| `mailer.js` | 83 | no |
-| `maturato.js` | 142 | sì |
+| `mailer.js` | 68 | no |
+| `maturato.js` | 139 | sì |
 | `moduli.js` | 180 | no |
+| `pagina-js.js` | 155 | no |
 | `piano-ui.js` | 598 | no |
-| `proforma.js` | 591 | no |
-| `routes.js` | 9906 | sì |
+| `proforma.js` | 584 | no |
+| `routes.js` | 9887 | sì |
 | `scan-moduli.js` | 215 | sì |
 | `scan.js` | 416 | sì |
-| `sedute.js` | 55 | no |
+| `sedute.js` | 53 | no |
 | `stato-ui.js` | 61 | no |
 | `tranche.js` | 279 | no |

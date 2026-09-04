@@ -111,10 +111,7 @@ async function daChiedere(clientId) {
 // ⚠️ Il giorno è quello ITALIANO, non quello UTC del server: alle 00:30 del
 // lunedì a Roma, in UTC è ancora domenica, e il promemoria non comparirebbe.
 
-function oggiRoma() {
-  // en-CA dà «AAAA-MM-GG», che è già il formato con cui confrontiamo i mesi.
-  return new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Rome' });
-}
+const { oggiRoma } = require('./date-it');   // ⭐ 4.3: una versione sola (AAAA-MM-GG, come prima)
 
 // Il giorno del mese in cui cade il primo lunedì: 1..7.
 function giornoPrimoLunedi(anno, mese1a12) {

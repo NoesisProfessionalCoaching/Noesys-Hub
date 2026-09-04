@@ -19,9 +19,7 @@
 
 /** «Oggi» a Roma, come AAAA-MM-GG. Non l'ora di Greenwich: fra mezzanotte e le
  *  due, d'estate, sarebbe ancora ieri, e una sessione di oggi risulterebbe futura. */
-function oggiRoma() {
-  return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Rome' }).format(new Date());
-}
+const { oggiRoma } = require('./date-it');   // ⭐ 4.3: una versione sola
 
 /** La data come AAAA-MM-GG, qualunque forma abbia (stringa, stringa con l'ora, Date). */
 function giorno(data) {
