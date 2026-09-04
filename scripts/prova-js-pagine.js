@@ -75,6 +75,12 @@ const daiModuli = [
   { nome: 'collaudo.js — l’interruttore vero/di collaudo', codice: () => require('../server/collaudo').js() },
   { nome: 'chiama-ui.js — la chiamata che legge la risposta', codice: () => require('../server/chiama-ui').js() },
   { nome: 'stato-ui.js — filtro e sezioni che non si perdono', codice: () => require('../server/stato-ui').js() },
+  // 4.4 — il JavaScript comune delle pagine, con i parametri delle due pagine che lo usano
+  { nome: 'pagina-js.js — toast', codice: () => require('../server/pagina-js').toast() },
+  { nome: 'pagina-js.js — appuntamento (home)', codice: () => 'var appPercorso;' + require('../server/pagina-js').appuntamento({ conChi: true, confermaTogli: "Elimino l'appuntamento?" }) },
+  { nome: 'pagina-js.js — sedute (scheda cliente)', codice: () => 'var CID, SEDUTE, ORE_TIPO, chiamaHub;' + require('../server/pagina-js').sedute({ oreTipo: 'ORE_TIPO', richiedePercorso: true, basePercorso: "'/dashboard/clients/' + CID + '/percorsi/' + pid", pidSalvataggio: "document.getElementById('s-percorso').value", ricarica: 'location.reload()', confermaElimina: "Eliminare?", confermaApprova: "Approvare?" }) },
+  { nome: 'pagina-js.js — sedute (progetto)', codice: () => 'var PID, COLL_PID, SEDUTE, ORE_TIPO_COLL, chiamaHub, ricaricaConservando;' + require('../server/pagina-js').sedute({ oreTipo: 'ORE_TIPO_COLL', richiedePercorso: false, basePercorso: "'/dashboard/progetti/' + PID + '/percorsi/' + pid", pidSalvataggio: 'COLL_PID', ricarica: 'ricaricaConservando()', confermaElimina: "Eliminare?", confermaApprova: "Approvare?" }) },
+  { nome: 'pagina-js.js — muoviContratto (progetto)', codice: () => require('../server/pagina-js').muoviContratto({ confermaCongelamento: true, ricarica: 'ricaricaConservando()' }) },
 ];
 // ⚠️ Qui il codice arriva GIÀ come lo vedrà il browser: le interpolazioni sono
 // state risolte da JavaScript e gli escape sono già sciolti. Passarci sopra i
@@ -190,6 +196,22 @@ const bene = (t) => console.log('✓ ' + t);
   }
   if (muti.length) guaio(`${muti.length} salvataggi MUTI: chiamano il server e non leggono la risposta`, muti.join(' · '));
   else bene('nessun salvataggio muto: ogni chiamata al server legge la risposta');
+}
+
+// 5 · FUNZIONI DI PAGINA COPIATE (fetta 4.4, 04/09/2026). La scheda cliente, la
+//     pagina del progetto e la home avevano ognuna la propria copia di apriApp,
+//     saveSeduta, muoviContratto, showToast… e le copie avevano già preso strade
+//     diverse. Ora vivono in server/pagina-js.js: nel sorgente delle pagine non
+//     deve restare NESSUNA definizione di questi nomi.
+{
+  const COMUNI = ['apriApp', 'scriviApp', 'salvaApp', 'togliApp', 'oreAuto', 'editSeduta', 'saveSeduta', 'delSeduta', 'approvaSeduta', 'muoviContratto', 'showToast', 'copyLink'];
+  const doppie = [];
+  for (const n of COMUNI) {
+    const k = (src.match(new RegExp('^\\s*(?:async\\s+)?function ' + n + '\\(', 'gm')) || []).length;
+    if (k) doppie.push(`${n} (${k})`);
+  }
+  if (doppie.length) guaio(`${doppie.length} funzioni di pagina definite nel sorgente invece che in pagina-js.js`, doppie.join(' · '));
+  else bene('nessuna funzione di pagina copiata: apriApp, saveSeduta, muoviContratto, showToast… vivono in pagina-js.js');
 }
 
 console.log(`\n${guai ? '✗' : '✓'} ${guai} trappole trovate.`);

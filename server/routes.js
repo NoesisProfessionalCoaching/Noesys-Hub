@@ -15,6 +15,7 @@ const chiamaUi = require('./chiama-ui');              // la chiamata che legge l
 const statoUi = require('./stato-ui');                // filtro e sezioni aperte non si perdono (fetta 2.4)
 const automazione = require('./automazione');         // l'esito delle passate automatiche (fetta 2.2)
 const dateIt = require('./date-it');                  // un solo «oggi», una sola data italiana (fetta 4.3)
+const paginaJs = require('./pagina-js');              // il JavaScript comune delle pagine (fetta 4.4)
 const documenti = require('./documenti');
 const mailer = require('./mailer');
 const moduli = require('./moduli');
@@ -4316,34 +4317,7 @@ function homePage(d, req) {
 
   <script>
     var appPercorso = null;
-    function apriApp(pid, chi, data, ora) {
-      appPercorso = pid;
-      document.getElementById('ap-chi').textContent = chi;
-      document.getElementById('ap-data').value = data || '';
-      document.getElementById('ap-ora').value = /^\\d{1,2}:\\d{2}$/.test(ora || '') ? ora : '';
-      document.getElementById('ap-error').style.display = 'none';
-      document.getElementById('modal-app').style.display = 'flex';
-    }
-    async function scriviApp(data, ora) {
-      var err = document.getElementById('ap-error');
-      var btn = document.getElementById('ap-salva');
-      btn.disabled = true; err.style.display = 'none';
-      try {
-        var r = await fetch('/dashboard/percorsi/' + appPercorso + '/appuntamento', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ data: data, ora: ora }) });
-        var j = await r.json().catch(function(){ return {}; });
-        if (!r.ok) { err.textContent = j.error || ('Errore ' + r.status); err.style.display = 'block'; btn.disabled = false; return; }
-        location.reload();
-      } catch (e) { err.textContent = 'Errore di rete: ' + e.message; err.style.display = 'block'; btn.disabled = false; }
-    }
-    function salvaApp() {
-      scriviApp(document.getElementById('ap-data').value, document.getElementById('ap-ora').value);
-    }
-    function togliApp() {
-      if (!confirm('Tolgo l\\'appuntamento?\\n\\nSparisce dai promemoria. Ne potrai segnare uno nuovo dalla scheda del cliente.')) return;
-      scriviApp('', '');
-    }
+    ${paginaJs.appuntamento({ conChi: true, confermaTogli: "Elimino l'appuntamento?\n\nSparisce dai promemoria. Ne potrai segnare uno nuovo dalla scheda del cliente." })}
   </script>
   </body></html>`;
 }
@@ -4490,13 +4464,8 @@ function dashboardPage(clients, req, { individuali = false, tutti = false } = {}
         document.getElementById('new-result').appendChild(w);
       }
     }
-    function copyLink(url) { navigator.clipboard.writeText(url).then(showToast); }
+    ${paginaJs.toast()}
     function copyLinkEl() { navigator.clipboard.writeText(document.getElementById('new-link').href).then(showToast); }
-    function showToast() {
-      const t = document.getElementById('toast');
-      t.style.display = 'block';
-      setTimeout(() => t.style.display = 'none', 2000);
-    }
     document.getElementById('modal-overlay').addEventListener('click', e => {
       if (e.target === document.getElementById('modal-overlay')) closeModal();
     });
@@ -6153,76 +6122,21 @@ Germano`;
     // Dati dei percorsi per riempire la finestra quando si preme "Modifica".
     const PERCORSI_DATI = ${JSON.stringify(Object.fromEntries(percorsi.map(p => [p.id, { id: p.id, tipo: p.tipo || 'Individuale', modalita: p.modalita || 'Standard', prezzo: p.prezzo === null || p.prezzo === undefined ? '' : String(p.prezzo), n_sessioni_previste: Number(p.n_sessioni_previste) || 8, promo: !!p.promo, sconto_note: p.sconto_note || '', data_inizio: p.data_inizio ? String(p.data_inizio).slice(0, 10) : '', prestazione_scambio: p.prestazione_scambio || '', nRate: trPerc.filter(t => t.percorso_id === p.id).length }]))).replace(/</g, '\\u003c')};
     const ORE_TIPO = { Intake: 2, Ongoing: 1, Final: null };
-    function oreAuto() {
-      const t = document.getElementById('s-tipo').value;
-      const auto = ORE_TIPO[t];
-      const ore = document.getElementById('s-ore'), hint = document.getElementById('s-ore-hint');
-      ore.readOnly = false;
-      if (auto != null) { ore.value = auto; hint.textContent = '(preimpostate per ' + t + ', modificabili)'; }
-      else { hint.textContent = '(Final: a mano)'; }
-    }
-    function editSeduta(sid) {
-      const s = SEDUTE[sid]; if (!s) return;
-      document.getElementById('seduta-title').textContent = 'Modifica sessione';
-      document.getElementById('s-id').value = s.id;
-      document.getElementById('s-percorso').value = s.percorso_id;
-      document.getElementById('s-tipo').value = s.tipo;
-      document.getElementById('s-data').value = s.data ? String(s.data).slice(0, 10) : '';
-      document.getElementById('s-obiettivo').value = s.obiettivo || '';
-      document.getElementById('s-argomenti').value = s.argomenti || '';
-      document.getElementById('s-attivita').value = s.attivita || '';
-      document.getElementById('s-scadenza').value = s.scadenza || '';
-      // \\d e non \d: siamo dentro una template literal, dove \d diventerebbe una
-      // semplice "d" e la regola non riconoscerebbe piu' un orario (campo vuoto).
-      document.getElementById('s-ora').value = /^\\d{1,2}:\\d{2}$/.test(s.prossima_ora || '') ? s.prossima_ora : '';
-      document.getElementById('s-eseguita').value = s.eseguita || '';
-      document.getElementById('s-note').value = s.note || '';
-      oreAuto();
-      document.getElementById('s-ore').value = s.ore;
-      document.getElementById('modal-seduta').style.display = 'flex';
-    }
-    async function saveSeduta() {
-      const pid = document.getElementById('s-percorso').value;
-      if (!pid) { alert('Serve un percorso'); return; }
-      const sid = document.getElementById('s-id').value;
-      const g = id => document.getElementById(id).value;
-      const body = { tipo: g('s-tipo'), data: g('s-data') || null, ore: g('s-ore') || 0, obiettivo: g('s-obiettivo'), argomenti: g('s-argomenti'), attivita: g('s-attivita'), scadenza: g('s-scadenza'), prossima_ora: g('s-ora'), eseguita: g('s-eseguita'), note: g('s-note') };
-      const url = '/dashboard/clients/' + CID + '/percorsi/' + pid + '/sedute' + (sid ? ('/' + sid) : '');
-      if (!await chiamaHub(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })) return;
-      location.reload();
-    }
-    async function delSeduta(sid, pid) {
-      if (!confirm('Eliminare questa sessione dal diario? Le ore si ricalcolano.')) return;
-      if (!await chiamaHub('/dashboard/clients/' + CID + '/percorsi/' + pid + '/sedute/' + sid, { method: 'DELETE' })) return; location.reload();
-    }
-    async function approvaSeduta(sid, pid) {
-      if (!confirm('Approvare questa scheda? Da bozza diventa una sessione confermata e le ore entrano nel conteggio ICF.')) return;
-      const r = await fetch('/dashboard/clients/' + CID + '/percorsi/' + pid + '/sedute/' + sid + '/approva', { method: 'POST' });
-      let d = {}; try { d = await r.json(); } catch (e) {}
-      // Era la Final e il percorso risulta ancora aperto: lo faccio notare qui,
-      // che è il momento in cui te ne accorgi. Se dici di no non succede nulla.
-      if (d.proponiChiusura && confirm('Questa era la sessione Final. Chiudo anche il percorso, con data ' + d.dataFineIt + '?')) {
-        // L'approvazione è già avvenuta: se la chiusura viene rifiutata lo si dice,
-        // ma la pagina si ricarica lo stesso, per mostrare la sessione approvata.
-        await chiamaHub('/dashboard/clients/' + CID + '/percorsi/' + pid + '/chiudi',
-          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data_fine: d.dataFine }) });
-      }
-      location.reload();
-    }
+    ${paginaJs.sedute({
+      oreTipo: 'ORE_TIPO', richiedePercorso: true,
+      basePercorso: "'/dashboard/clients/' + CID + '/percorsi/' + pid",
+      pidSalvataggio: "document.getElementById('s-percorso').value",
+      ricarica: 'location.reload()',
+      confermaElimina: 'Eliminare questa sessione dal diario? Le ore si ricalcolano.',
+      confermaApprova: 'Approvare questa scheda? Da bozza diventa una sessione confermata e le ore entrano nel conteggio ICF.',
+    })}
     ${collaudo.js()}
     ${chiamaUi.js()}
     // Fetta 6a — muove lo stato della bozza di contratto. Stessa rotta della card
     // del progetto: una sola porta per tutti e tre i tipi di contratto.
     // ⚠️ Qui il tipo è sempre 'cliente' e non congela niente: le specifiche di
     //    progetto non esistono in un percorso individuale, quindi niente conferma.
-    async function muoviContratto(tipo, soggetto, stato) {
-      const r = await fetch('/dashboard/contratti/stato', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tipo: tipo, soggetto_id: soggetto, stato: stato }) });
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok || d.error) { alert('Errore: ' + (d.error || r.status)); return; }
-      location.reload();
-    }
+    ${paginaJs.muoviContratto({ confermaCongelamento: false, ricarica: 'location.reload()' })}
     async function scanDrive() {
       const btn = document.getElementById('scan-btn');
       if (btn) { btn.disabled = true; btn.textContent = '⟳ Cerco… (può volerci qualche secondo)'; }
@@ -6264,34 +6178,8 @@ Germano`;
     }
     // ── Appuntamento (12/08) ──
     var appPercorso = null;
-    function apriApp(pid, data, ora) {
-      appPercorso = pid;
-      document.getElementById('ap-data').value = data || '';
-      document.getElementById('ap-ora').value = /^\\d{1,2}:\\d{2}$/.test(ora || '') ? ora : '';
-      document.getElementById('ap-error').style.display = 'none';
-      document.getElementById('modal-app').style.display = 'flex';
-    }
-    async function scriviApp(data, ora) {
-      var err = document.getElementById('ap-error');
-      var btn = document.getElementById('ap-salva');
-      btn.disabled = true; err.style.display = 'none';
-      try {
-        var r = await fetch('/dashboard/percorsi/' + appPercorso + '/appuntamento', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ data: data, ora: ora }) });
-        var j = await r.json().catch(function(){ return {}; });
-        if (!r.ok) { err.textContent = j.error || ('Errore ' + r.status); err.style.display = 'block'; btn.disabled = false; return; }
-        location.reload();
-      } catch (e) { err.textContent = 'Errore di rete: ' + e.message; err.style.display = 'block'; btn.disabled = false; }
-    }
-    function salvaApp() {
-      scriviApp(document.getElementById('ap-data').value, document.getElementById('ap-ora').value);
-    }
-    function togliApp() {
-      if (!confirm('Tolgo l\\'appuntamento?')) return;
-      scriviApp('', '');
-    }
-    function copyLink(url) { navigator.clipboard.writeText(url).then(() => { const t=document.getElementById('toast'); t.textContent='Link copiato!'; t.style.display='block'; setTimeout(()=>t.style.display='none',2000); }); }
+    ${paginaJs.appuntamento({ conChi: false, confermaTogli: "Elimino l'appuntamento?" })}
+    ${paginaJs.toast()}
     function openEdit() { document.getElementById('modal-edit').style.display='flex'; }
     function openMail1() {
       document.getElementById('mail1-error').style.display='none';
@@ -9017,55 +8905,14 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
     const COLL_FINE_IT  = ${JSON.stringify(collFineIt)};
     const SEDUTE = ${JSON.stringify(Object.fromEntries(seduteColl.map(s => [s.id, { id: s.id, percorso_id: s.percorso_id, tipo: s.tipo, data: s.data, ore: Number(s.ore), obiettivo: s.obiettivo || '', argomenti: s.argomenti || '', attivita: s.attivita || '', scadenza: s.scadenza || '', prossima_ora: s.prossima_ora || '', eseguita: s.eseguita || '', note: s.note || '' }]))).replace(/</g, '\\u003c')};
     const ORE_TIPO_COLL = { Intake: 2, Ongoing: 1, Final: null };
-    function oreAuto() {
-      const t = document.getElementById('s-tipo').value;
-      const auto = ORE_TIPO_COLL[t];
-      const ore = document.getElementById('s-ore'), hint = document.getElementById('s-ore-hint');
-      if (auto != null) { ore.value = auto; hint.textContent = '(preimpostate per ' + t + ', modificabili)'; }
-      else { hint.textContent = '(Final: a mano)'; }
-    }
-    function editSeduta(sid) {
-      const s = SEDUTE[sid]; if (!s) return;
-      document.getElementById('seduta-title').textContent = 'Modifica sessione';
-      document.getElementById('s-id').value = s.id;
-      document.getElementById('s-tipo').value = s.tipo;
-      document.getElementById('s-data').value = s.data ? String(s.data).slice(0, 10) : '';
-      document.getElementById('s-obiettivo').value = s.obiettivo || '';
-      document.getElementById('s-argomenti').value = s.argomenti || '';
-      document.getElementById('s-attivita').value = s.attivita || '';
-      document.getElementById('s-scadenza').value = s.scadenza || '';
-      // \\d e non \d: siamo dentro una template literal, dove \d diventerebbe una
-      // semplice "d" e la regola non riconoscerebbe piu' un orario (campo vuoto).
-      document.getElementById('s-ora').value = /^\\d{1,2}:\\d{2}$/.test(s.prossima_ora || '') ? s.prossima_ora : '';
-      document.getElementById('s-eseguita').value = s.eseguita || '';
-      document.getElementById('s-note').value = s.note || '';
-      oreAuto();
-      document.getElementById('s-ore').value = s.ore;
-      document.getElementById('modal-seduta').style.display = 'flex';
-    }
-    async function saveSeduta() {
-      const sid = document.getElementById('s-id').value;
-      const g = id => document.getElementById(id).value;
-      const body = { tipo: g('s-tipo'), data: g('s-data') || null, ore: g('s-ore') || 0, obiettivo: g('s-obiettivo'), argomenti: g('s-argomenti'), attivita: g('s-attivita'), scadenza: g('s-scadenza'), prossima_ora: g('s-ora'), eseguita: g('s-eseguita'), note: g('s-note') };
-      const url = '/dashboard/progetti/' + PID + '/percorsi/' + COLL_PID + '/sedute' + (sid ? ('/' + sid) : '');
-      if (!await chiamaHub(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })) return;
-      ricaricaConservando();
-    }
-    async function delSeduta(sid, pid) {
-      if (!confirm('Eliminare questa sessione? Le ore si ricalcolano.')) return;
-      if (!await chiamaHub('/dashboard/progetti/' + PID + '/percorsi/' + pid + '/sedute/' + sid, { method: 'DELETE' })) return; ricaricaConservando();
-    }
-    async function approvaSeduta(sid, pid) {
-      if (!confirm('Approvare questa scheda? Da bozza diventa una sessione confermata e le ore entrano nel conteggio (categoria Team/Group).')) return;
-      const r = await fetch('/dashboard/progetti/' + PID + '/percorsi/' + pid + '/sedute/' + sid + '/approva', { method: 'POST' });
-      let d = {}; try { d = await r.json(); } catch (e) {}
-      if (d.proponiChiusura && confirm('Questa era la sessione Final. Chiudo anche il percorso, con data ' + d.dataFineIt + '?')) {
-        // Come nella scheda cliente: approvata già; la chiusura rifiutata si dice, e si ricarica.
-        await chiamaHub('/dashboard/progetti/' + PID + '/percorsi/' + pid + '/chiudi',
-          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data_fine: d.dataFine }) });
-      }
-      ricaricaConservando();
-    }
+    ${paginaJs.sedute({
+      oreTipo: 'ORE_TIPO_COLL', richiedePercorso: false,
+      basePercorso: "'/dashboard/progetti/' + PID + '/percorsi/' + pid",
+      pidSalvataggio: 'COLL_PID',
+      ricarica: 'ricaricaConservando()',
+      confermaElimina: 'Eliminare questa sessione? Le ore si ricalcolano.',
+      confermaApprova: 'Approvare questa scheda? Da bozza diventa una sessione confermata e le ore entrano nel conteggio (categoria Team/Group).',
+    })}
     async function chiudiPercorsoColl() {
       const msg = COLL_FINE_ISO
         ? ("Concludere il percorso di gruppo? La data di fine sarà " + COLL_FINE_IT + ", il giorno dell'ultima sessione.")
@@ -9084,16 +8931,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
     // ⚠️ Approvare il contratto del COMMITTENTE congela le specifiche del
     //    progetto: è l'unico passaggio che si fa confermare, perché è l'unico
     //    che toglie qualcosa (la possibilità di cambiare idea).
-    async function muoviContratto(tipo, soggetto, stato) {
-      if (tipo === 'committente' && stato === 'approvata'
-          && !confirm("Il contratto del Committente risulta firmato.\\n\\nDa questo momento le specifiche del progetto si congelano: tipologia, partecipanti, sessioni e valore non si cambiano più.\\n\\nProcedo?")) return;
-      const r = await fetch('/dashboard/contratti/stato', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tipo: tipo, soggetto_id: soggetto, stato: stato }) });
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok || d.error) { alert('Errore: ' + (d.error || r.status)); return; }
-      ricaricaConservando();
-    }
+    ${paginaJs.muoviContratto({ confermaCongelamento: true, ricarica: 'ricaricaConservando()' })}
     // Fetta 6b — la tipologia. Si fa confermare perché cambia la natura del
     // percorso e quindi le clausole dei contratti che ne escono.
     async function salvaTipo() {
@@ -9478,12 +9316,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
       const list = document.getElementById('fasi-list');
       if (!list.querySelector('.fase-block')) document.getElementById('fasi-empty').style.display = 'block';
     }
-    function showToast(msg) {
-      const t=document.getElementById('toast'); t.textContent=msg; t.style.display='block'; setTimeout(()=>t.style.display='none',2000);
-    }
-    function copyLink(url) {
-      navigator.clipboard.writeText(url).then(() => showToast('Link copiato!'));
-    }
+    ${paginaJs.toast()}
     document.getElementById('modal-coachee').addEventListener('click', e => { if (e.target === document.getElementById('modal-coachee')) closeAdd(); });
     ${/* ⚠️ ORDINE DI AVVIO — la finestrella PRIMA della tabella. È lei a creare
           i campi delle quote (q-comm, .q-coachee), che recalcQuota() legge alla
