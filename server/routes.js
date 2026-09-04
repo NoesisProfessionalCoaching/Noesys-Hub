@@ -1182,7 +1182,15 @@ function sedutaFields(b) {
 }
 
 // Crea una seduta (riga della Scheda Cliente)
-router.post('/dashboard/clients/:id/percorsi/:pid/sedute', requireCoach, express.json(), async (req, res) => {
+// ⭐ Fetta 4.2 (04/09/2026): LE ROTTE DELLE SEDUTE SONO SCRITTE UNA VOLTA. Prima
+//    erano copiate: individuali (cliente) e collettive (percorso condiviso di un
+//    progetto), e le copie avevano già divergito (il bug 0.3 nasceva qui). Ora
+//    quattro gestori, ognuno registrato su due vie. L'unica differenza vera: una
+//    seduta individuale porta il client_id, quella collettiva no (client_id NULL:
+//    è del percorso condiviso). La via dice quale delle due è.
+const collettiva = (req) => req.path.startsWith('/dashboard/progetti/');
+
+async function rottaCreaSeduta(req, res) {
   try {
     const t = normTipo(req.body.tipo);
     const f = sedutaFields(req.body);
@@ -1190,21 +1198,25 @@ router.post('/dashboard/clients/:id/percorsi/:pid/sedute', requireCoach, express
     await db.query(
       `INSERT INTO sedute (id, percorso_id, client_id, tipo, data, ore, obiettivo, argomenti, attivita, scadenza, prossima_ora, eseguita, note, stato)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
-      [sid, req.params.pid, req.params.id, t, req.body.data || null, oreForTipo(t, req.body.ore),
+      [sid, req.params.pid, collettiva(req) ? null : req.params.id, t, req.body.data || null, oreForTipo(t, req.body.ore),
        f.obiettivo, f.argomenti, f.attivita, f.scadenza, f.prossima_ora, f.eseguita, f.note,
        // Una sessione con data nel futuro è FISSATA, non fatta: nasce in bozza, così
        // non conta ore né sessioni finché non avviene, e quando arriva il suo report
        // è questa riga a riempirsi (server/scan.js → rigaDaRiempire).
-       // ⭐ 0.3 — la regola sta in sedute.js, la stessa delle rotte collettive.
+       // ⭐ 0.3 — la regola sta in sedute.js. (Prima la copia collettiva non
+       //    passava lo stato e valeva il default 'confermata': una sessione di team
+       //    fissata per il mese prossimo contava già ore e sessioni ICF.)
        sedute.statoDallaData(req.body.data, oggiIso())]
     );
     await recomputePercorso(req.params.pid);
     res.json({ ok: true, id: sid });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Errore' }); }
-});
+}
+router.post('/dashboard/clients/:id/percorsi/:pid/sedute', requireCoach, express.json(), rottaCreaSeduta);
+router.post('/dashboard/progetti/:id/percorsi/:pid/sedute', requireCoach, express.json(), rottaCreaSeduta);
 
 // Modifica una seduta
-router.post('/dashboard/clients/:id/percorsi/:pid/sedute/:sid', requireCoach, express.json(), async (req, res) => {
+async function rottaModificaSeduta(req, res) {
   try {
     const t = normTipo(req.body.tipo);
     const f = sedutaFields(req.body);
@@ -1224,27 +1236,34 @@ router.post('/dashboard/clients/:id/percorsi/:pid/sedute/:sid', requireCoach, ex
     await recomputePercorso(req.params.pid);
     res.json({ ok: true });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Errore' }); }
-});
+}
+router.post('/dashboard/clients/:id/percorsi/:pid/sedute/:sid', requireCoach, express.json(), rottaModificaSeduta);
+router.post('/dashboard/progetti/:id/percorsi/:pid/sedute/:sid', requireCoach, express.json(), rottaModificaSeduta);
 
 // Elimina una seduta
-router.delete('/dashboard/clients/:id/percorsi/:pid/sedute/:sid', requireCoach, async (req, res) => {
+async function rottaEliminaSeduta(req, res) {
   try {
     await db.query('DELETE FROM sedute WHERE id=$1 AND percorso_id=$2', [req.params.sid, req.params.pid]);
     await recomputePercorso(req.params.pid);
     res.json({ ok: true });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Errore' }); }
-});
+}
+router.delete('/dashboard/clients/:id/percorsi/:pid/sedute/:sid', requireCoach, rottaEliminaSeduta);
+router.delete('/dashboard/progetti/:id/percorsi/:pid/sedute/:sid', requireCoach, rottaEliminaSeduta);
 
 // Approva una BOZZA (report automatico rivisto dal coach): diventa 'confermata' e
-// solo ora le ore/sessioni entrano nel conteggio ICF.
-router.post('/dashboard/clients/:id/percorsi/:pid/sedute/:sid/approva', requireCoach, async (req, res) => {
+// solo ora le ore/sessioni entrano nel conteggio ICF. Stessa proposta di chiusura
+// nelle due pagine in cui vive.
+async function rottaApprovaSeduta(req, res) {
   try {
     await db.query("UPDATE sedute SET stato='confermata' WHERE id=$1 AND percorso_id=$2",
       [req.params.sid, req.params.pid]);
     await recomputePercorso(req.params.pid);
     res.json({ ok: true, ...await proponiChiusura(req.params.sid, req.params.pid) });
   } catch (err) { console.error(err); res.status(500).json({ error: 'Errore' }); }
-});
+}
+router.post('/dashboard/clients/:id/percorsi/:pid/sedute/:sid/approva', requireCoach, rottaApprovaSeduta);
+router.post('/dashboard/progetti/:id/percorsi/:pid/sedute/:sid/approva', requireCoach, rottaApprovaSeduta);
 
 // Se la sessione appena approvata è una FINAL e il percorso risulta ancora attivo,
 // dice alla pagina di PROPORRE la chiusura, con la data della Final (non quella di
@@ -1573,66 +1592,7 @@ router.post('/dashboard/progetti/:id/scan-collettivo', requireCoach, express.jso
 });
 
 // Crea una sessione collettiva (riga a mano). client_id NULL (proprietà del progetto).
-router.post('/dashboard/progetti/:id/percorsi/:pid/sedute', requireCoach, express.json(), async (req, res) => {
-  try {
-    const t = normTipo(req.body.tipo);
-    const f = sedutaFields(req.body);
-    const sid = uuidv4();
-    await db.query(
-      // ⭐ 0.3 — prima qui lo stato non veniva passato e valeva il default
-      // 'confermata': una sessione di team fissata per il mese prossimo contava
-      // già ore e sessioni ICF. Stessa regola della gemella individuale.
-      `INSERT INTO sedute (id, percorso_id, client_id, tipo, data, ore, obiettivo, argomenti, attivita, scadenza, prossima_ora, eseguita, note, stato)
-       VALUES ($1,$2,NULL,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-      [sid, req.params.pid, t, req.body.data || null, oreForTipo(t, req.body.ore),
-       f.obiettivo, f.argomenti, f.attivita, f.scadenza, f.prossima_ora, f.eseguita, f.note,
-       sedute.statoDallaData(req.body.data, oggiIso())]
-    );
-    await recomputePercorso(req.params.pid);
-    res.json({ ok: true, id: sid });
-  } catch (err) { console.error(err); res.status(500).json({ error: 'Errore' }); }
-});
-
-router.post('/dashboard/progetti/:id/percorsi/:pid/sedute/:sid', requireCoach, express.json(), async (req, res) => {
-  try {
-    const t = normTipo(req.body.tipo);
-    const f = sedutaFields(req.body);
-    await db.query(
-      // ⭐ 0.3 — spostare la data ricalcola lo stato, ma SOLO su una riga scritta a
-      // mano: una riga con un report dietro (source_file_id) sta in bozza perché
-      // aspetta l'approvazione del coach, e correggerle la data non deve approvarla.
-      // La regola è sedute.statoDopoModifica; qui è scritta in SQL per farla in un
-      // colpo solo, senza rileggere la riga prima.
-      `UPDATE sedute SET tipo=$1, data=$2, ore=$3, obiettivo=$4, argomenti=$5, attivita=$6, scadenza=$7, prossima_ora=$8, eseguita=$9, note=$10,
-              stato = CASE WHEN source_file_id IS NULL THEN $13 ELSE stato END
-       WHERE id=$11 AND percorso_id=$12`,
-      [t, req.body.data || null, oreForTipo(t, req.body.ore),
-       f.obiettivo, f.argomenti, f.attivita, f.scadenza, f.prossima_ora, f.eseguita, f.note, req.params.sid, req.params.pid,
-       sedute.statoDallaData(req.body.data, oggiIso())]
-    );
-    await recomputePercorso(req.params.pid);
-    res.json({ ok: true });
-  } catch (err) { console.error(err); res.status(500).json({ error: 'Errore' }); }
-});
-
-router.delete('/dashboard/progetti/:id/percorsi/:pid/sedute/:sid', requireCoach, async (req, res) => {
-  try {
-    await db.query('DELETE FROM sedute WHERE id=$1 AND percorso_id=$2', [req.params.sid, req.params.pid]);
-    await recomputePercorso(req.params.pid);
-    res.json({ ok: true });
-  } catch (err) { console.error(err); res.status(500).json({ error: 'Errore' }); }
-});
-
-router.post('/dashboard/progetti/:id/percorsi/:pid/sedute/:sid/approva', requireCoach, async (req, res) => {
-  try {
-    await db.query("UPDATE sedute SET stato='confermata' WHERE id=$1 AND percorso_id=$2",
-      [req.params.sid, req.params.pid]);
-    await recomputePercorso(req.params.pid);
-    // Stessa proposta di chiusura della Scheda Cliente: la sezione si comporta
-    // allo stesso modo nelle due pagine in cui vive.
-    res.json({ ok: true, ...await proponiChiusura(req.params.sid, req.params.pid) });
-  } catch (err) { console.error(err); res.status(500).json({ error: 'Errore' }); }
-});
+// (le rotte delle sedute collettive stanno sopra, con le individuali: fetta 4.2)
 
 // Chiudi/concludi il percorso CONDIVISO (team/group). Come l'individuale: una via, stato→concluso.
 router.post('/dashboard/progetti/:id/percorsi/:pid/chiudi', requireCoach, express.json(), async (req, res) => {
@@ -2235,6 +2195,46 @@ async function prossimoProgressivo(q, anno) {
   return Number(r.rows[0].n);
 }
 
+/**
+ * SALVA UNA PROFORMA — fetta 4.2 (04/09/2026). Era scritto due volte (sessioni di
+ * un mese, rata di un piano) e le due copie divergevano. Documento e righe nascono
+ * insieme o non nascono: senza le righe resterebbe un numero bruciato su un foglio
+ * vuoto. Il progressivo si legge e si scrive nella stessa transazione, e il
+ * vincolo UNIQUE(anno, progressivo) è la rete.
+ * @param d           il documento composto da proforma.componiProforma
+ * @param o.legame    da una riga composta a { seduta_id | tranche_id, percorso_id }
+ */
+async function salvaProforma(d, { anno, oggi, clientId = null, committenteId = null, progettoId = null, scadenza = null, legame }) {
+  return db.transazione(async (q) => {
+    const n = await prossimoProgressivo(q, anno);
+    const ins = await q(`
+      INSERT INTO proforme (id, numero, anno, progressivo, client_id, committente_id,
+        progetto_id, data_emissione, periodo_da, periodo_a, categoria_fiscale,
+        emittente_dati, destinatario_dati,
+        imponibile, iva, ritenuta, bollo, totale_documento, da_pagare, scadenza)
+      VALUES ($1, $19, $2::int, $20, $3, $4, $5,
+             $6::date, $7::date, $8::date, $9, $10::jsonb, $11::jsonb,
+             $12, $13, $14, $15, $16, $17, $18::date)
+      RETURNING id, numero`,
+      [uuidv4(), anno, clientId, committenteId, progettoId, oggi,
+       d.periodoDa, d.periodoA, d.categoria,
+       JSON.stringify(d.emittenteDati), JSON.stringify(d.destinatarioDati),
+       d.conti.imponibile, d.conti.iva, d.conti.ritenuta, d.conti.bollo,
+       d.conti.totaleDocumento, d.conti.daPagare, scadenza,
+       proforma.numeroProforma(anno, n), n]);
+    const pf = ins.rows[0];
+    for (const r of d.righe) {
+      const l = legame(r);
+      await q(`INSERT INTO proforma_righe
+        (id, proforma_id, seduta_id, tranche_id, percorso_id, data, descrizione, quantita, prezzo_unitario, importo, ordine)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [uuidv4(), pf.id, l.seduta_id || null, l.tranche_id || null, l.percorso_id || null, r.data, r.descrizione,
+         r.quantita, r.prezzo_unitario, r.importo, r.ordine]);
+    }
+    return pf;
+  });
+}
+
 // Una proforma raccoglie TUTTE le sessioni a pagamento non ancora chieste, non
 // solo quelle di un mese (scelta di Germano): un mese rimasto indietro non deve
 // sparire. Il perno è `proforma_righe.seduta_id` — una sessione che sta già in
@@ -2283,35 +2283,12 @@ router.post('/dashboard/clients/:id/proforma', requireCoach, async (req, res) =>
     //    non più l'SQL con lpad(n, 3, '0') — che oltre 999 TRONCA (Postgres:
     //    lpad('1000', 3, '0') = '100'). La regola del numero sta in un posto solo,
     //    quello che `prova-proforma` copre già.
-    const creata = await db.transazione(async (q) => {
-      const n = await prossimoProgressivo(q, anno);
-      const ins = await q(`
-        INSERT INTO proforme (id, numero, anno, progressivo, client_id, data_emissione,
-          periodo_da, periodo_a, categoria_fiscale, emittente_dati, destinatario_dati,
-          imponibile, iva, ritenuta, bollo, totale_documento, da_pagare, scadenza)
-        VALUES ($1, $16, $2::int, $17, $3, $4::date,
-               $5::date, $6::date, $7, $8::jsonb, $9::jsonb,
-               $10, $11, $12, $13, $14, $15, $4::date)
-        RETURNING id, numero`,
-        // ⭐ C4 — la scadenza di un mese di sessioni è il giorno stesso: chi paga
-        // per sé lo fa a RIMESSA DIRETTA (modello dei soldi, 10/08). Il promemoria
-        // parte quindi da subito, ed è giusto così — non c'è nessun termine da
-        // aspettare.
-        [uuidv4(), anno, cliente.id, oggi, d.periodoDa, d.periodoA, d.categoria,
-         JSON.stringify(d.emittenteDati), JSON.stringify(d.destinatarioDati),
-         d.conti.imponibile, d.conti.iva, d.conti.ritenuta, d.conti.bollo,
-         d.conti.totaleDocumento, d.conti.daPagare,
-         proforma.numeroProforma(anno, n), n]);
-      const pf = ins.rows[0];
-      for (const r of d.righe) {
-        await q(`INSERT INTO proforma_righe
-          (id, proforma_id, seduta_id, percorso_id, data, descrizione, quantita, prezzo_unitario, importo, ordine)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-          [uuidv4(), pf.id, r.seduta_id, r.percorso_id, r.data, r.descrizione,
-           r.quantita, r.prezzo_unitario, r.importo, r.ordine]);
-      }
-      return pf;
-    });
+    // ⭐ C4 — la scadenza di un mese di sessioni è il giorno stesso: chi paga
+    // per sé lo fa a RIMESSA DIRETTA (modello dei soldi, 10/08). Il promemoria
+    // parte quindi da subito, ed è giusto così — non c'è nessun termine da
+    // aspettare.
+    const creata = await salvaProforma(d, { anno, oggi, clientId: cliente.id, scadenza: oggi,
+      legame: r => ({ seduta_id: r.seduta_id, percorso_id: r.percorso_id }) });
     res.json({ ok: true, id: creata.id, numero: creata.numero });
   } catch (err) {
     console.error('[proforma/crea]', err);
@@ -2422,34 +2399,8 @@ router.post('/dashboard/tranche/:id/proforma', requireCoach, async (req, res) =>
     // giorno dell'invio, che è comunque un momento vero.
     const scadenza = tranche.scadenza(t, riferimento);
 
-    const creata = await db.transazione(async (q) => {
-      // Stesso numero, stessa regola della proforma delle sessioni (fetta 1.2).
-      const n = await prossimoProgressivo(q, anno);
-      const ins = await q(`
-        INSERT INTO proforme (id, numero, anno, progressivo, client_id, committente_id,
-          progetto_id, data_emissione, periodo_da, periodo_a, categoria_fiscale,
-          emittente_dati, destinatario_dati,
-          imponibile, iva, ritenuta, bollo, totale_documento, da_pagare, scadenza)
-        VALUES ($1, $19, $2::int, $20, $3, $4, $5,
-               $6::date, $7::date, $8::date, $9, $10::jsonb, $11::jsonb,
-               $12, $13, $14, $15, $16, $17, $18::date)
-        RETURNING id, numero`,
-        [uuidv4(), anno, clientId, committenteId, progettoId, oggi,
-         d.periodoDa, d.periodoA, d.categoria,
-         JSON.stringify(d.emittenteDati), JSON.stringify(d.destinatarioDati),
-         d.conti.imponibile, d.conti.iva, d.conti.ritenuta, d.conti.bollo,
-         d.conti.totaleDocumento, d.conti.daPagare, scadenza,
-         proforma.numeroProforma(anno, n), n]);
-      const pf = ins.rows[0];
-      for (const r of d.righe) {
-        await q(`INSERT INTO proforma_righe
-          (id, proforma_id, tranche_id, percorso_id, data, descrizione, quantita, prezzo_unitario, importo, ordine)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-          [uuidv4(), pf.id, r.tranche_id, t.perc_id || null, r.data, r.descrizione,
-           r.quantita, r.prezzo_unitario, r.importo, r.ordine]);
-      }
-      return pf;
-    });
+    const creata = await salvaProforma(d, { anno, oggi, clientId, committenteId, progettoId, scadenza,
+      legame: r => ({ tranche_id: r.tranche_id, percorso_id: t.perc_id || null }) });
     res.json({ ok: true, id: creata.id, numero: creata.numero });
   } catch (err) {
     console.error('[proforma/rata]', err);
