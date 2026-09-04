@@ -2,27 +2,27 @@
 
 Non si modifica a mano: lo riscrive `npm run prova`. Se un numero qui non torna con quello che ricordi, è cambiato il codice.
 
-- `server/routes.js`: **9796 righe**, **15 pagine**, **92 rotte**
-- moduli in `server/`: **26** (7 usano `db.js`, 19 no)
+- `server/routes.js`: **9814 righe**, **15 pagine**, **92 rotte**
+- moduli in `server/`: **27** (8 usano `db.js`, 19 no)
 - prove in `npm run prova`: **16**, in questo ordine: prova-file → prova-js → prova-pagine → prova-fiscale → prova-proforma → prova-tranche → prova-incassi → prova-sedute → prova-appuntamenti → prova-final-programmata → prova-migrazione → prova-barriere → prova-conformita → prova-automazione → inventario → prova-timbro
 
 ## Le pagine (funzioni che finiscono in Page, nell'ordine del file)
 
-- `loginPage` (riga 4063)
-- `homePage` (riga 4082)
-- `dashboardPage` (riga 4305)
-- `driveDiagPage` (riga 4460)
-- `clientDetailPage` (riga 4604)
-- `leadsPage` (riga 6627)
-- `anomaliePage` (riga 6827)
-- `proformaPage` (riga 6981)
-- `contrattiAmmPage` (riga 7466)
-- `emittentePage` (riga 7581)
-- `committentiPage` (riga 7677)
-- `progettiPage` (riga 7865)
-- `progettoDettaglioPage` (riga 8221)
-- `cercaPage` (riga 9659)
-- `icfPage` (riga 9741)
+- `loginPage` (riga 4071)
+- `homePage` (riga 4090)
+- `dashboardPage` (riga 4323)
+- `driveDiagPage` (riga 4478)
+- `clientDetailPage` (riga 4622)
+- `leadsPage` (riga 6645)
+- `anomaliePage` (riga 6845)
+- `proformaPage` (riga 6999)
+- `contrattiAmmPage` (riga 7484)
+- `emittentePage` (riga 7599)
+- `committentiPage` (riga 7695)
+- `progettiPage` (riga 7883)
+- `progettoDettaglioPage` (riga 8239)
+- `cercaPage` (riga 9677)
+- `icfPage` (riga 9759)
 
 ## Le rotte, per mondo
 
@@ -142,27 +142,28 @@ Non si modifica a mano: lo riscrive `npm run prova`. Se un numero qui non torna 
 |---|---|---|
 | `appuntamenti.js` | 92 | sì |
 | `auth.js` | 31 | sì |
+| `automazione.js` | 102 | sì |
 | `chiama-ui.js` | 39 | no |
 | `claude.js` | 380 | no |
 | `collaudo.js` | 82 | no |
 | `contratti-stato.js` | 113 | no |
 | `contratto-testi.js` | 900 | no |
 | `contratto.js` | 292 | no |
-| `db.js` | 1075 | no |
+| `db.js` | 1093 | no |
 | `documenti.js` | 112 | no |
 | `fiscale.js` | 501 | no |
 | `google-drive.js` | 417 | no |
 | `incassi.js` | 271 | no |
-| `index.js` | 82 | sì |
+| `index.js` | 75 | sì |
 | `logo.js` | 37 | no |
 | `mailer.js` | 83 | no |
 | `maturato.js` | 142 | sì |
 | `moduli.js` | 180 | no |
 | `piano-ui.js` | 598 | no |
 | `proforma.js` | 591 | no |
-| `routes.js` | 9796 | sì |
+| `routes.js` | 9814 | sì |
 | `scan-moduli.js` | 215 | sì |
-| `scan.js` | 410 | sì |
+| `scan.js` | 416 | sì |
 | `sedute.js` | 55 | no |
-| `stato-ui.js` | 59 | no |
+| `stato-ui.js` | 61 | no |
 | `tranche.js` | 279 | no |

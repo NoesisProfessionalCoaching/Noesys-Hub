@@ -79,6 +79,28 @@ function prova(titolo, atteso, ottenuto) {
     prova('senza percorsi: null, non un errore', null, scan.percorsoPerReport([], { percorsoFolderId: 'X' }));
   }
 
+  console.log('\n— 4 · L\'AUTOMAZIONE SI VEDE (fetta 2.2): il riassunto e le voci della home —');
+  const au = require('../server/automazione');
+  const r1 = au.riassunto({ processed: [{}, {}], skipped: 3, clients: 4,
+    errors: [{ cliente: 'Rossi', file: 'Report X.docx', err: 'Word vuoto' }, { cliente: 'Bianchi', file: 'Report Y.docx', err: 'limite per passata raggiunto' }],
+    ignorati: [{ cliente: 'Rossi', file: 'Appunti.docx' }] });
+  prova('il riassunto conta fatti, saltati, soggetti', [2, 3, 4], [r1.fatti, r1.saltati, r1.soggetti]);
+  prova('gli errori veri restano, il tetto raggiunto diventa «rimasti»', [1, 1], [r1.errori.length, r1.rimasti]);
+  prova('gli ignorati portano cliente e file', [{ chi: 'Rossi', file: 'Appunti.docx' }], r1.ignorati);
+  const r2 = au.riassunto({ proposte: [{}], letti: 5, clients: 2, errors: [{ dove: 'configurazione', errore: 'Drive non configurato' }] });
+  prova('regge anche il formato dei moduli (proposte/letti, dove/errore)', [1, 2, 'Drive non configurato'], [r2.fatti, r2.soggetti, r2.errori[0].err]);
+  const voci = au.perHome([
+    { passata: 'report-clienti', ok: false, errore: 'Chiavi Google mancanti' },
+    { passata: 'report-progetti', ok: true, esito: r1 },
+    { passata: 'moduli', ok: true, esito: { fatti: 0, errori: [], ignorati: [], rimasti: 0 } },
+  ]);
+  prova('una passata esplosa diventa una voce grave con la causa', true, voci.some(v => v.grave && /Chiavi Google mancanti/.test(v.testo) && /report dei clienti/.test(v.testo)));
+  prova('un report illeggibile è una voce grave col nome del file', true, voci.some(v => v.grave && /Rossi/.test(v.testo) && /Report X\.docx/.test(v.testo) && /Word vuoto/.test(v.testo)));
+  prova('un file ignorato per nome è una voce NON grave che dice di rinominarlo', true, voci.some(v => !v.grave && /Appunti\.docx/.test(v.testo) && /Rinominalo/.test(v.testo)));
+  prova('il tetto raggiunto è una voce che dice quanti restano', true, voci.some(v => /1 report lasciato/.test(v.testo)));
+  prova('una passata pulita non produce voci', 0, au.perHome([{ passata: 'moduli', ok: true, esito: { errori: [], ignorati: [] } }]).length);
+  prova('nessuna passata: nessuna voce, non un errore', [], au.perHome([]));
+
   console.log(falliti ? `\n🔴 ${falliti} prove fallite` : '\n✅ automazione: tutte le prove passano');
   process.exit(falliti ? 1 : 0);
 })();

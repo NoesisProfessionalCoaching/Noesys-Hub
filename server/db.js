@@ -1061,6 +1061,24 @@ async function init() {
   await query(`CREATE UNIQUE INDEX IF NOT EXISTS contratti_partecipante_unico
                  ON contratti (partecipazione_id) WHERE tipo = 'partecipante'`);
 
+  // ── L'ESITO DELLE PASSATE AUTOMATICHE — fetta 2.2 del riordino (04/09/2026) ──
+  // Decisione (a) di Germano: una tabella NUOVA, che non tocca quelle esistenti.
+  // Una riga per passata (report clienti/progetti/collettivi, moduli, o una
+  // lettura manuale dal pulsante): quando, quanto ha impiegato, cosa ha fatto
+  // e cosa no. La home legge l'ultima riga di ognuna (server/automazione.js).
+  await query(`
+    CREATE TABLE IF NOT EXISTS automazione_passate (
+      id         SERIAL PRIMARY KEY,
+      passata    TEXT NOT NULL,
+      quando     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      ok         BOOLEAN NOT NULL DEFAULT TRUE,
+      durata_ms  INTEGER,
+      esito      JSONB,
+      errore     TEXT
+    )
+  `);
+  await query(`CREATE INDEX IF NOT EXISTS automazione_passate_quando ON automazione_passate (passata, quando DESC)`);
+
   // Stesso account coach della piattaforma strumenti (solo per il DB di test:
   // sul DB reale condiviso la riga esiste già).
   const existing = await query('SELECT id FROM coach WHERE username = $1', ['Germano']);

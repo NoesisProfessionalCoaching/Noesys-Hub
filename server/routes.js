@@ -13,6 +13,7 @@ const contrattiStato = require('./contratti-stato'); // gli stati della bozza
 const collaudo = require('./collaudo');               // i record di prova fuori dai numeri (fetta 1.4)
 const chiamaUi = require('./chiama-ui');              // la chiamata che legge la risposta (fetta 2.1)
 const statoUi = require('./stato-ui');                // filtro e sezioni aperte non si perdono (fetta 2.4)
+const automazione = require('./automazione');         // l'esito delle passate automatiche (fetta 2.2)
 const documenti = require('./documenti');
 const mailer = require('./mailer');
 const moduli = require('./moduli');
@@ -184,7 +185,7 @@ async function mostraHome(req, res) {
     //    (`collaudo.filtro`); NULL conta come vero. Le liste qui sotto no: quelle
     //    sono lavoro, e il cartellino dice chi è di prova.
     const [ind, prog, comm, lead, bozze, daChiudere, azioni, richiami, appRows,
-           anagrafiche, documenti, classif] = await Promise.all([
+           anagrafiche, documenti, classif, passate] = await Promise.all([
       db.query(`SELECT count(*)::int n FROM clients c
                  WHERE ${collaudo.filtro('c')}
                    AND (EXISTS (SELECT 1 FROM percorsi pi WHERE pi.client_id = c.id AND pi.progetto_id IS NULL)
@@ -266,6 +267,8 @@ async function mostraHome(req, res) {
           (SELECT count(*) FROM clients     WHERE di_collaudo IS TRUE)::int c_prova, (SELECT count(*) FROM clients     WHERE di_collaudo IS NULL)::int c_boh,
           (SELECT count(*) FROM committenti WHERE di_collaudo IS TRUE)::int k_prova, (SELECT count(*) FROM committenti WHERE di_collaudo IS NULL)::int k_boh,
           (SELECT count(*) FROM progetti    WHERE di_collaudo IS TRUE)::int p_prova, (SELECT count(*) FROM progetti    WHERE di_collaudo IS NULL)::int p_boh`),
+      // ⭐ Fetta 2.2: l'ultima riga di ogni passata automatica.
+      automazione.ultime(),
     ]);
 
     // ── Proforma create e non ancora spedite (13/08) ──────────────────────────
@@ -350,6 +353,8 @@ async function mostraHome(req, res) {
       nProgetti: prog.rows[0].n, nProgettiAttivi: prog.rows[0].attivi,
       nCommittenti: comm.rows[0].n,
       nLead: lead.rows[0].n, nLeadAperti: lead.rows[0].aperti,
+      // Fetta 2.2: cosa l'automazione non è riuscita a fare, con i nomi; e quando è passata l'ultima volta.
+      automazione: { voci: automazione.perHome(passate), ultima: passate.length ? passate.map(p => p.quando).sort().slice(-1)[0] : null },
       classificazione: {
         collaudo:       { clienti: classif.rows[0].c_prova, committenti: classif.rows[0].k_prova, progetti: classif.rows[0].p_prova },
         nonClassificati:{ clienti: classif.rows[0].c_boh,   committenti: classif.rows[0].k_boh,   progetti: classif.rows[0].p_boh },
@@ -1276,8 +1281,11 @@ async function proponiChiusura(sid, pid) {
 // 8h). Coach-only: legge i report nuovi da Drive e crea le bozze. client_id opzionale.
 router.post('/dashboard/scan-drive', requireCoach, express.json(), async (req, res) => {
   try {
-    const out = await scan.scanClientReports({ onlyClientId: (req.body && req.body.client_id) || undefined });
-    res.json({ ok: true, ...out });
+    // Fetta 2.2: anche la lettura dal pulsante lascia la sua riga (passata «manuale»).
+    const r = await automazione.esegui('report-clienti (manuale)',
+      () => scan.scanClientReports({ onlyClientId: (req.body && req.body.client_id) || undefined }));
+    if (!r.ok) return res.status(500).json({ error: r.errore });
+    res.json({ ok: true, ...r.out });
   } catch (err) { console.error('[scan-drive]', err); res.status(500).json({ error: err.message }); }
 });
 
@@ -4209,7 +4217,14 @@ function homePage(d, req) {
   const gDocumenti = gruppo('Documentazione da completare', d.documenti.map(x => voce(
     `/dashboard/clients/${x.id}`, esc(x.name), x.stato)));
 
-  const attenzione = [gAppuntamenti, gVerificare, gFerme, gDaChiedere, gBozze, gAnagrafiche, gChiudere, gDocumenti, gAzioni, gLead].filter(Boolean).join('');
+  // ⭐ Fetta 2.2 — «L'automazione non è riuscita a…». Ogni voce ha un nome e una
+  //    cosa da fare (rinominare un file, controllare un link). Il gruppo compare
+  //    solo se c'è qualcosa da dire; sotto, in piccolo, quando è passata l'ultima.
+  const au = d.automazione || { voci: [], ultima: null };
+  const gAutomazione = gruppo('L\'automazione non è riuscita a…', au.voci.map(v =>
+    `<div class="hm-voce" style="cursor:default"><span style="color:${v.grave ? '#a4342a' : 'var(--muted)'}">${esc(v.testo)}</span></div>`));
+
+  const attenzione = [gAppuntamenti, gVerificare, gFerme, gDaChiedere, gAutomazione, gBozze, gAnagrafiche, gChiudere, gDocumenti, gAzioni, gLead].filter(Boolean).join('');
 
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub</title>${baseStyle()}</head><body>
   ${headerNoesys({})}
@@ -4235,6 +4250,9 @@ function homePage(d, req) {
     <section class="hm-att">
       <h2 style="margin-bottom:14px">Chiede attenzione</h2>
       ${attenzione || `<div class="card" style="color:var(--muted);font-size:13px">Non c'è nulla in sospeso: nessuna bozza da approvare, nessun percorso da chiudere, nessun richiamo in scadenza.</div>`}
+      <div id="ultima-passata" style="font-size:11.5px;color:var(--hint);margin-top:8px">${au.ultima
+        ? `⏱ L'automazione (report e moduli da Drive) è passata l'ultima volta il ${itDateTime(au.ultima)}.`
+        : '⏱ L\'automazione (report e moduli da Drive) non ha ancora lasciato traccia di una passata.'}</div>
     </section>
 
   </div>

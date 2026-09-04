@@ -26,11 +26,15 @@ function isDocxReport(f) {
 
 // `folderName` è il nome della cartella diretta che contiene il file — serve a estrarre
 // la data della seduta quando le cartelle-data sono nominate `YYYY-MM-DD`.
+// ⭐ Fetta 2.2: un .docx che NON comincia con «Report» non sparisce più in
+//    silenzio: finisce in `out.ignorati` (la lista porta anche quella), e la home
+//    lo dice per nome, così si può rinominare.
 async function collectDocx(folderId, tipo, out, folderName, cartella) {
   const items = await drive.listChildren(folderId);
   for (const it of items) {
     if (drive.isFolder(it)) await collectDocx(it.id, tipo, out, it.name, cartella);
     else if (isDocxReport(it)) out.push({ id: it.id, name: it.name, tipo, modifiedTime: it.modifiedTime, folderName, ...(cartella || {}) });
+    else if (it.mimeType === DOCX_MIME || /\.docx$/i.test(it.name || '')) { out.ignorati = out.ignorati || []; out.ignorati.push(it.name); }
   }
 }
 
@@ -212,6 +216,7 @@ async function scanClientReports({ onlyClientId } = {}) {
     let reports;
     try { reports = await reportsForClient(folderId); }
     catch (e) { result.errors.push({ cliente: cliente.name, err: 'lettura Drive: ' + e.message }); continue; }
+    for (const f of reports.ignorati || []) (result.ignorati = result.ignorati || []).push({ cliente: cliente.name, file: f });
 
     const nuovi = reports.filter(r => !done.has(r.id));
     if (!nuovi.length) { result.skipped += reports.length; continue; }
@@ -295,6 +300,7 @@ async function scanProjectReports({ onlyProjectId } = {}) {
     let reports;
     try { reports = await reportsForProject(folderId); }
     catch (e) { result.errors.push({ progetto: prog.titolo, err: 'lettura Drive: ' + e.message }); continue; }
+    for (const f of reports.ignorati || []) (result.ignorati = result.ignorati || []).push({ progetto: prog.titolo, file: f });
 
     const nuovi = reports.filter(r => !done.has(r.id));
     if (!nuovi.length) { result.skipped += reports.length; continue; }

@@ -22,6 +22,7 @@ const db     = require('./db');
 const routes = require('./routes');
 const scan   = require('./scan');
 const scanModuli = require('./scan-moduli');
+const automazione = require('./automazione');   // l'esito delle passate (fetta 2.2)
 
 const app  = express();
 const PORT = process.env.PORT || 3100;
@@ -52,27 +53,19 @@ db.init().then(() => {
 
   // Automazione report→scheda: controllo dei report Drive ogni 8h (ora italiana).
   // Crea sedute in BOZZA che il coach approva; salta i file già lavorati.
+  // ⭐ Fetta 2.2 (04/09/2026): QUATTRO passate separate, ognuna dentro
+  //    `automazione.esegui`, che non rilancia mai — se la prima esplode le altre
+  //    tre partono lo stesso — e conserva l'esito in `automazione_passate`, da
+  //    cui la home dice cosa non è riuscito. Prima stavano in un solo try e
+  //    l'esito finiva solo nei log di Railway.
   cron.schedule('0 7,15,23 * * *', async () => {
-    try {
-      const out = await scan.scanClientReports();
-      console.log(`[scan] ${new Date().toISOString()} — bozze:${out.processed.length} saltati:${out.skipped} clienti:${out.clients} errori:${out.errors.length}`);
-      if (out.errors.length) console.log('[scan] dettaglio errori:', JSON.stringify(out.errors));
-      const outP = await scan.scanProjectReports();
-      console.log(`[scan-progetti] ${new Date().toISOString()} — bozze:${outP.processed.length} saltati:${outP.skipped} progetti:${outP.progetti} errori:${outP.errors.length}`);
-      if (outP.errors.length) console.log('[scan-progetti] dettaglio errori:', JSON.stringify(outP.errors));
-      const outC = await scan.scanCollectiveReports();
-      console.log(`[scan-collettivo] ${new Date().toISOString()} — bozze:${outC.processed.length} saltati:${outC.skipped} percorsi:${outC.percorsi} errori:${outC.errors.length}`);
-      if (outC.errors.length) console.log('[scan-collettivo] dettaglio errori:', JSON.stringify(outC.errors));
-      // Moduli compilati (scheda anagrafica, contratto) → anagrafica del cliente.
-      // A differenza dei report NON crea bozze: scrive in anagrafica, perché il
-      // modulo è compilato dal cliente stesso e vince su quello che c'è.
-      const outM = await scanModuli.scanModuliClienti();
-      console.log(`[scan-moduli] ${new Date().toISOString()} — proposte:${outM.proposte.length} letti:${outM.letti} vuoti-eliminati:${outM.eliminati} clienti:${outM.clients} errori:${outM.errors.length}`);
-      if (outM.proposte.length) console.log('[scan-moduli] dettaglio:', JSON.stringify(outM.proposte));
-      if (outM.errors.length) console.log('[scan-moduli] dettaglio errori:', JSON.stringify(outM.errors));
-    } catch (e) {
-      console.error('[scan] passata non eseguita:', e.message);
-    }
+    const dì = (nome, r) => console.log(`[${nome}] ${new Date().toISOString()} — ${r.ok ? JSON.stringify(r.esito) : 'NON ESEGUITA: ' + r.errore}`);
+    dì('report-clienti',    await automazione.esegui('report-clienti',    () => scan.scanClientReports()));
+    dì('report-progetti',   await automazione.esegui('report-progetti',   () => scan.scanProjectReports()));
+    dì('report-collettivi', await automazione.esegui('report-collettivi', () => scan.scanCollectiveReports()));
+    // Moduli compilati (scheda anagrafica, contratto): dall'8 agosto NON scrivono
+    // in anagrafica, PROPONGONO (bozza_anagrafica) e il coach approva.
+    dì('moduli',            await automazione.esegui('moduli',            () => scanModuli.scanModuliClienti()));
   }, { timezone: 'Europe/Rome' });
   console.log('   ⏱  Report Drive → bozza · Moduli → anagrafica: 07:00 / 15:00 / 23:00 (Europe/Rome)\n');
 }).catch(err => {

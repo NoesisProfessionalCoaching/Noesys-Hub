@@ -826,6 +826,34 @@ const chiama = async (metodo, url, corpo) => {
     r = await chiama('POST', '/dashboard/collaudo', { tipo: 'cliente', id: '00000000-0000-0000-0000-000000000000', di_collaudo: true });
     dice(r.stato === 404, '🔬 un record che non esiste: 404', 'ha risposto ' + r.stato);
 
+    // ══ Fetta 2.2 (04/09/2026) — L'AUTOMAZIONE SI VEDE ════════════════════════
+    // Una passata che esplode e una che ha ignorato un file lasciano una riga in
+    // `automazione_passate`, e la home le racconta per nome. Le passate qui si
+    // chiamano PROVA-… e si tolgono alla fine.
+    console.log('\n20d. 🤖 L\'automazione si vede in home (fetta 2.2)');
+    const automazione = require('../server/automazione');
+    let ra = await automazione.esegui('PROVA-' + marca + '-esplosa', async () => { throw new Error('Drive giù per prova'); });
+    dice(ra.ok === false && /Drive giù/.test(ra.errore), 'una passata che esplode non rilancia: restituisce l\'errore');
+    ra = await automazione.esegui('PROVA-' + marca + '-ok', async () => ({ processed: [{}], skipped: 0, clients: 1,
+      errors: [{ cliente: 'Prova ' + marca, file: 'Report finto.docx', err: 'Word vuoto o illeggibile' }],
+      ignorati: [{ cliente: 'Prova ' + marca, file: 'Verbale ' + marca + '.docx' }] }));
+    dice(ra.ok === true && ra.esito.fatti === 1 && ra.esito.ignorati.length === 1, 'una passata riuscita lascia il riassunto');
+    const righeAu = await db.query("SELECT passata, ok, durata_ms, esito FROM automazione_passate WHERE passata LIKE $1 ORDER BY id", ['PROVA-' + marca + '%']);
+    dice(righeAu.rows.length === 2 && righeAu.rows[0].ok === false && righeAu.rows[1].ok === true && righeAu.rows[1].durata_ms >= 0, '  e nel database ci sono le due righe, con esito e durata');
+    home = await chiama('GET', '/dashboard');
+    dice(home.stato === 200, 'la home risponde 200', home.stato);
+    dice(/automazione non è riuscita a/.test(home.testo), '  e ha il gruppo «L\'automazione non è riuscita a…»');
+    dice(/Drive giù per prova/.test(home.testo), '  con la passata esplosa e la sua causa');
+    dice(new RegExp('Report finto\\.docx').test(home.testo) && /Word vuoto o illeggibile/.test(home.testo), '  col report illeggibile, per nome');
+    dice(new RegExp('Verbale ' + marca + '\\.docx').test(home.testo) && /Rinominalo/.test(home.testo), '  e col file ignorato per nome, con cosa fare');
+    dice(/id="ultima-passata"/.test(home.testo) && /passata l'ultima volta il/.test(home.testo), '  e dice quando è passata l\'ultima volta');
+    // il pulsante manuale «Cerca nuovi report» lascia anche lui la riga (qui senza chiavi: esplode, e lo dice)
+    r = await chiama('POST', '/dashboard/scan-drive', { client_id: idCli });
+    dice(r.stato === 500 && /Chiavi Google mancanti/.test(r.testo), 'il pulsante «Cerca nuovi report» senza chiavi dice perché (500 con la causa)', r.stato + ' ' + r.testo.slice(0, 100));
+    const manuale = await db.query("SELECT ok, errore FROM automazione_passate WHERE passata='report-clienti (manuale)' ORDER BY id DESC LIMIT 1");
+    dice(manuale.rows.length === 1 && manuale.rows[0].ok === false && /Chiavi Google/.test(manuale.rows[0].errore), '  e anche lui ha lasciato la sua riga');
+    await db.query("DELETE FROM automazione_passate WHERE passata LIKE $1 OR passata='report-clienti (manuale)'", ['PROVA-' + marca + '%']);
+
     console.log('\n21. 🔬 Adesso la rompo apposta');
     for (const [corpo, et] of [
       [{ tipo: 'boh',         soggetto_id: idProg, stato: 'da_inviare' }, 'un tipo inventato'],

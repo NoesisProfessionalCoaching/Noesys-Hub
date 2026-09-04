@@ -23,7 +23,8 @@ const TABELLE_ATTESE = [
   'committenti', 'progetti', 'partecipazioni', 'fasi_progetto',
   'permessi_strumenti', 'moduli_letti', 'emittente',
   'proforme', 'proforma_righe', 'appuntamenti', 'tranche_progetto', 'incassi',
-  'documenti',
+  'documenti', 'contratti',
+  'automazione_passate',   // fetta 2.2 (04/09/2026)
 ];
 
 const url = process.env.DATABASE_URL;
