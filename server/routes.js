@@ -186,7 +186,7 @@ async function mostraHome(req, res) {
     //    (`collaudo.filtro`); NULL conta come vero. Le liste qui sotto no: quelle
     //    sono lavoro, e il cartellino dice chi è di prova.
     const [ind, prog, comm, lead, bozze, daChiudere, azioni, richiami, appRows,
-           anagrafiche, documenti, classif, passate] = await Promise.all([
+           anagrafiche, docsMancanti, classif, passate] = await Promise.all([
       db.query(`SELECT count(*)::int n FROM clients c
                  WHERE ${collaudo.filtro('c')}
                    AND (EXISTS (SELECT 1 FROM percorsi pi WHERE pi.client_id = c.id AND pi.progetto_id IS NULL)
@@ -364,7 +364,8 @@ async function mostraHome(req, res) {
       azioni: azioni.rows, richiami: richiami.rows,
       appuntamenti: appRows,
       anagrafiche: anagrafiche.rows,
-      documenti: documenti.rows.map(x => ({
+      // (4.6: si chiamava `documenti` e oscurava il modulo con lo stesso nome)
+      documenti: docsMancanti.rows.map(x => ({
         id: x.id, name: x.name,
         stato: Number(x.compilati) > 0
           ? 'manca il consenso privacy'
@@ -3813,7 +3814,6 @@ function baseStyle() {
       .az-btns { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
       .az-stato { font-size: 11px; color: var(--hint); margin-top: 7px; line-height: 1.6; }
       .az-link { font-size: 12px; color: var(--muted); word-break: break-all; margin-bottom: 7px; }
-      .az-arrivo { font-size: 10px; color: var(--hint); font-style: italic; }
       .az-fatto { color: var(--green); font-weight: 700; }
       .az-danger { display: flex; justify-content: flex-end; align-items: center; gap: 12px; flex-wrap: wrap; border-top: 1px dashed var(--line); margin-top: 18px; padding-top: 12px; }
       @media (max-width: 700px) { .az-grid { grid-template-columns: 1fr; } }
@@ -3965,7 +3965,7 @@ function baseStyle() {
         .btn-sm { min-height: 44px; padding: 11px 16px; font-size: 13px; }
         input, select, textarea { min-height: 44px; font-size: 16px; }
         input[type="checkbox"], input[type="radio"] { min-height: 0; width: 22px; height: 22px; }
-        .field-label, .az-nome, .az-arrivo, .nh-tag, .zona-tit { font-size: 11px; }
+        .field-label, .az-nome, .nh-tag, .zona-tit { font-size: 11px; }
         ${/* Due colonne su un telefono sarebbero due strisce strette: si impilano,
               e il filo che le separava passa da verticale a orizzontale. */ ''}
         .scheda-2col { grid-template-columns: 1fr; gap: 22px; }
@@ -4552,27 +4552,6 @@ function driveDiagPage(steps, root, children, req) {
   </body></html>`;
 }
 
-// Mini-Markdown → HTML sicuro per la scheda seduta (grassetto, corsivo, titoli,
-// elenchi, citazioni, righello). Prima si esce l'HTML, poi si applicano i pochi stili.
-function mdLite(md) {
-  const inline = t => esc(t)
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/(^|[^*])\*(?!\s)([^*]+?)\*(?!\*)/g, '$1<em>$2</em>');
-  const lines = String(md || '').split('\n');
-  let out = '', inList = false;
-  const closeList = () => { if (inList) { out += '</ul>'; inList = false; } };
-  for (const raw of lines) {
-    const line = raw.replace(/\s+$/, '');
-    if (/^#{1,6}\s+/.test(line)) { closeList(); out += `<div style="font-weight:700;color:var(--ink);margin:10px 0 4px">${inline(line.replace(/^#{1,6}\s+/, ''))}</div>`; }
-    else if (/^---+$/.test(line.trim())) { closeList(); out += '<hr style="border:none;border-top:1px solid var(--line);margin:8px 0">'; }
-    else if (/^[-*]\s+/.test(line)) { if (!inList) { out += '<ul style="margin:4px 0 4px 18px;padding:0">'; inList = true; } out += `<li style="margin:2px 0">${inline(line.replace(/^[-*]\s+/, ''))}</li>`; }
-    else if (line.trim() === '') { closeList(); out += '<div style="height:6px"></div>'; }
-    else if (/^>\s?/.test(line)) { closeList(); out += `<div style="color:#6B7280;font-style:italic">${inline(line.replace(/^>\s?/, ''))}</div>`; }
-    else { closeList(); out += `<div>${inline(line)}</div>`; }
-  }
-  closeList();
-  return out;
-}
 
 // Formattatori celle della Scheda Cliente.
 function boldify(t) { return esc(t).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>'); }
@@ -8647,8 +8626,6 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
          pagina. Regola mirata a questa sola finestrella: le altre non hanno
          tabelle dentro e non vanno toccate. */
       #amm .amm-num-v { font-size: 15px; }
-      #amm .amm-pagatore { margin-top: 10px; padding-top: 9px; }
-      #amm .amm-sep { margin-top: 16px; padding-top: 12px; }
       #amm #q-riepilogo { padding: 6px 10px; font-size: 12px; margin-top: 8px; }
       #amm p { font-size: 12px; }
     }

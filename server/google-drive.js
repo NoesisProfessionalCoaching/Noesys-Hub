@@ -248,13 +248,6 @@ async function findModelliFolder() {
   return findFolderByName(NOESYS_ROOT_ID, 'Modelli');
 }
 
-// Elenca i file dentro Modelli (diagnostica: verificare nomi esatti + raggiungibilità).
-// null se la cartella Modelli non è raggiungibile.
-async function listModelli() {
-  const m = await findModelliFolder();
-  if (!m) return null;
-  return listChildren(m.id);
-}
 
 // Cerca UN file (non cartella) con nome esatto dentro `parentId`. null se non c'è.
 async function findFileByName(parentId, name) {
@@ -389,7 +382,6 @@ module.exports = {
   createPercorsoCondivisoFolders,
   MODELLI_BASE,
   findModelliFolder,
-  listModelli,
   findFileByName,
   copyFileToFolder,
   copiaModelliBase,

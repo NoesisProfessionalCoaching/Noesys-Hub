@@ -14,7 +14,6 @@
 // che "23 Agosto 1970" è una data di nascita. Vedi claude.estraiAnagrafica().
 //
 // pdf-lib era GIÀ in casa (serve a generare la modulistica): nessuna libreria nuova.
-const { PDFDocument, PDFName, PDFString, PDFHexString, PDFArray, PDFDict } = require('pdf-lib');
 
 // ⚠️ CHE MODULO È — dal NOME del file, e questo va spiegato.
 // Volevo riconoscerlo dal testo stampato ("Scheda Profilo Cliente", "Accordo per
@@ -37,58 +36,6 @@ function tipoDalNome(nomeFile) {
   return t ? t.tipo : null;
 }
 
-// Legge un PDF e restituisce: che modulo è, i valori scritti sopra, le firme.
-async function leggiModulo(buffer, nomeFile) {
-  const doc = await PDFDocument.load(buffer, {
-    ignoreEncryption: true, updateMetadata: false, throwOnInvalidObject: false,
-  });
-  const ctx = doc.context;
-  const pagine = doc.getPages();
-
-  let valori = [];
-  let firme = 0;
-  let firmaUltimaPagina = false;
-
-  pagine.forEach((p, i) => {
-    const annots = p.node.Annots();
-    if (!annots) return;
-    for (let k = 0; k < annots.size(); k++) {
-      const o = ctx.lookup(annots.get(k), PDFDict);
-      if (!o || !o.get) continue;
-      const sub = o.get(PDFName.of('Subtype'));
-      const tipoAnn = sub ? sub.toString() : '';
-      if (tipoAnn === '/Stamp') {
-        firme++;
-        if (i === pagine.length - 1) firmaUltimaPagina = true;
-      }
-      const c = o.get(PDFName.of('Contents'));
-      if (!c) continue;
-      const testo = (c instanceof PDFString || c instanceof PDFHexString)
-        ? c.decodeText() : String(c);
-      if (!testo.trim()) continue;
-      const rect = ctx.lookup(o.get(PDFName.of('Rect')), PDFArray);
-      const r = rect ? [0, 1, 2, 3].map(n => rect.get(n).asNumber()) : [0, 0, 0, 0];
-      // y cresce dal basso nel PDF: la giro, così "più piccolo" = "più in alto"
-      const altezza = p.getSize().height;
-      valori.push({ pagina: i + 1, alto: Math.round(altezza - r[3]), sin: Math.round(r[0]), testo: testo.trim() });
-    }
-  });
-
-  // ordine di lettura: pagina, poi dall'alto, poi da sinistra. La tolleranza di
-  // 8 punti tiene sulla stessa riga due valori affiancati (es. Data e Luogo di
-  // nascita), che altrimenti si invertirebbero per una differenza di un pixel.
-  valori.sort((a, b) => a.pagina - b.pagina
-    || (Math.abs(a.alto - b.alto) > 8 ? a.alto - b.alto : a.sin - b.sin));
-
-  return {
-    tipo: tipoDalNome(nomeFile),
-    compilato: valori.length > 0,
-    valori: valori.map(v => v.testo),
-    firme,
-    firmaUltimaPagina,
-    pagine: pagine.length,
-  };
-}
 
 // ── Numeri di telefono ────────────────────────────────────────────────────
 // Regola di Germano (07/08): nei numeri di telefono i punti non ci vanno, e dopo
@@ -174,6 +121,6 @@ function normalizzaCampo(nome, valore) {
 }
 
 module.exports = {
-  leggiModulo, normalizzaTelefono, tipoDalNome,
+  normalizzaTelefono, tipoDalNome,
   normalizzaCampo, normalizzaVia, normalizzaEmail, normalizzaCodice, iniziali,
 };
