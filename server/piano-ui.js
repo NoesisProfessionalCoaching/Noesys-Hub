@@ -271,7 +271,7 @@ function js(o) {
       var coda = ferma
         ? '<span class="badge" style="background:' + st.bg + ';color:' + st.c + '" title="Questa rata sta gia in un documento: non si cambia e non si toglie. Si cambiano le altre.">'
           + st.label + (doc.numero ? ' · n. ' + esc2(doc.numero) : '') + '</span>'
-        : '<button onclick="togliRiga(this)" class="btn btn-danger btn-sm" title="Togli la rata">🗑</button>';
+        : '<button onclick="togliRiga(this)" class="btn btn-danger btn-sm" title="Elimina la rata">🗑</button>';
       return '<tr data-key="' + key + '"' + (t && t.id ? ' data-id="' + esc2(t.id) + '"' : '') + (ferma ? ' data-ferma="1"' : '') + '>'
         + '<td><input class="pr-et" value="' + esc2(t.etichetta) + '" style="width:120px"' + off + '></td>'
         + '<td style="white-space:nowrap"><input class="pr-imp" type="number" step="1" min="0" value="' + (Math.round(Number(t.importo)||0)) + '" oninput="ricalcolaPiano()" style="width:96px"' + off + '>'

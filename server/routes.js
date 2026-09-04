@@ -990,6 +990,14 @@ router.post('/dashboard/clients/:id/mail2/invia', requireCoach, express.json(), 
     const subject = String(req.body.subject || '').trim();
     const body = String(req.body.body || '');
     const percorsoId = String(req.body.percorso_id || '').trim();
+    // ⭐ Fetta 3.3 (04/09): si sceglie cosa allegare. Senza indicazione partono
+    //    tutti e tre, come prima. Un nome sconosciuto è un errore, non un silenzio.
+    const ALLEGATI = ['contratto', 'informativa', 'agenda'];
+    const scelti = Array.isArray(req.body.allegati) ? req.body.allegati.map(String) : ALLEGATI.slice();
+    if (!scelti.length) return res.status(400).json({ error: 'Spunta almeno un allegato.' });
+    const ignoto = scelti.find(a => !ALLEGATI.includes(a));
+    if (ignoto) return res.status(400).json({ error: 'Allegato sconosciuto: ' + ignoto });
+    const conContratto = scelti.includes('contratto');
     if (!to) return res.status(400).json({ error: 'Manca il destinatario.' });
     if (!subject) return res.status(400).json({ error: "Manca l'oggetto." });
 
@@ -1014,16 +1022,19 @@ router.post('/dashboard/clients/:id/mail2/invia', requireCoach, express.json(), 
     //    cui ha aperto l'anteprima, e qui si controlla solo che sia davvero un
     //    percorso individuale di QUESTO cliente. Senza id non si manda niente:
     //    scegliere da soli sarebbe tornare al difetto.
-    if (!percorsoId) {
-      return res.status(400).json({ error: 'Manca il percorso del contratto: riapri la scheda del cliente e la finestrella della Mail 2.' });
-    }
-    const pq = await db.query('SELECT * FROM percorsi WHERE id=$1 AND client_id=$2 AND progetto_id IS NULL', [percorsoId, req.params.id]);
-    const percorso = pq.rows[0];
-    if (!percorso) {
-      return res.status(404).json({
-        error: 'Quel percorso non è un percorso individuale di questo cliente: il contratto non ' +
-               'saprebbe dire né la modalità né il prezzo. ⛔ Non mando il modello generico al suo posto.',
-      });
+    let percorso = null;
+    if (conContratto) {
+      if (!percorsoId) {
+        return res.status(400).json({ error: 'Manca il percorso del contratto: riapri la scheda del cliente e la finestrella della Mail 2.' });
+      }
+      const pq = await db.query('SELECT * FROM percorsi WHERE id=$1 AND client_id=$2 AND progetto_id IS NULL', [percorsoId, req.params.id]);
+      percorso = pq.rows[0];
+      if (!percorso) {
+        return res.status(404).json({
+          error: 'Quel percorso non è un percorso individuale di questo cliente: il contratto non ' +
+                 'saprebbe dire né la modalità né il prezzo. ⛔ Non mando il modello generico al suo posto.',
+        });
+      }
     }
     // La posta si controlla DOPO il percorso: così un difetto nel percorso si
     // vede anche dove la posta non c'è (la prova gira senza chiavi Gmail).
@@ -1033,23 +1044,27 @@ router.post('/dashboard/clients/:id/mail2/invia', requireCoach, express.json(), 
 
     const attachments = [];
     // ⭐ Lo STESSO PDF dell'anteprima: si manda quello che si è guardato.
-    attachments.push({
+    if (conContratto) attachments.push({
       filename: nomeFilePulito('Contratto', cliente),
       content: await pdfContrattoCliente(cliente, percorso),
       contentType: 'application/pdf',
     });
     // L'informativa privacy: il testo c'era dal 27/08, ma non la allegava nessuno.
-    attachments.push({
+    if (scelti.includes('informativa')) attachments.push({
       filename: nomeFilePulito('Informativa privacy', cliente),
       content: await pdfLetteraPrivacy(),
       contentType: 'application/pdf',
     });
     // Agenda: personalizzata col nome.
-    const agenda = await documenti.generaAgenda({ nome });
-    attachments.push({ filename: 'Agenda di sessione.pdf', content: agenda.bytes, contentType: 'application/pdf' });
+    if (scelti.includes('agenda')) {
+      const agenda = await documenti.generaAgenda({ nome });
+      attachments.push({ filename: 'Agenda di sessione.pdf', content: agenda.bytes, contentType: 'application/pdf' });
+    }
 
     await mailer.sendMail({ to, subject, text: body, attachments });
-    await db.query('UPDATE clients SET mail2_inviata_data = NOW() WHERE id=$1', [req.params.id]);
+    // La Mail 2 «è inviata» quando parte il CONTRATTO, che è la sua sostanza: una
+    // mail con la sola agenda non chiude il passo.
+    if (conContratto) await db.query('UPDATE clients SET mail2_inviata_data = NOW() WHERE id=$1', [req.params.id]);
 
     // ⭐ MANDARE È UN FATTO, e lo stato del contratto si ricava dai fatti: se la
     //    mail è partita, quel contratto è «in attesa di approvazione». Prima
@@ -1057,7 +1072,7 @@ router.post('/dashboard/clients/:id/mail2/invia', requireCoach, express.json(), 
     //    macchina una cosa che la macchina aveva appena fatto.
     // ⚠️ Dopo l'invio: se questo passo fallisce la mail è comunque partita, e
     //    non si annulla una mail. Perciò non butta all'aria la risposta.
-    try {
+    if (conContratto) try {
       const agg = await db.query(
         `UPDATE contratti SET stato='in_attesa', data_invio=CURRENT_DATE, updated_at=NOW()
           WHERE tipo='cliente' AND percorso_id=$1 AND stato <> 'approvata'`, [percorso.id]);
@@ -4010,8 +4025,20 @@ function headerNoesys({ mondo = '', sub = '', briciole = [], q = '' } = {}) {
     `<a class="nh-mondo${m.key === mondo ? ' on' : ''}" href="${m.href}">${m.label}</a>`).join('');
   const sottoHtml = (SOTTOVOCI[mondo] || []).map(s =>
     `<a href="${s.href}"${s.key === sub ? ' class="on"' : ''}>${s.label}</a>`).join('');
-  const bricHtml = briciole.map((b, i) => {
-    const ultima = i === briciole.length - 1;
+  // ⭐ Fetta 3.1 (04/09/2026): le briciole ci sono SU OGNI PAGINA, e cominciano
+  //    sempre da «Home». Prima stavano su 4 pagine su 15 e la home si
+  //    raggiungeva solo dal logo: da Proforma si tornava col tasto del browser.
+  //    Chi passa le sue briciole le tiene; chi non le passa le riceve dal mondo
+  //    (e dalla sotto-voce) in cui sta. La home stessa non ne ha.
+  const ETICHETTE_SUB = { anomalie: 'Anomalie', proforma: 'Proforma', contratti: 'Contratti', emittente: 'Chi emette',
+                          progetti: 'Progetti', committenti: 'Committenti' };
+  const mondoDi = MONDI.find(m => m.key === mondo);
+  let crumbs = briciole.length ? briciole.slice()
+    : mondoDi ? [{ label: mondoDi.label, href: mondoDi.href }, ...(sub && ETICHETTE_SUB[sub] && sub !== mondo ? [{ label: ETICHETTE_SUB[sub] }] : [])]
+    : (q ? [{ label: 'Ricerca' }] : []);
+  if (crumbs.length && crumbs[0].href !== '/dashboard') crumbs = [{ label: 'Home', href: '/dashboard' }, ...crumbs];
+  const bricHtml = crumbs.map((b, i) => {
+    const ultima = i === crumbs.length - 1;
     const voce = (b.href && !ultima) ? `<a href="${b.href}">${esc(b.label)}</a>` : `<b>${esc(b.label)}</b>`;
     return (i ? '<span>›</span>' : '') + voce;
   }).join('');
@@ -4280,7 +4307,7 @@ function homePage(d, req) {
         <button onclick="document.getElementById('modal-app').style.display='none'" class="btn btn-neutral" style="flex:1">Annulla</button>
         <button id="ap-salva" onclick="salvaApp()" class="btn btn-primary" style="flex:1">Salva</button>
       </div>
-      <button onclick="togliApp()" class="btn btn-danger btn-sm" style="width:100%;margin-top:10px">Togli l'appuntamento</button>
+      <button onclick="togliApp()" class="btn btn-danger btn-sm" style="width:100%;margin-top:10px">Elimina l'appuntamento</button>
     </div>
   </div>
 
@@ -5153,8 +5180,11 @@ Germano`;
   const totIncassato  = sommaStato('incassato');
   const numeroTitolo = (etichetta, valore, colore) => valore <= 0 ? '' :
     ` · ${etichetta}: <strong style="color:${colore}">€ ${fiscale.euro(valore)}</strong>`;
+  // ⭐ Fetta 3.4 (04/09, decisione (a) di Germano): il riquadro si chiama per ciò
+  //    che contiene — i PAGAMENTI di questa persona. «Amministrazione» resta il
+  //    nome dell'area in alto, quella di tutti i clienti, e di nessun riquadro.
   const paymentsHtml = sezione(
-    `<h2 style="margin:0">Amministrazione
+    `<h2 style="margin:0">Pagamenti
       <span style="font-size:12px;font-weight:400;color:#aaa;margin-left:10px">
         Da chiedere: <strong style="color:#1A5280">€ ${fiscale.euro(totDaChiedere)}</strong>
         ${numeroTitolo('Chiesto', totChiesto, '#D8AE2E')}
@@ -5413,6 +5443,37 @@ Germano`;
     ? `<strong style="color:#8a6d1e">Scheda Anagrafica aggiornata da verificare</strong> — qui sotto, nel riquadro «Dati letti dai documenti».`
     : `${rigaModulo(modScheda, 'Scheda anagrafica letta', 'Scheda anagrafica non ancora arrivata')}<br>${rigaModulo(modContratto, 'Contratto letto', 'Contratto non ancora arrivato')}`;
 
+  // Le cinque righe di «A che punto siamo». Ogni riga: fatto (verde) o cosa
+  // manca, e — se manca — il pulsante che porta dove si fa.
+  const rigaAche = (ok, testoOk, testoManca, azione) => `
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:5px 0;border-bottom:1px solid var(--line)">
+        <span style="width:18px;text-align:center">${ok ? '<span style="color:#2f6b46">✓</span>' : '<span style="color:#a4342a">○</span>'}</span>
+        <span style="flex:1;font-size:13px;${ok ? 'color:var(--muted)' : ''}">${ok ? testoOk : testoManca}</span>
+        ${!ok && azione ? azione : ''}
+      </div>`;
+  const fattCliente = fiscale.statoFatturabilita(fiscale.daCliente(client));
+  const percStatoContratto = percorsoContratto
+    ? ((fatt.statiContratti && fatt.statiContratti.get(percorsoContratto.id)) || 'da_redigere') : null;
+  const bottoncino = (onclick, testo) => `<button onclick="${onclick}" class="btn btn-neutral btn-sm">${testo}</button>`;
+  const acheHtml = `
+    <div id="a-che-punto" style="margin:0 0 18px;padding:4px 0 2px">
+      <div class="zona-tit" style="margin-bottom:2px">A che punto siamo</div>
+      ${rigaAche(!mancantiContratto.length, 'Dati anagrafici completi',
+        `Dati anagrafici: mancano ${esc(mancantiContratto.join(', '))}`, bottoncino('openEdit()', '✎ Modifica dati'))}
+      ${rigaAche(fattCliente.stato === 'pronto', 'Dati per fatturare completi',
+        `Dati per fatturare: ${esc(fattCliente.messaggio || 'incompleti')}`, bottoncino('openEdit()', '✎ Modifica dati'))}
+      ${rigaAche(!!client.consenso_privacy, `Consenso privacy dato${client.consenso_data ? ' il ' + itDate(client.consenso_data) : ''}`,
+        'Consenso privacy non ancora dato: si spunta in «Modifica dati» quando arriva l\'informativa firmata', bottoncino('openEdit()', '✎ Modifica dati'))}
+      ${rigaAche(!!mail1SentTxt && !!mail2SentTxt,
+        `Mail 1 inviata il ${mail1SentTxt} · Mail 2 inviata il ${mail2SentTxt}`,
+        !mail1SentTxt ? 'Mail 1 (lettera, scheda, Codice ICF) non inviata' : 'Mail 2 (contratto, informativa, agenda) non inviata',
+        !mail1SentTxt ? bottoncino('openMail1()', '✉️ Rivedi e invia Mail 1') : (percorsoContratto ? bottoncino('openMail2()', '✉️ Rivedi e invia Mail 2') : ''))}
+      ${!percorsoContratto
+        ? rigaAche(false, '', 'Contratto: serve prima un percorso individuale', bottoncino('openPercorso()', '+ Nuovo percorso'))
+        : rigaAche(percStatoContratto === 'approvata', 'Contratto approvato (tornato firmato)',
+            `Contratto: ${contrattiStato.stato(percStatoContratto).label.toLowerCase()} — si muove nel riquadro «Contratto» qui sotto`, '')}
+    </div>`;
+
   const azioniHtml = `
     <div class="az-bar">
       <div class="zona-tit">Azioni e collegamenti</div>
@@ -5474,6 +5535,16 @@ Germano`;
             ${mail1SentTxt ? `<span class="az-fatto">✓ Mail 1 inviata il ${mail1SentTxt}</span>` : 'Mail 1 non inviata'} — lettera · scheda anagrafica · Codice ICF<br>
             ${mail2SentTxt ? `<span class="az-fatto">✓ Mail 2 inviata il ${mail2SentTxt}</span>` : 'Mail 2 non inviata'} — contratto · informativa privacy · agenda
           </div>
+          ${/* ⭐ Fetta 3.3 (04/09, decisione b di Germano): i tre PDF si guardano da
+                qui, senza aprire la finestrella della mail. Mandare resta una cosa
+                sola, dentro «Rivedi e invia Mail 2». */ ''}
+          <div id="documenti-cliente" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
+            ${percorsoContratto
+              ? `<a href="/dashboard/clients/${client.id}/percorsi/${percorsoContratto.id}/contratto" target="_blank" class="btn btn-neutral btn-sm" style="text-decoration:none">📄 Contratto</a>`
+              : `<span class="btn btn-off btn-sm" title="Serve un percorso individuale">📄 Contratto</span>`}
+            <a href="/dashboard/clients/${client.id}/lettera-privacy" target="_blank" class="btn btn-neutral btn-sm" style="text-decoration:none">🔒 Informativa privacy</a>
+            <a href="/dashboard/clients/${client.id}/agenda" target="_blank" class="btn btn-neutral btn-sm" style="text-decoration:none">🗓️ Agenda</a>
+          </div>
         </div>
 
         <div class="az-gruppo">
@@ -5502,7 +5573,7 @@ Germano`;
       </div>
 
       <div class="az-danger">
-        <span class="az-stato" style="margin:0">Cancella la persona e tutto il suo storico.</span>
+        <span class="az-stato" style="margin:0">Elimina la persona e tutto il suo storico.</span>
         <button onclick="deleteClient()" class="btn btn-danger btn-sm">🗑 Elimina il cliente</button>
       </div>
     </div>`;
@@ -5528,6 +5599,14 @@ Germano`;
               soprattutto non esiste più niente da rappresentare — chi entra lo
               decidono i permessi a termine. */ ''}
       </div>
+
+      ${/* ⭐ Fetta 3.2 (04/09/2026) — «A CHE PUNTO SIAMO». La missione chiede di
+            «monitorare che tutte le fasi procedano»: anagrafica, dati per
+            fatturare, consenso, Mail 1 e 2, contratto. Le informazioni c'erano
+            già, sparse in quattro riquadri: qui stanno in fila, ognuna verde o
+            con l'azione che manca. Nessun dato nuovo, nessuna seconda porta: le
+            azioni sono gli stessi pulsanti di sotto. */ ''}
+      ${acheHtml}
 
       ${/* 11/08 — due colonne affiancate invece di una fila lunga: a sinistra
             CHI È, a destra i SOLDI e le cose da fare. La scheda si era riempita
@@ -5823,13 +5902,20 @@ Germano`;
         </div>` : ''}
       </div>
       <div style="font-size:12px;color:#6B7280;background:#f7f9fc;border-radius:8px;padding:10px 12px;margin-bottom:12px">
-        <div style="margin-bottom:6px">📎 <strong>Tre allegati</strong> — aprili e controllali prima di mandare:</div>
-        <div style="display:flex;flex-wrap:wrap;gap:7px">
-          <a href="/dashboard/clients/${client.id}/percorsi/${percorsoContratto.id}/contratto" target="_blank" class="btn btn-neutral btn-sm" style="text-decoration:none">📄 Contratto</a>
-          <a href="/dashboard/clients/${client.id}/lettera-privacy" target="_blank" class="btn btn-neutral btn-sm" style="text-decoration:none">🔒 Informativa privacy</a>
-          <a href="/dashboard/clients/${client.id}/agenda" target="_blank" class="btn btn-neutral btn-sm" style="text-decoration:none">🗓️ Agenda</a>
+        ${/* ⭐ Fetta 3.3 (04/09, Germano): «vorrei la possibilità di selezionare cosa
+              mandare» — quel giorno aveva dovuto mandare contratto e informativa in
+              bozza, e l'agenda insieme. Ogni allegato ha la sua spunta; di norma
+              partono tutti e tre. Aprire il PDF e spuntarlo sono due gesti separati. */ ''}
+        <div style="margin-bottom:6px">📎 <strong>Allegati</strong> — spunta quelli da mandare, aprili e controllali prima:</div>
+        <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:center">
+          <label style="margin:0;text-transform:none;letter-spacing:0;font-weight:400;display:flex;gap:6px;align-items:center"><input type="checkbox" class="m2-allegato" value="contratto" checked style="width:18px;height:18px"> Contratto</label>
+          <a href="/dashboard/clients/${client.id}/percorsi/${percorsoContratto.id}/contratto" target="_blank" class="btn btn-neutral btn-sm" style="text-decoration:none;justify-self:start">📄 Apri il contratto</a>
+          <label style="margin:0;text-transform:none;letter-spacing:0;font-weight:400;display:flex;gap:6px;align-items:center"><input type="checkbox" class="m2-allegato" value="informativa" checked style="width:18px;height:18px"> Informativa privacy</label>
+          <a href="/dashboard/clients/${client.id}/lettera-privacy" target="_blank" class="btn btn-neutral btn-sm" style="text-decoration:none;justify-self:start">🔒 Apri l'informativa</a>
+          <label style="margin:0;text-transform:none;letter-spacing:0;font-weight:400;display:flex;gap:6px;align-items:center"><input type="checkbox" class="m2-allegato" value="agenda" checked style="width:18px;height:18px"> Agenda di sessione</label>
+          <a href="/dashboard/clients/${client.id}/agenda" target="_blank" class="btn btn-neutral btn-sm" style="text-decoration:none;justify-self:start">🗓️ Apri l'agenda</a>
         </div>
-        <div style="margin-top:6px;color:#aaa">Sono gli stessi identici file che partiranno in allegato.</div>
+        <div style="margin-top:6px;color:#aaa">Partono gli stessi identici file che apri qui. La Mail 2 conta come inviata quando parte il contratto.</div>
       </div>`}
       <div id="mail2-error" style="display:none" class="flash-error"></div>
       <div style="display:flex;gap:8px;margin-top:4px">
@@ -5909,7 +5995,7 @@ Germano`;
         <button onclick="document.getElementById('modal-app').style.display='none'" class="btn btn-neutral" style="flex:1">Annulla</button>
         <button id="ap-salva" onclick="salvaApp()" class="btn btn-primary" style="flex:1">Salva</button>
       </div>
-      <button onclick="togliApp()" class="btn btn-danger btn-sm" style="width:100%;margin-top:10px">Togli l'appuntamento</button>
+      <button onclick="togliApp()" class="btn btn-danger btn-sm" style="width:100%;margin-top:10px">Elimina l'appuntamento</button>
     </div>
   </div>
 
@@ -6270,13 +6356,17 @@ Germano`;
       const err = document.getElementById('mail2-error');
       const to = document.getElementById('m2-to').value.trim();
       if (!to) { err.textContent='Serve un indirizzo destinatario.'; err.style.display='block'; return; }
+      const allegati = [...document.querySelectorAll('.m2-allegato:checked')].map(c => c.value);
+      if (!allegati.length) { err.textContent='Spunta almeno un allegato.'; err.style.display='block'; return; }
       const payload = {
         to,
         subject: document.getElementById('m2-subject').value,
         body: document.getElementById('m2-body').value,
         percorso_id: PERC_CONTRATTO,
+        allegati,
       };
-      if (!confirm('Invio a ' + to + ' contratto, informativa privacy e agenda?')) return;
+      const NOMI_ALLEGATI = { contratto: 'contratto', informativa: 'informativa privacy', agenda: 'agenda' };
+      if (!confirm('Invio a ' + to + ': ' + allegati.map(a => NOMI_ALLEGATI[a] || a).join(', ') + '?')) return;
       const btn = document.getElementById('m2-send');
       btn.disabled = true; btn.textContent = 'Invio in corso…'; err.style.display='none';
       try {
@@ -6884,7 +6974,7 @@ function anomaliePage(anomalie, conteggi, req) {
     </div>`;
 
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Amministrazione</title>${baseStyle()}</head><body>
-  ${headerNoesys({ mondo: 'amministrazione' })}
+  ${headerNoesys({ mondo: 'amministrazione', sub: 'anomalie' })}
   <div class="container">
     <h1>Amministrazione</h1>
     ${amNav('anomalie')}
@@ -7116,7 +7206,7 @@ function proformaPage(daChiedere, proforme, req) {
     const righeInc = (p.incassi || []).map(i => `
       <div style="font-size:12px;color:var(--muted);margin-top:4px">
         arrivati ${eur(i.importo)} il ${itDate(i.data_incasso)}
-        <button onclick="togliIncasso('${i.id}')" class="btn btn-neutral btn-sm" style="margin-left:6px">Togli</button>
+        <button onclick="togliIncasso('${i.id}')" class="btn btn-neutral btn-sm" style="margin-left:6px">Elimina</button>
       </div>`).join('');
     return `
     <div class="card" style="margin-bottom:12px">
@@ -7265,7 +7355,7 @@ function proformaPage(daChiedere, proforme, req) {
   const nientePerNiente = !daChiedere.length && !proforme.length;
 
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Proforma</title>${baseStyle()}</head><body>
-  ${headerNoesys({ mondo: 'amministrazione' })}
+  ${headerNoesys({ mondo: 'amministrazione', sub: 'proforma' })}
   <div class="container">
     <h1>Amministrazione</h1>
     ${amNav('proforma')}
@@ -7562,7 +7652,7 @@ function contrattiAmmPage(singoli, progetti, partecipanti, req, tutti) {
 
   const tuttiPart = partecipanti.filter(p => Number(p.quota_coachee) > 0);
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Contratti</title>${baseStyle()}</head><body>
-  ${headerNoesys({ mondo: 'amministrazione' })}
+  ${headerNoesys({ mondo: 'amministrazione', sub: 'contratti' })}
   <div class="container" style="max-width:1200px">
     <h1>Amministrazione</h1>
     ${amNav('contratti')}
@@ -7620,7 +7710,7 @@ function emittentePage(e, verdetto, salvato, req) {
        </div>`;
 
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Chi emette</title>${baseStyle()}</head><body>
-  ${headerNoesys({ mondo: 'amministrazione' })}
+  ${headerNoesys({ mondo: 'amministrazione', sub: 'emittente' })}
   <div class="container" style="max-width:1200px">
     <h1>Amministrazione</h1>
     ${amNav('emittente')}
@@ -8655,8 +8745,10 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
           da altre pagine. E i due pulsanti stanno nel <summary>, quindi fermano il
           clic: senza, premerli chiuderebbe la sezione invece di aprire la
           finestrella. */ ''}
+    ${/* ⭐ Fetta 3.4 (04/09, decisione (a) di Germano): il riquadro si chiama per
+          ciò che contiene. «Amministrazione» resta solo l'area in alto. */ ''}
     ${sezione(
-    `<h2 style="margin:0">Amministrazione
+    `<h2 style="margin:0">Quote e piano dei pagamenti
               <span style="font-size:12px;font-weight:400;color:#aaa;margin-left:10px">
                 Valore del progetto: <strong style="color:var(--ink)">${qTot != null ? '€ ' + eur(qTot) : '—'}</strong>
               </span>
@@ -8933,7 +9025,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
     function azioniPagatore(pg) {
       if (pg.tipo === 'committente') return '';
       return '<a href="/dashboard/clients/' + pg.client_id + '" class="btn btn-neutral btn-sm">Scheda</a>'
-        + ' <button onclick="removeCoachee(\\'' + pg.pid + '\\')" class="btn btn-danger btn-sm" title="Togli dal progetto">🗑</button>';
+        + ' <button onclick="removeCoachee(\\'' + pg.pid + '\\')" class="btn btn-danger btn-sm" title="Elimina dal progetto">🗑</button>';
     }
     // Il riepilogo in cima alla scheda si rifà dopo la tabella: è un testo
     // derivato, non un campo, e qui nessuno sta scrivendo.
@@ -9310,7 +9402,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
       if (d.ok) ricaricaConservando(); else alert(d.error || 'Errore');
     }
     async function removeCoachee(partId) {
-      if (!confirm('Togliere questo cliente dal progetto? Se non ha ancora dati, viene eliminato anche dall\\'anagrafica.')) return;
+      if (!confirm('Eliminare questo cliente dal progetto? Se non ha ancora dati, viene eliminato anche dall\\'anagrafica.')) return;
       const r = await fetch('/dashboard/progetti/'+PID+'/coachee/'+partId, { method:'DELETE' });
       const d = await r.json();
       if (!d.ok) { alert(d.error || 'Errore'); return; }
@@ -9396,7 +9488,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
     async function delFase(btn) {
       const b = btn.closest('.fase-block');
       const fid = b.dataset.fid;
-      if (fid && !confirm('Rimuovere questa tappa?')) return;
+      if (fid && !confirm('Eliminare questa tappa?')) return;
       if (fid) {
         const r = await fetch('/dashboard/progetti/'+PID+'/fasi/'+fid, { method:'DELETE' });
         const d = await r.json();

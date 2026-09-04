@@ -220,6 +220,16 @@ const chiama = async (metodo, url, corpo) => {
     dice(r.stato === 404, '🔬 con un percorso inventato: 404', r.stato + ' ' + r.testo.slice(0, 100));
     r = await chiama('POST', `/dashboard/clients/${idCli}/mail2/invia`, { ...m2, percorso_id: idPercInd });
     dice(r.stato === 400 && /non configurato/i.test(r.testo), 'col percorso giusto il controllo passa, e si ferma solo perché qui non c\'è la posta', r.stato + ' ' + r.testo.slice(0, 100));
+    // ⭐ Fetta 3.3 (04/09, Germano): si sceglie cosa allegare.
+    r = await chiama('POST', `/dashboard/clients/${idCli}/mail2/invia`, { ...m2, allegati: ['agenda'] });
+    dice(r.stato === 400 && /non configurato/i.test(r.testo), 'con la sola agenda il percorso non serve: passa fino alla posta', r.stato + ' ' + r.testo.slice(0, 100));
+    r = await chiama('POST', `/dashboard/clients/${idCli}/mail2/invia`, { ...m2, allegati: [] });
+    dice(r.stato === 400 && /almeno un allegato/i.test(r.testo), '🔬 senza nessun allegato: 400', r.stato + ' ' + r.testo.slice(0, 100));
+    r = await chiama('POST', `/dashboard/clients/${idCli}/mail2/invia`, { ...m2, allegati: ['fattura'] });
+    dice(r.stato === 400 && /sconosciuto/i.test(r.testo), '🔬 un allegato inventato: 400', r.stato + ' ' + r.testo.slice(0, 100));
+    r = await chiama('GET', `/dashboard/clients/${idCli}`);
+    dice((r.testo.match(/class="m2-allegato"/g) || []).length === 3, 'la finestrella della Mail 2 ha le tre spunte degli allegati');
+    dice(/id="documenti-cliente"/.test(r.testo) && /lettera-privacy/.test(r.testo) && new RegExp(`/percorsi/${idPercInd}/contratto`).test(r.testo), 'e la scheda mostra i tre PDF anche fuori dalla finestrella (decisione b)');
     const dopoM2 = await db.query('SELECT mail2_inviata_data FROM clients WHERE id=$1', [idCli]);
     dice(dopoM2.rows[0].mail2_inviata_data === null, '  e nessuna delle quattro chiamate ha segnato la Mail 2 come inviata');
     cInd = await db.query("SELECT stato FROM contratti WHERE tipo='cliente' AND percorso_id=$1", [idPercInd]);
@@ -377,7 +387,8 @@ const chiama = async (metodo, url, corpo) => {
     r = await chiama('GET', `/dashboard/progetti/${idProg}`);
     const nSez = (r.testo.match(/<details class="sec"/g) || []).length;
     dice(nSez >= 6, `ci sono tutte le sezioni pieghevoli (trovate ${nSez})`);
-    for (const t of ['Specifiche di Progetto', 'Contratti', 'Fasi del progetto', 'Percorsi', 'Amministrazione'])
+    // (3.4, 04/09: il riquadro delle quote si chiama per ciò che contiene, non più «Amministrazione»)
+    for (const t of ['Specifiche di Progetto', 'Contratti', 'Fasi del progetto', 'Percorsi', 'Quote e piano dei pagamenti'])
       dice(new RegExp('<details class="sec"[^>]*>[\\s\\S]{0,700}' + t).test(r.testo), `  «${t}» è pieghevole`);
     // ⛔ LA TRAPPOLA NUMERO UNO: un pulsante dentro un <summary> che non ferma il
     //    clic chiude la sezione invece di fare il suo mestiere. Qui si controlla
@@ -392,7 +403,11 @@ const chiama = async (metodo, url, corpo) => {
     //    `padding:14px 18px` da una regola generale: la sezione risultava 36px più
     //    stretta delle altre e rientrata. Visto da Germano, misurato nel browser.
     dice(/<div class="card" id="amm">/.test(r.testo),
-      'l\'Amministrazione è una card come le altre, senza contenitori in più');
+      'il riquadro delle quote è una card come le altre, senza contenitori in più');
+    r = await chiama('GET', `/dashboard/clients/${idCli}`);
+    dice(/<h2 style="margin:0">Pagamenti/.test(r.testo) && !/<h2 style="margin:0">Amministrazione/.test(r.testo),
+      '  e nella scheda cliente il riquadro si chiama «Pagamenti» (3.4): «Amministrazione» è solo l\'area in alto');
+    r = await chiama('GET', `/dashboard/progetti/${idProg}`);
     dice(!/<div id="amm">/.test(r.testo), 'e non c\'è nessun involucro rimasto in giro');
 
     // ── Le rate dentro il testo del contratto ───────────────────────────────
@@ -853,6 +868,40 @@ const chiama = async (metodo, url, corpo) => {
     const manuale = await db.query("SELECT ok, errore FROM automazione_passate WHERE passata='report-clienti (manuale)' ORDER BY id DESC LIMIT 1");
     dice(manuale.rows.length === 1 && manuale.rows[0].ok === false && /Chiavi Google/.test(manuale.rows[0].errore), '  e anche lui ha lasciato la sua riga');
     await db.query("DELETE FROM automazione_passate WHERE passata LIKE $1 OR passata='report-clienti (manuale)'", ['PROVA-' + marca + '%']);
+
+    // ══ Fetta 3.1/3.2 (04/09/2026) — SI TORNA INDIETRO, E LA SCHEDA DICE COSA MANCA ═
+    console.log('\n20e. 🧭 Briciole con la Home su ogni pagina, e «A che punto siamo» nella scheda');
+    const conBriciole = [
+      '/dashboard/individuali', '/dashboard/leads', '/dashboard/committenti', '/dashboard/progetti',
+      '/dashboard/amministrazione', '/dashboard/amministrazione/proforma', '/dashboard/amministrazione/contratti',
+      '/dashboard/amministrazione/emittente', '/dashboard/icf', '/dashboard/cerca?q=prova',
+      `/dashboard/clients/${idCli}`, `/dashboard/progetti/${idProg}`,
+    ];
+    const senzaBriciole = [];
+    for (const u of conBriciole) {
+      r = await chiama('GET', u);
+      if (!(r.stato === 200 && /class="nh-row nh-bric">[\s\S]{0,40}<a href="\/dashboard">Home<\/a>/.test(r.testo))) senzaBriciole.push(u + ' (' + r.stato + ')');
+    }
+    dice(senzaBriciole.length === 0, `tutte le ${conBriciole.length} pagine hanno le briciole e cominciano da «Home»`, senzaBriciole.join(' · '));
+    r = await chiama('GET', '/dashboard/amministrazione/proforma');
+    dice(/Home<\/a>[\s\S]{0,80}Amministrazione<\/a>[\s\S]{0,40}<b>Proforma<\/b>/.test(r.testo), '  Proforma: Home › Amministrazione › Proforma');
+    r = await chiama('GET', '/dashboard');
+    dice(!/class="nh-row nh-bric"/.test(r.testo), '  e la home, che è il punto di partenza, non ne ha (la classe sta solo nel CSS)');
+
+    r = await chiama('GET', `/dashboard/clients/${idCli}`);
+    dice(r.testo.includes('id="a-che-punto"') && r.testo.includes('A che punto siamo'), 'la scheda cliente ha «A che punto siamo»');
+    const ache = (r.testo.match(/id="a-che-punto"[\s\S]*?<\/div>\s*<\/div>\s*<\/div>/) || [''])[0];
+    // Le mail: nessuna delle due è partita, e il riquadro dice la PRIMA che manca
+    // (una cosa per volta: la Mail 2 viene dopo la Mail 1), col suo pulsante.
+    dice(/Mail 1 \(lettera, scheda, Codice ICF\) non inviata/.test(ache) && /openMail1\(\)/.test(ache), '  dice che la Mail 1 non è partita, col pulsante per farlo');
+    dice(/Contratto: da inviare|Contratto: in attesa|Contratto: approvat|Contratto: da redigere/.test(ache), '  e dice a che punto è il contratto');
+    // Il consenso: dato nella sezione 8, poi TOLTO nella sezione 20 (la data resta): il riquadro dice quello che c'è nel database.
+    const consOra = (await db.query('SELECT consenso_privacy FROM clients WHERE id=$1', [idCli])).rows[0].consenso_privacy;
+    dice(consOra ? /Consenso privacy dato il/.test(ache) : /Consenso privacy non ancora dato/.test(ache) && /openEdit\(\)/.test(ache),
+      `  e sul consenso dice il vero (nel database: ${consOra ? 'dato' : 'non dato'})`);
+    // I dati anagrafici: la sezione 18 ha messo codice fiscale e indirizzo, ma non email e cellulare.
+    dice(/Dati anagrafici: mancano email, cellulare/.test(ache) && /openEdit\(\)/.test(ache), '  e dice QUALI dati anagrafici mancano (email, cellulare), col pulsante');
+    dice(/Dati per fatturare completi/.test(ache), '  e che i dati per fatturare ci sono tutti');
 
     console.log('\n21. 🔬 Adesso la rompo apposta');
     for (const [corpo, et] of [

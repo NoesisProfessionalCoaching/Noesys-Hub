@@ -2,27 +2,27 @@
 
 Non si modifica a mano: lo riscrive `npm run prova`. Se un numero qui non torna con quello che ricordi, è cambiato il codice.
 
-- `server/routes.js`: **9814 righe**, **15 pagine**, **92 rotte**
+- `server/routes.js`: **9906 righe**, **15 pagine**, **92 rotte**
 - moduli in `server/`: **27** (8 usano `db.js`, 19 no)
 - prove in `npm run prova`: **16**, in questo ordine: prova-file → prova-js → prova-pagine → prova-fiscale → prova-proforma → prova-tranche → prova-incassi → prova-sedute → prova-appuntamenti → prova-final-programmata → prova-migrazione → prova-barriere → prova-conformita → prova-automazione → inventario → prova-timbro
 
 ## Le pagine (funzioni che finiscono in Page, nell'ordine del file)
 
-- `loginPage` (riga 4071)
-- `homePage` (riga 4090)
-- `dashboardPage` (riga 4323)
-- `driveDiagPage` (riga 4478)
-- `clientDetailPage` (riga 4622)
-- `leadsPage` (riga 6645)
-- `anomaliePage` (riga 6845)
-- `proformaPage` (riga 6999)
-- `contrattiAmmPage` (riga 7484)
-- `emittentePage` (riga 7599)
-- `committentiPage` (riga 7695)
-- `progettiPage` (riga 7883)
-- `progettoDettaglioPage` (riga 8239)
-- `cercaPage` (riga 9677)
-- `icfPage` (riga 9759)
+- `loginPage` (riga 4098)
+- `homePage` (riga 4117)
+- `dashboardPage` (riga 4350)
+- `driveDiagPage` (riga 4505)
+- `clientDetailPage` (riga 4649)
+- `leadsPage` (riga 6735)
+- `anomaliePage` (riga 6935)
+- `proformaPage` (riga 7089)
+- `contrattiAmmPage` (riga 7574)
+- `emittentePage` (riga 7689)
+- `committentiPage` (riga 7785)
+- `progettiPage` (riga 7973)
+- `progettoDettaglioPage` (riga 8329)
+- `cercaPage` (riga 9769)
+- `icfPage` (riga 9851)
 
 ## Le rotte, per mondo
 
@@ -161,7 +161,7 @@ Non si modifica a mano: lo riscrive `npm run prova`. Se un numero qui non torna 
 | `moduli.js` | 180 | no |
 | `piano-ui.js` | 598 | no |
 | `proforma.js` | 591 | no |
-| `routes.js` | 9814 | sì |
+| `routes.js` | 9906 | sì |
 | `scan-moduli.js` | 215 | sì |
 | `scan.js` | 416 | sì |
 | `sedute.js` | 55 | no |
