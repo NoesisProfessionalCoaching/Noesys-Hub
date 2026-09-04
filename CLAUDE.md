@@ -6,12 +6,14 @@ memoria automatica (`noesys-mappa-cantieri`). Qui c'è solo **come è fatta ques
 
 ## Com'è fatta
 
-- **Tutto l'HTML è renderizzato dal server** dentro `server/routes.js` (~8.000 righe): ogni pagina è
-  una **template literal** che contiene anche il `<script>` del browser. Niente file CSS separati:
-  lo stile sta in `baseStyle()`, che è dentro ogni pagina.
+- **Tutto l'HTML è renderizzato dal server** dentro `server/routes.js` (~9.800 righe al 04/09/2026;
+  il numero vero sta in `INVENTARIO.md`, che `npm run prova` rigenera): ogni pagina è una **template
+  literal** che contiene anche il `<script>` del browser. Niente file CSS separati: lo stile sta in
+  `baseStyle()`, che è dentro ogni pagina.
 - I moduli in `server/` sono **puri dove possibile**, così si possono provare senza database:
   `fiscale.js` (i conti: IVA, ritenuta, bollo) · `proforma.js` · `incassi.js` · `tranche.js` ·
-  `maturato.js` · `appuntamenti.js` · `piano-ui.js` (la finestrella del piano, usata da due pagine).
+  `sedute.js` · `contratti-stato.js` · `collaudo.js` · `chiama-ui.js` · `piano-ui.js` (la finestrella
+  del piano, usata da due pagine). ⚠️ `maturato.js` e `appuntamenti.js` NON sono puri: fanno query.
 - **Automazioni** (girano da sole alle 07/15/23, `index.js` con node-cron): `scan.js` legge i report
   da Drive e crea sedute in **bozza**; `scan-moduli.js` legge scheda e contratto e propone
   l'anagrafica; `claude.js` è l'estrattore.
@@ -35,9 +37,12 @@ sul sorgente non le vede.
 
 ## ✅ `npm run prova` — obbligatoria prima di ogni pubblicazione
 
-Undici controlli in fila: i file del server compilano · il JS renderizzato delle pagine · i conti
-fiscali · proforma · rate · incassi · appuntamenti · Final programmata · documenti · migrazione.
-**Il push è bloccato da una barriera se non è passata** (`~/.claude/hooks/barriere.js`).
+**L'elenco dei controlli sta in `package.json` (`"prova"`), non qui**: un elenco scritto a mano
+diverge (questo diceva «undici» e ne nominava dieci, uno inesistente). Al 04/09/2026 sono quattordici,
+e i più importanti sono `prova-pagine` (apre le pagine vere sul database di prova e preme i pulsanti,
+con metà dei controlli sui rifiuti) e `prova-barriere` (il guardiano). L'ultimo, `prova-timbro`,
+scrive l'impronta del codice provato. **Il push è bloccato da una barriera se non è passata**
+(`~/.claude/hooks/barriere.js`). `INVENTARIO.md` (pagine, rotte, moduli, prove) si rigenera a ogni giro.
 
 Quando si aggiunge una prova nuova, **la si rompe apposta una volta** per vedere che sappia fallire.
 ⭐ La regola dietro tutto questo: *una regola che vive solo in una memoria e non nella rete di
