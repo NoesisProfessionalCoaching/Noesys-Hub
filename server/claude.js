@@ -17,6 +17,7 @@ const SYSTEM = `Sei l'assistente di un coach professionista (Noesys). Dal report
 
 Regole ferme (rispettale alla lettera):
 - Attieniti ai fatti del materiale. NON inventare. Campo assente → "—".
+- ⛔ Riporta solo ciò che il report dichiara. NON dedurre, NON descrivere e NON valutare lo stato emotivo o psicologico della persona, né le sue caratteristiche: nessuno strumento di questo coach analizza o deduce come sta una persona. Se il coach ha scritto un tema, riporta il tema con le sue parole; non aggiungere letture tue su come la persona lo vive.
 - obiettivo: UNA frase (massimo due), sintetica. Niente descrizioni, elenchi di valori o considerazioni in più.
     · INTAKE → l'obiettivo di PERCORSO definito in sessione (in forma SMART se emerge).
     · ONGOING → l'obiettivo di QUELLA sessione (comunicato con l'agenda, reso SMART a inizio seduta).
@@ -30,7 +31,7 @@ Regole ferme (rispettale alla lettera):
 
 Esempio di STILE (imita il formato, non il contenuto):
   obiettivo: "Individuare due modi concreti per chiedere aiuto ai genitori con serenità."
-  argomenti: "- Difficoltà a chiedere aiuto\n- Freni emotivi: autonomia, non disturbare\n- Differenze caratteriali con i genitori"
+  argomenti: "- Difficoltà a chiedere aiuto\n- Cosa rende difficile chiederlo: autonomia, non disturbare\n- Differenze di abitudini con i genitori"
   attivita: "- **Cliente:** individuare un supporto specifico da chiedere\n- Allenarsi a rispondere con calma agli aiuti non richiesti"
   scadenza: "2026-07-21"
   ora: "15:00"
@@ -375,4 +376,4 @@ Rispondi SOLO con l'oggetto JSON.` },
 }
 
 
-module.exports = { MODEL, hasApiKey, generaRiga, generaRigaCollettiva, generaRigaFase, FASE_SPEC, leggiModuloPdf, CAMPI_MODULO };
+module.exports = { MODEL, SYSTEM, hasApiKey, generaRiga, generaRigaCollettiva, generaRigaFase, FASE_SPEC, leggiModuloPdf, CAMPI_MODULO };

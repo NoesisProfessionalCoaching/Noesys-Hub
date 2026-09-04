@@ -54,6 +54,22 @@ const INDIETRO = {
 const CHIAVI = STATI.map(s => s.key);
 const valido = (k) => CHIAVI.includes(String(k || ''));
 
+/**
+ * IL PASSO È AMMESSO? — fetta 0.5 del riordino (04/09/2026).
+ * Un passaggio è lecito solo se è quello che AVANTI o INDIETRO prevedono da
+ * dove si sta: gli stessi pulsanti che la cella mostra. Niente salti («da
+ * redigere» → «approvata» congelerebbe un progetto con una chiamata sola), e
+ * «da redigere» non si scrive mai: è l'assenza della riga. `da` può essere
+ * null (riga assente = da redigere).
+ * ⛔ La regola sta qui e non nella rotta: la rotta la applica, questa la sa.
+ */
+function passaggioAmmesso(da, a) {
+  const cur = da == null || da === '' ? 'da_redigere' : String(da);
+  if (!valido(cur) || !valido(a) || a === 'da_redigere') return false;
+  const av = AVANTI[cur], ind = INDIETRO[cur];
+  return !!((av && av.a === a) || (ind && ind.a === a));
+}
+
 function stato(k) {
   return STATI.find(s => s.key === k) || STATI[0];
 }
@@ -93,4 +109,4 @@ function cella(tipo, id, st) {
   </div>`;
 }
 
-module.exports = { STATI, AVANTI, INDIETRO, TIPI, CHIAVI, valido, stato, badge, cella };
+module.exports = { STATI, AVANTI, INDIETRO, TIPI, CHIAVI, valido, passaggioAmmesso, stato, badge, cella };

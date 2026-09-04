@@ -191,9 +191,16 @@ async function costruisci(blocchi, opzioni = {}) {
   const font = await pdf.embedFont(ttf, { subset: true });
   const cartaPdf = await PDFDocument.load(await cartaIntestata());
   const [sfondo] = await pdf.embedPdf(cartaPdf, [0]);
-  // 🔴 LA FIRMA SI METTE SOLO SE QUALCUNO LA CHIEDE. Il valore normale è NIENTE
-  // firma: un'anteprima, una prova o una rigenerazione non devono produrre un
-  // file che porta la firma di Germano senza che lui l'abbia approvato.
+  // ✍️ LA FIRMA. Decisione di Germano del 27/08/2026 (commit «Il contratto esce
+  // già firmato»): il contratto e l'informativa escono GIÀ FIRMATI da lui, sia
+  // nell'anteprima sia nell'allegato della mail — sono lo stesso file, e si
+  // manda quello che si è guardato. Tutte le rotte passano { firmato: true }.
+  // L'opzione resta perché il costruttore serve anche a documenti che non sono
+  // suoi da firmare (bozze per il commercialista, prove): senza `firmato` la
+  // riga della firma resta in bianco.
+  // ⚠️ Fino al 04/09 qui c'era scritto il contrario («la firma si mette solo se
+  //    qualcuno la chiede»): era una proposta mai approvata, non la regola.
+  //    Fra una decisione di Germano e un commento nel codice vince la decisione.
   const firmaPng = opzioni.firmato ? await pdf.embedPng(await firmaGrafica()) : null;
 
   const f = new Foglio(pdf, sfondo, font);

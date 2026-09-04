@@ -947,12 +947,10 @@ router.post('/dashboard/clients/:id/mail1/invia', requireCoach, express.json(), 
 // l'AGENDA viene personalizzata col solo nome di battesimo. Invio via Gmail API.
 router.post('/dashboard/clients/:id/mail2/invia', requireCoach, express.json(), async (req, res) => {
   try {
-    if (!mailer.mailerReady()) {
-      return res.status(400).json({ error: 'Invio email non configurato sul server.' });
-    }
     const to = String(req.body.to || '').trim();
     const subject = String(req.body.subject || '').trim();
     const body = String(req.body.body || '');
+    const percorsoId = String(req.body.percorso_id || '').trim();
     if (!to) return res.status(400).json({ error: 'Manca il destinatario.' });
     if (!subject) return res.status(400).json({ error: "Manca l'oggetto." });
 
@@ -968,13 +966,30 @@ router.post('/dashboard/clients/:id/mail2/invia', requireCoach, express.json(), 
     //    costruire il contratto vero, ma quello restava un'anteprima che moriva
     //    nel browser. Germano se n'è accorto usandolo: «il contratto viene bene,
     //    ma una volta aperto non succede niente».
-    const pq = await db.query('SELECT * FROM percorsi WHERE client_id=$1 ORDER BY created_at', [req.params.id]);
-    const percorso = scegliPercorsoContratto(pq.rows);
+    // ⛔ Fetta 0.5 (04/09) — IL PERCORSO LO DICE LA FINESTRELLA, non lo sceglie
+    //    questa rotta. Fino al 03/09 la scheda sceglieva il percorso per
+    //    l'anteprima e questa rotta lo risceglieva per conto suo con la stessa
+    //    regola: due scelte in due momenti diversi, e con due percorsi
+    //    individuali (o uno creato nel frattempo) il PDF spedito poteva non
+    //    essere quello guardato. Ora la finestrella manda l'id del percorso di
+    //    cui ha aperto l'anteprima, e qui si controlla solo che sia davvero un
+    //    percorso individuale di QUESTO cliente. Senza id non si manda niente:
+    //    scegliere da soli sarebbe tornare al difetto.
+    if (!percorsoId) {
+      return res.status(400).json({ error: 'Manca il percorso del contratto: riapri la scheda del cliente e la finestrella della Mail 2.' });
+    }
+    const pq = await db.query('SELECT * FROM percorsi WHERE id=$1 AND client_id=$2 AND progetto_id IS NULL', [percorsoId, req.params.id]);
+    const percorso = pq.rows[0];
     if (!percorso) {
-      return res.status(400).json({
-        error: 'Questo cliente non ha un percorso individuale: senza percorso il contratto non ' +
+      return res.status(404).json({
+        error: 'Quel percorso non è un percorso individuale di questo cliente: il contratto non ' +
                'saprebbe dire né la modalità né il prezzo. ⛔ Non mando il modello generico al suo posto.',
       });
+    }
+    // La posta si controlla DOPO il percorso: così un difetto nel percorso si
+    // vede anche dove la posta non c'è (la prova gira senza chiavi Gmail).
+    if (!mailer.mailerReady()) {
+      return res.status(400).json({ error: 'Invio email non configurato sul server.' });
     }
 
     const attachments = [];
@@ -1258,9 +1273,11 @@ router.post('/dashboard/scan-drive', requireCoach, express.json(), async (req, r
 
 /**
  * SU QUALE PERCORSO SI FA IL CONTRATTO — regola scritta una volta sola.
- * La usano la scheda cliente (per il pulsante e gli avvisi) e la Mail 2 (per
- * l'allegato): se ognuna scegliesse per conto suo, il contratto mostrato e
- * quello spedito potrebbero riguardare percorsi diversi.
+ * La usa la scheda cliente (per il pulsante, gli avvisi e l'anteprima nella
+ * finestrella della Mail 2). ⭐ Fetta 0.5 (04/09): la rotta della Mail 2 NON
+ * sceglie più: riceve dalla finestrella l'id del percorso di cui ha mostrato
+ * l'anteprima. Due scelte in due momenti diversi, anche con la stessa regola,
+ * potevano dare un contratto mostrato e uno spedito su percorsi diversi.
  * ⛔ Mai un percorso legato a un progetto: quello ha il suo contratto, che
  *    nasce dalla partecipazione e non da qui.
  */
@@ -1627,6 +1644,15 @@ router.post('/dashboard/progetti/:id/percorsi/:pid/chiudi', requireCoach, expres
 // ⚠️ Tornando a «da inviare» le due date si AZZERANO: il documento sta per
 //    cambiare, quindi «inviato il 3 settembre» diventerebbe una data falsa
 //    riferita a un foglio che nessuno ha più.
+// ⛔ Fetta 0.5 (04/09/2026): IL PASSO LO VERIFICA IL SERVER. Fino al 03/09 la
+//    rotta controllava che lo stato esistesse, non che il passaggio fosse
+//    ammesso: da «da redigere» si poteva andare dritti ad «approvata» — cioè
+//    congelare un progetto con una chiamata — e si poteva scrivere in tabella
+//    «da_redigere», che per definizione è l'assenza della riga. Ora si accetta
+//    solo il passo che AVANTI/INDIETRO prevedono da dove si sta (gli stessi
+//    pulsanti che la cella mostra): `contrattiStato.passaggioAmmesso`.
+//    ⚠️ La Mail 2 NON passa di qui: mandare è un fatto, e il fatto porta il
+//       contratto a «in attesa» anche se nessuno ha premuto «l'ho preparata».
 // ═══════════════════════════════════════════════════════════════════════════
 router.post('/dashboard/contratti/stato', requireCoach, express.json(), async (req, res) => {
   const { tipo, soggetto_id: soggetto, stato } = req.body || {};
@@ -1640,12 +1666,25 @@ router.post('/dashboard/contratti/stato', requireCoach, express.json(), async (r
     const c = await db.query(`SELECT 1 FROM ${TABELLA[t.colonna]} WHERE id=$1`, [soggetto]);
     if (!c.rows.length) return res.status(404).json({ error: 'Il soggetto di questo contratto non esiste.' });
 
+    // Da dove si sta: la riga, o la sua assenza («da redigere»).
+    const cur = await db.query(`SELECT stato FROM contratti WHERE tipo=$1 AND ${t.colonna}=$2`, [tipo, soggetto]);
+    const daStato = cur.rows.length ? cur.rows[0].stato : null;
+    if (!contrattiStato.passaggioAmmesso(daStato, stato)) {
+      return res.status(400).json({
+        error: `Da «${contrattiStato.stato(daStato || 'da_redigere').label}» non si passa a «${contrattiStato.stato(stato).label}»: i passaggi si fanno uno alla volta, con i pulsanti della cella.`,
+      });
+    }
+
     const invio = stato === 'in_attesa' ? 'CURRENT_DATE' : (stato === 'da_inviare' ? 'NULL' : 'data_invio');
     const appr  = stato === 'approvata' ? 'CURRENT_DATE' : (stato === 'da_inviare' ? 'NULL' : 'data_approvazione');
-    const agg = await db.query(
-      `UPDATE contratti SET stato=$1, data_invio=${invio}, data_approvazione=${appr}, updated_at=NOW()
-        WHERE tipo=$2 AND ${t.colonna}=$3`, [stato, tipo, soggetto]);
-    if (!agg.rowCount) {
+    if (cur.rows.length) {
+      // ⚠️ `AND stato=$4`: se nel frattempo qualcun altro l'ha mosso, il passo
+      //    che avevamo verificato non vale più, e non si scrive.
+      const agg = await db.query(
+        `UPDATE contratti SET stato=$1, data_invio=${invio}, data_approvazione=${appr}, updated_at=NOW()
+          WHERE tipo=$2 AND ${t.colonna}=$3 AND stato=$4`, [stato, tipo, soggetto, daStato]);
+      if (!agg.rowCount) return res.status(409).json({ error: 'Lo stato del contratto è cambiato nel frattempo: ricarica la pagina.' });
+    } else {
       await db.query(
         `INSERT INTO contratti (id, tipo, ${t.colonna}, stato, data_invio, data_approvazione)
          VALUES ($1,$2,$3,$4,${stato === 'in_attesa' ? 'CURRENT_DATE' : 'NULL'},${stato === 'approvata' ? 'CURRENT_DATE' : 'NULL'})`,
@@ -5226,9 +5265,9 @@ Germano`;
   // perché un cliente può averne più di uno e sbagliare percorso vorrebbe dire
   // mandargli il contratto di un altro pezzo del suo lavoro.
   // ⭐ La regola sta in UN posto solo (`scegliPercorsoContratto`, accanto al
-  //    contratto): la usa questa pagina per il pulsante e la Mail 2 per
-  //    l'allegato. Se scegliessero per conto loro, un giorno il contratto
-  //    mostrato e quello spedito riguarderebbero percorsi diversi.
+  //    contratto). Questa pagina la usa per il pulsante e per l'anteprima; la
+  //    Mail 2 (fetta 0.5, 04/09) riceve da qui l'id del percorso scelto, così
+  //    l'allegato è per costruzione il PDF che si è guardato.
   const percorsoContratto = scegliPercorsoContratto(percorsi);
   // I campi che finirebbero a puntini nel documento. Non è un errore: un
   // contratto con dei puntini si stampa lo stesso e si riempie a penna. Ma
@@ -5857,6 +5896,10 @@ Germano`;
   <script>
     ${jsModalePdf()}
     const CID = '${client.id}';
+    // Fetta 0.5 (04/09): il percorso di cui la finestrella della Mail 2 apre
+    // l'anteprima. È lo stesso che «Approva e invia» manda alla rotta, così
+    // l'allegato è per costruzione il PDF che si è guardato.
+    const PERC_CONTRATTO = '${percorsoContratto ? percorsoContratto.id : ''}';
     // Per comporre link e testo della mail dello strumento, senza chiedere al server.
     const PERM_BASE = '${PLATFORM_URL}/c/${client.token}';
     const PERM_NOMI = ${JSON.stringify(Object.fromEntries(STRUMENTI.map(t => [t.key, t.nome]))).replace(/</g, '\\u003c')};
@@ -6151,6 +6194,7 @@ Germano`;
         to,
         subject: document.getElementById('m2-subject').value,
         body: document.getElementById('m2-body').value,
+        percorso_id: PERC_CONTRATTO,
       };
       if (!confirm('Invio a ' + to + ' contratto, informativa privacy e agenda?')) return;
       const btn = document.getElementById('m2-send');

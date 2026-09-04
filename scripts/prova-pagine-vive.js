@@ -155,12 +155,45 @@ const chiama = async (metodo, url, corpo) => {
     r = await chiama('GET', `/dashboard/clients/${idCli}`);
     dice(r.stato === 200, 'la scheda del cliente risponde 200', r.stato);
     dice(r.testo.includes('Da redigere'), 'e mostra il contratto come «Da redigere»');
+    // ⛔ Fetta 0.5 (04/09): i passaggi sono UNO alla volta, come i pulsanti della
+    //    cella. Fino al 03/09 questa prova saltava da «da redigere» a «in attesa»
+    //    in una chiamata, e la rotta lasciava fare.
     r = await chiama('POST', '/dashboard/contratti/stato', { tipo: 'cliente', soggetto_id: idPercInd, stato: 'in_attesa' });
-    dice(r.stato === 200, 'lo stato si muove anche di qui', r.stato + ' ' + r.testo.slice(0, 90));
+    dice(r.stato === 400, '🔬 da «da redigere» non si salta a «in attesa»: 400', 'ha risposto ' + r.stato);
+    let cInd = await db.query("SELECT stato FROM contratti WHERE tipo='cliente' AND percorso_id=$1", [idPercInd]);
+    dice(cInd.rows.length === 0, '  e il rifiuto non ha creato nessuna riga');
+    r = await chiama('POST', '/dashboard/contratti/stato', { tipo: 'cliente', soggetto_id: idPercInd, stato: 'da_inviare' });
+    dice(r.stato === 200, 'lo stato si muove anche di qui: «l\'ho preparata»', r.stato + ' ' + r.testo.slice(0, 90));
+    r = await chiama('POST', '/dashboard/contratti/stato', { tipo: 'cliente', soggetto_id: idPercInd, stato: 'in_attesa' });
+    dice(r.stato === 200, '  poi «l\'ho inviata»', r.stato + ' ' + r.testo.slice(0, 90));
     r = await chiama('GET', `/dashboard/clients/${idCli}`);
     dice(r.testo.includes('In attesa di approvazione'), 'e la scheda ricaricata lo mostra');
-    const cInd = await db.query("SELECT stato FROM contratti WHERE tipo='cliente' AND percorso_id=$1", [idPercInd]);
+    cInd = await db.query("SELECT stato FROM contratti WHERE tipo='cliente' AND percorso_id=$1", [idPercInd]);
     dice(cInd.rows.length === 1 && cInd.rows[0].stato === 'in_attesa', 'nel database c\'è una riga sola, giusta');
+
+    // ── Fetta 0.5 (04/09) — la Mail 2 manda il contratto del percorso GUARDATO ──
+    // Fino al 03/09 l'anteprima usava il percorso dell'URL e la rotta della Mail 2
+    // ne sceglieva uno per conto suo: con due percorsi individuali il PDF spedito
+    // poteva non essere quello aperto. Ora la finestrella dice alla rotta QUALE
+    // percorso ha mostrato, e la rotta lo accetta solo se è davvero del cliente.
+    // ⚠️ In .env non ci sono le chiavi Gmail: la mail non può partire, e va bene
+    //    così — qui si prova il controllo che sta PRIMA dell'invio.
+    console.log('\n9b. La Mail 2 allega il contratto del percorso che si è guardato');
+    dice(r.testo.includes(`/percorsi/${idPercInd}/contratto`), 'la finestrella della Mail 2 apre l\'anteprima su quel percorso');
+    dice(r.testo.includes(`PERC_CONTRATTO = '${idPercInd}'`), 'e lo stesso percorso è quello che il pulsante «Approva e invia» manderà');
+    const m2 = { to: 'prova@example.invalid', subject: 'Prova', body: 'Prova' };
+    r = await chiama('POST', `/dashboard/clients/${idCli}/mail2/invia`, m2);
+    dice(r.stato === 400 && /percorso/i.test(r.testo), '🔬 senza dire quale percorso, la rotta rifiuta (400) invece di sceglierne uno da sé', r.stato + ' ' + r.testo.slice(0, 100));
+    r = await chiama('POST', `/dashboard/clients/${idCli}/mail2/invia`, { ...m2, percorso_id: idPerc });
+    dice(r.stato === 404, '🔬 con un percorso che non è del cliente (quello del progetto): 404', r.stato + ' ' + r.testo.slice(0, 100));
+    r = await chiama('POST', `/dashboard/clients/${idCli}/mail2/invia`, { ...m2, percorso_id: '00000000-0000-0000-0000-000000000000' });
+    dice(r.stato === 404, '🔬 con un percorso inventato: 404', r.stato + ' ' + r.testo.slice(0, 100));
+    r = await chiama('POST', `/dashboard/clients/${idCli}/mail2/invia`, { ...m2, percorso_id: idPercInd });
+    dice(r.stato === 400 && /non configurato/i.test(r.testo), 'col percorso giusto il controllo passa, e si ferma solo perché qui non c\'è la posta', r.stato + ' ' + r.testo.slice(0, 100));
+    const dopoM2 = await db.query('SELECT mail2_inviata_data FROM clients WHERE id=$1', [idCli]);
+    dice(dopoM2.rows[0].mail2_inviata_data === null, '  e nessuna delle quattro chiamate ha segnato la Mail 2 come inviata');
+    cInd = await db.query("SELECT stato FROM contratti WHERE tipo='cliente' AND percorso_id=$1", [idPercInd]);
+    dice(cInd.rows.length === 1 && cInd.rows[0].stato === 'in_attesa', '  né ha toccato lo stato del contratto');
     // ── La sezione «Contratti» in Amministrazione ───────────────────────────
     // ⚠️ Questa prova esiste perché il 30/08, scrivendo la pagina, avevo chiamato
     //    una `footerNoesys()` che non esiste: `node --check` non se ne accorge,
@@ -226,7 +259,15 @@ const chiama = async (metodo, url, corpo) => {
     await db.query('DELETE FROM sedute WHERE id=$1', [sed.rows[0].id]);
 
     console.log('\n13. 🔒 Col contratto del Committente firmato si congela TUTTO');
-    await chiama('POST', '/dashboard/contratti/stato', { tipo: 'committente', soggetto_id: idProg, stato: 'approvata' });
+    // ⛔ Fetta 0.5 (04/09): da «da inviare» non si salta ad «approvata» — sarebbe
+    //    congelare un progetto con una chiamata sola. Un passo alla volta.
+    r = await chiama('POST', '/dashboard/contratti/stato', { tipo: 'committente', soggetto_id: idProg, stato: 'approvata' });
+    dice(r.stato === 400, '🔬 da «da inviare» ad «approvata» in un colpo: 400', 'ha risposto ' + r.stato);
+    dice((await statoDb()).stato === 'da_inviare', '  e lo stato è rimasto «da inviare»');
+    r = await chiama('POST', '/dashboard/contratti/stato', { tipo: 'committente', soggetto_id: idProg, stato: 'in_attesa' });
+    dice(r.stato === 200, 'prima «l\'ho inviata»', r.stato + ' ' + r.testo.slice(0, 90));
+    r = await chiama('POST', '/dashboard/contratti/stato', { tipo: 'committente', soggetto_id: idProg, stato: 'approvata' });
+    dice(r.stato === 200, 'poi «è tornata firmata»', r.stato + ' ' + r.testo.slice(0, 90));
     r = await chiama('GET', `/dashboard/progetti/${idProg}`);
     dice(r.stato === 200, 'la pagina si apre lo stesso', r.stato);
     dice(r.testo.includes('Specifiche congelate'), 'e dice a chiare lettere che è congelato');
@@ -291,6 +332,7 @@ const chiama = async (metodo, url, corpo) => {
     r = await chiama('GET', `/dashboard/progetti/${idProg}`);
     dice(r.testo.includes('si è svolto senza contratto firmato'), 'se il Kick-Off è già AVVENUTO, l\'avviso diventa rosso');
 
+    await chiama('POST', '/dashboard/contratti/stato', { tipo: 'committente', soggetto_id: idProg, stato: 'in_attesa' });
     await chiama('POST', '/dashboard/contratti/stato', { tipo: 'committente', soggetto_id: idProg, stato: 'approvata' });
     r = await chiama('GET', `/dashboard/progetti/${idProg}`);
     dice(!r.testo.includes('si è svolto senza contratto') && !r.testo.includes('Kick-Off in calendario'),
@@ -580,6 +622,37 @@ const chiama = async (metodo, url, corpo) => {
     dice(orfani.rows[0].n === 0, 'e non ha lasciato righe orfane nel database');
     d6 = await statoDb();
     dice(d6.stato === 'da_inviare', 'dopo i quattro rifiuti lo stato buono è intatto');
+
+    // ── Fetta 0.5 (04/09) — i passaggi di stato li verifica il SERVER ──────────
+    // Prima la rotta controllava che lo stato esistesse, non che il passo fosse
+    // ammesso: si poteva congelare un progetto in una chiamata, e scrivere in
+    // tabella «da_redigere», che per definizione è l'assenza della riga.
+    console.log('\n21b. 🔬 I salti di stato del contratto sono rifiutati (fetta 0.5)');
+    for (const [st, et] of [['approvata', 'da «da inviare» ad «approvata» (congelerebbe il progetto)'],
+                            ['da_redigere', '«da redigere» in scrittura: è l\'assenza della riga'],
+                            ['da_inviare', 'restare fermi su «da inviare»']]) {
+      r = await chiama('POST', '/dashboard/contratti/stato', { tipo: 'committente', soggetto_id: idProg, stato: st });
+      dice(r.stato === 400, `rifiuta ${et}`, 'ha risposto ' + r.stato + ' ' + r.testo.slice(0, 80));
+    }
+    d6 = await statoDb();
+    dice(d6.stato === 'da_inviare', '  e lo stato è intatto: «da inviare»');
+    dice((await db.query("SELECT count(*)::int AS n FROM contratti WHERE tipo='committente' AND progetto_id=$1", [idProg])).rows[0].n === 1,
+      '  e la riga è sempre una');
+    // un contratto che NON ha ancora la riga (il partecipante): il salto non deve nemmeno crearla
+    r = await chiama('POST', '/dashboard/contratti/stato', { tipo: 'partecipante', soggetto_id: idPart, stato: 'approvata' });
+    dice(r.stato === 400, 'sul contratto del partecipante, ancora «da redigere», rifiuta il salto ad «approvata»', 'ha risposto ' + r.stato);
+    dice((await db.query("SELECT count(*)::int AS n FROM contratti WHERE tipo='partecipante' AND partecipazione_id=$1", [idPart])).rows[0].n === 0,
+      '  e non ha creato la riga');
+    // ⚠️ e «Modifica contratto approvato» resta possibile: sul contratto del cliente
+    const stCli = async () => (await db.query("SELECT stato, data_invio, data_approvazione FROM contratti WHERE tipo='cliente' AND percorso_id=$1", [idPercInd])).rows[0];
+    r = await chiama('POST', '/dashboard/contratti/stato', { tipo: 'cliente', soggetto_id: idPercInd, stato: 'approvata' });
+    dice(r.stato === 200 && (await stCli()).stato === 'approvata', 'il contratto del cliente, «in attesa», torna firmato: approvata');
+    r = await chiama('POST', '/dashboard/contratti/stato', { tipo: 'cliente', soggetto_id: idPercInd, stato: 'in_attesa' });
+    dice(r.stato === 400 && (await stCli()).stato === 'approvata', '🔬 da «approvata» non si torna a «in attesa»: 400, stato intatto', 'ha risposto ' + r.stato);
+    r = await chiama('POST', '/dashboard/contratti/stato', { tipo: 'cliente', soggetto_id: idPercInd, stato: 'da_inviare' });
+    const sc = await stCli();
+    dice(r.stato === 200 && sc.stato === 'da_inviare' && !sc.data_invio && !sc.data_approvazione,
+      '✅ ma «Modifica contratto approvato» (→ da inviare) resta possibile, e azzera le due date', r.stato + ' ' + JSON.stringify(sc));
   } catch (e) {
     ko++; console.log('\n🔴 ECCEZIONE: ' + e.message + '\n' + e.stack.split('\n')[1]);
   } finally {
