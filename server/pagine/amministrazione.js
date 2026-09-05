@@ -52,7 +52,7 @@ function anomaliePage(anomalie, conteggi, req) {
       </div>
     </div>`;
 
-  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Amministrazione</title>${baseStyle()}</head><body>
+  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Hub allenamento ICF — Amministrazione</title>${baseStyle()}</head><body>
   ${headerNoesys({ mondo: 'amministrazione', sub: 'anomalie' })}
   <div class="container">
     <h1>Amministrazione</h1>
@@ -342,7 +342,7 @@ function proformaPage(daChiedere, proforme, req) {
 
   const nientePerNiente = !daChiedere.length && !proforme.length;
 
-  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Proforma</title>${baseStyle()}</head><body>
+  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Hub allenamento ICF — Proforma</title>${baseStyle()}</head><body>
   ${headerNoesys({ mondo: 'amministrazione', sub: 'proforma' })}
   <div class="container">
     <h1>Amministrazione</h1>
@@ -639,7 +639,7 @@ function contrattiAmmPage(singoli, progetti, partecipanti, req, tutti) {
     : `<div style="font-size:13px;color:var(--muted)">${vuoto}</div>`;
 
   const tuttiPart = partecipanti.filter(p => Number(p.quota_coachee) > 0);
-  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Contratti</title>${baseStyle()}</head><body>
+  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Hub allenamento ICF — Contratti</title>${baseStyle()}</head><body>
   ${headerNoesys({ mondo: 'amministrazione', sub: 'contratti' })}
   <div class="container" style="max-width:1200px">
     <h1>Amministrazione</h1>
@@ -697,7 +697,7 @@ function emittentePage(e, verdetto, salvato, req) {
          </ul>
        </div>`;
 
-  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Chi emette</title>${baseStyle()}</head><body>
+  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Hub allenamento ICF — Chi emette</title>${baseStyle()}</head><body>
   ${headerNoesys({ mondo: 'amministrazione', sub: 'emittente' })}
   <div class="container" style="max-width:1200px">
     <h1>Amministrazione</h1>

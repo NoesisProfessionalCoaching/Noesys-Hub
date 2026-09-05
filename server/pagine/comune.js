@@ -396,7 +396,7 @@ function headerNoesys({ mondo = '', sub = '', briciole = [], q = '' } = {}) {
 
   return `<header class="nh">
     <div class="nh-row nh-top">
-      <a class="nh-brand" href="/dashboard" aria-label="Noesys Professional Coaching">${logoCompact(44)}<span class="nh-payoff">Professional<br>Coaching</span></a>
+      <a class="nh-brand" href="/dashboard" aria-label="Noesys Professional Coaching">${logoCompact(44)}<span class="nh-payoff">Hub allenamento<br>ICF</span></a>
       <span class="nh-spacer"></span>
       <form class="nh-search" action="/dashboard/cerca" method="get" role="search">
         <input type="search" name="q" value="${esc(q)}" placeholder="Cerca cliente, committente, progetto…" aria-label="Cerca">

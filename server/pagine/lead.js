@@ -38,7 +38,7 @@ function leadsPage(leads, req) {
     </tr>`;
   }
 
-  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Lead</title>${baseStyle()}</head><body>
+  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Hub allenamento ICF — Lead</title>${baseStyle()}</head><body>
   ${headerNoesys({ mondo: 'lead' })}
   <div class="container">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px">

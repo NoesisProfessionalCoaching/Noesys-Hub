@@ -154,7 +154,7 @@ function homePage(d, req) {
 
   const attenzione = [gAppuntamenti, gVerificare, gFerme, gDaChiedere, gAutomazione, gBozze, gAnagrafiche, gChiudere, gDocumenti, gAzioni, gLead].filter(Boolean).join('');
 
-  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub</title>${baseStyle()}</head><body>
+  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Hub allenamento ICF</title>${baseStyle()}</head><body>
   ${headerNoesys({})}
   <div class="hm-picto">${logoPicto(1080)}</div>
   <div class="container" style="position:relative;z-index:1">

@@ -53,7 +53,7 @@ function committentiPage(committenti, req) {
     </tr>`;
   }
 
-  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Committenti</title>${baseStyle()}</head><body>
+  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Hub allenamento ICF — Committenti</title>${baseStyle()}</head><body>
   ${headerNoesys({ mondo: 'progetti', sub: 'committenti' })}
   <div class="container">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:12px">
@@ -234,7 +234,7 @@ function progettiPage(progetti, committenti, req) {
     </tr>`;
   }
 
-  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Progetti Strutturati</title>${baseStyle()}</head><body>
+  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Hub allenamento ICF — Progetti Strutturati</title>${baseStyle()}</head><body>
   ${headerNoesys({ mondo: 'progetti', sub: 'progetti' })}
   <div class="container">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:12px">
@@ -844,7 +844,7 @@ function progettoDettaglioPage(p, coachee, req, disponibili, percorsi, fasi, sed
   // una proposta non è un impegno con nessuno.
   const tot4 = tranche.totali(pianoSalvato, qTot, rateChieste);
 
-  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — ${esc(p.titolo)}</title>${baseStyle()}
+  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Hub allenamento ICF — ${esc(p.titolo)}</title>${baseStyle()}
   <style>
     /* ⭐ AMMINISTRAZIONE COMPATTA (12/08). Germano: «dovrebbe potersi leggere
        tutta la scheda in un'unica schermata… è tutto troppo grande».

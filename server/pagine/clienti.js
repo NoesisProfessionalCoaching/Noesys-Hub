@@ -22,7 +22,7 @@ const tranche = require('../tranche');
 const { AREA_COLOR, FONTE_LABEL, ORE_TIPO, PERMESSO_ORE_SESSIONE, PLATFORM_URL, STATO_CLIENTE, STRUMENTI, TOOL_LABEL, areaOptions, attr, baseStyle, composeAddress, esc, fmtOre, fonteOptions, headerNoesys, isProgrammata, itDate, itDateTime, jsModalePdf, jsStr, meseEsteso, modalePdf, oggiIso, prezzoPercorso, renderSedutaRow, renderSessionData, scegliPercorsoContratto, sezionePieghevole, socialOptions } = require('./comune');
 
 function loginPage(error) {
-  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Accesso</title>${baseStyle()}</head><body>
+  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Hub allenamento ICF — Accesso</title>${baseStyle()}</head><body>
     <div style="max-width:360px;margin:70px auto;background:#fff;padding:34px 30px;border-radius:16px;box-shadow:0 8px 32px rgba(16,33,60,0.08)">
       <div style="text-align:center;margin-bottom:20px">${logoCompact(48)}</div>
       <h1 style="text-align:center">Hub CRM</h1>
@@ -77,7 +77,7 @@ function dashboardPage(clients, req, { individuali = false, tutti = false } = {}
       ? `${clients.length} clienti in tutto, progetti compresi · <a href="/dashboard/individuali" style="font-size:13px">torna ai soli percorsi individuali</a>`
       : `${clients.length} clienti registrati`;
 
-  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — ${esc(titolo)}</title>${baseStyle()}</head><body>
+  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Hub allenamento ICF — ${esc(titolo)}</title>${baseStyle()}</head><body>
   ${headerNoesys({ mondo: 'individuali' })}
   <div class="container">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px">
@@ -205,7 +205,7 @@ function driveDiagPage(steps, root, children, req) {
         </div>`).join('')
     : '<div class="empty" style="padding:18px">Nessun elemento in cima alla cartella.</div>';
 
-  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Verifica Drive</title>${baseStyle()}</head><body>
+  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Hub allenamento ICF — Verifica Drive</title>${baseStyle()}</head><body>
   ${headerNoesys({ briciole: [{ label: 'Verifica Google Drive' }] })}
   <div class="container" style="max-width:640px">
     <h1>Verifica collegamento a Google Drive</h1>
@@ -1168,7 +1168,7 @@ Germano`;
       </div>
     </div>`;
 
-  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — ${esc(client.name)}</title>${baseStyle()}</head><body>
+  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Hub allenamento ICF — ${esc(client.name)}</title>${baseStyle()}</head><body>
   ${headerNoesys({ mondo: 'individuali', briciole: [
     { label: 'Percorsi Individuali', href: '/dashboard/individuali' },
     { label: client.name },
@@ -2310,7 +2310,7 @@ function cercaPage(q, ris, req) {
     }
   }
 
-  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Ricerca</title>${baseStyle()}
+  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Hub allenamento ICF — Ricerca</title>${baseStyle()}
   <style>
     .ce-card { padding: 4px 0; }
     .ce-riga { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 11px 20px; border-bottom: 1px solid #f1f3f6; }
@@ -2345,7 +2345,7 @@ function icfPage(rows, tot, clientiUnici, req) {
         <td style="text-align:right"><strong>${fmtOre(r.ore)}</strong></td>
       </tr>`).join('');
 
-  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Noesys Hub — Estratto ICF</title>${baseStyle()}</head><body>
+  return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Hub allenamento ICF — Estratto ICF</title>${baseStyle()}</head><body>
   ${headerNoesys({ briciole: [{ label: 'Estratto ICF' }] })}
   <div class="container">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:12px">
