@@ -437,20 +437,56 @@ router.post('/dashboard/clients', requireCoach, express.json(), async (req, res)
   }
 });
 
-// Crea (o ripristina) le cartelle Drive di un cliente esistente. Usato dal pulsante
-// nella scheda quando drive_url è vuoto (es. lead convertito, o creazione con Drive giù).
-// Non tocca chi ha già un link, per non fare doppioni delle cartelle dei 7 storici.
+// ⭐ 14/09/2026 — LE CARTELLE DI UN PERCORSO, da qualunque momento.
+//    Caso vero: Federica D'Agostino, percorso creato l'08/09 senza data d'inizio,
+//    data messa dopo con «Modifica», Intake fatto il 14/09, e dentro «Percorsi»
+//    su Drive non c'era niente: le cartelle nascevano SOLO alla creazione del
+//    percorso, e solo se la data c'era già. Questa funzione le crea (idempotente:
+//    se ci sono, non le duplica) e torna un avviso invece di un errore, così chi
+//    la chiama salva comunque e dice al coach cosa manca.
+async function cartellePercorsoSuDrive(clientId, dataInizio) {
+  const cr = await db.query('SELECT drive_url FROM clients WHERE id=$1', [clientId]);
+  const clientFolderId = drive.folderIdFromUrl(cr.rows[0] && cr.rows[0].drive_url);
+  const folderName = itFolderDate(dataInizio);
+  if (!clientFolderId) return 'Il cliente non ha ancora una cartella Drive: crea prima quella (pulsante «Cartelle su Drive» nella scheda).';
+  if (!folderName) return null;   // senza data non c'è niente da nominare: non è un guaio
+  try {
+    await drive.createPercorsoFolders(clientFolderId, folderName);
+    return null;
+  } catch (e) {
+    console.error('[drive] cartelle percorso fallite:', e.message);
+    return 'Le cartelle Drive del percorso (' + folderName + ') non sono state create: ' + e.message;
+  }
+}
+
+// Crea (o ripristina) le cartelle Drive di un cliente esistente, e quelle dei suoi
+// percorsi. Usato dal pulsante nella scheda.
+// ⭐ 14/09/2026: se il cliente ha GIÀ la sua cartella non la rifà (niente doppioni
+//    per i 7 storici), ma rifà quelle dei percorsi che hanno una data d'inizio —
+//    è il rimedio per un percorso nato senza data. Idempotente: quello che c'è resta.
 router.post('/dashboard/clients/:id/drive-folders', requireCoach, async (req, res) => {
   try {
     const cr = await db.query('SELECT * FROM clients WHERE id=$1', [req.params.id]);
     const c = cr.rows[0];
     if (!c) return res.status(404).json({ error: 'Cliente non trovato' });
-    if (c.drive_url && c.drive_url.trim()) {
-      return res.status(400).json({ error: 'Questo cliente ha già una cartella Drive. Per rifarla, svuota prima il campo link in «Modifica dati».' });
+    let drive_url = c.drive_url;
+    const avvisi = [];
+    if (!(drive_url && drive_url.trim())) {
+      const f = await drive.createClientFolders({ area: c.area, cognome: c.cognome, nome: c.nome });
+      await db.query('UPDATE clients SET drive_url=$1 WHERE id=$2', [f.url, c.id]);
+      drive_url = f.url;
     }
-    const f = await drive.createClientFolders({ area: c.area, cognome: c.cognome, nome: c.nome });
-    await db.query('UPDATE clients SET drive_url=$1 WHERE id=$2', [f.url, c.id]);
-    res.json({ ok: true, drive_url: f.url });
+    const percorsi = await db.query(
+      'SELECT id, data_inizio FROM percorsi WHERE client_id=$1 AND data_inizio IS NOT NULL ORDER BY data_inizio', [c.id]);
+    let fatte = 0;
+    for (const p of percorsi.rows) {
+      const avviso = await cartellePercorsoSuDrive(c.id, p.data_inizio);
+      if (avviso) avvisi.push(avviso); else fatte++;
+    }
+    const messaggio = fatte
+      ? `Cartelle a posto: ${fatte} ${fatte === 1 ? 'percorso' : 'percorsi'} con Intake, Ongoing e Final su Drive.`
+      : (percorsi.rows.length ? '' : 'Cartella del cliente a posto. Nessun percorso con una data d’inizio: le cartelle dei percorsi nascono con la data.');
+    res.json({ ok: true, drive_url, messaggio, avvisi });
   } catch (e) {
     console.error('[drive] cartelle cliente:', e.message);
     res.status(500).json({ error: e.message });
@@ -1100,7 +1136,12 @@ router.post('/dashboard/clients/:id/percorsi/:pid', requireCoach, express.json()
        modalita || 'Standard', prestazione]
     );
     if (!r.rowCount) return res.status(404).json({ error: 'Percorso non trovato' });
-    res.json({ ok: true });
+    // ⭐ 14/09/2026 — se adesso c'è una data d'inizio, le cartelle Intake/Ongoing/Final
+    //    del percorso si creano anche da qui (idempotente). Prima nascevano solo alla
+    //    creazione del percorso, e chi metteva la data dopo restava senza cartelle.
+    //    Un Drive che non risponde NON blocca la modifica: si avvisa e basta.
+    const driveWarning = data_inizio ? await cartellePercorsoSuDrive(req.params.id, data_inizio) : null;
+    res.json({ ok: true, driveWarning });
   } catch (err) {
     console.error('[percorso/modifica]', err);
     res.status(500).json({ error: 'Modifica non riuscita: ' + err.message });

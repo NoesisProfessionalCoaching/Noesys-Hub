@@ -518,6 +518,27 @@ const chiama = async (metodo, url, corpo) => {
     r = await chiama('POST', `/dashboard/clients/${idCli}/percorsi`, { tipo: 'Individuale', modalita: 'Pacchetto', prezzo: 1500, data_inizio: '2026-10-05', n_sessioni_previste: 8 });
     dice(r.stato === 200, 'nasce un percorso a Pacchetto', r.stato + ' ' + r.testo.slice(0, 120));
     const idPacc = (await db.query("SELECT id FROM percorsi WHERE client_id=$1 AND modalita='Pacchetto'", [idCli])).rows[0].id;
+
+    // ═══ 14/09/2026 — LE CARTELLE DRIVE DEL PERCORSO NASCONO ANCHE DOPO ═══
+    // Caso vero (Federica D'Agostino, 14/09): percorso creato l'08/09 senza data
+    // d'inizio, data messa dopo con «Modifica», Intake fatto, e su Drive dentro
+    // «Percorsi» non c'era niente. L'Hub creava le cartelle SOLO alla nascita del
+    // percorso. Da oggi: «Modifica» con una data d'inizio le crea, e «Cartelle su
+    // Drive» le rifà per tutti i percorsi con una data, anche se il cliente ha
+    // già la sua cartella. Qui le chiavi Google non ci sono: si guarda che l'Hub
+    // CI PROVI (l'avviso nomina Google) invece di tacere.
+    console.log('\n18b. Le cartelle Drive del percorso nascono anche con «Modifica» (14/09)');
+    await db.query("UPDATE clients SET drive_url='https://drive.google.com/drive/folders/PROVA-CARTELLA-' || $2 WHERE id=$1", [idCli, PORTA]);
+    const modPacc = (corpo) => chiama('POST', `/dashboard/clients/${idCli}/percorsi/${idPacc}`, { tipo: 'Individuale', modalita: 'Pacchetto', prezzo: 1500, n_sessioni_previste: 8, ...corpo });
+    r = await modPacc({ data_inizio: '' });
+    dice(r.stato === 200 && !(r.dati && r.dati.driveWarning), 'senza data d’inizio «Modifica» non prova a creare cartelle', r.stato + ' ' + r.testo.slice(0, 120));
+    r = await modPacc({ data_inizio: '2026-10-05' });
+    dice(r.stato === 200 && r.dati && /Google/.test(r.dati.driveWarning || ''), '🔴 con la data d’inizio «Modifica» PROVA a creare le cartelle del percorso (qui Drive manca, e lo dice)', r.stato + ' ' + r.testo.slice(0, 160));
+    dice((await db.query('SELECT data_inizio FROM percorsi WHERE id=$1', [idPacc])).rows[0].data_inizio !== null, '  e la data è salvata comunque: Drive che manca non blocca la modifica');
+    r = await chiama('POST', `/dashboard/clients/${idCli}/drive-folders`);
+    dice(r.stato === 200 && r.dati && Array.isArray(r.dati.avvisi) && r.dati.avvisi.some(a => /Google/.test(a)), '🔴 «Cartelle su Drive» con la cartella del cliente già fatta: rifà quelle dei percorsi (qui prova, e dice che Drive manca)', r.stato + ' ' + r.testo.slice(0, 160));
+    r = await chiama('GET', `/dashboard/clients/${idCli}`);
+    dice(r.stato === 200 && /id="drive-folders-btn"/.test(r.testo), '  e il pulsante c’è anche quando la cartella del cliente esiste già');
     const salvaPacc = (righe) => chiama('POST', `/dashboard/percorsi/${idPacc}/piano`, { prezzo: 1500, data_meta: '', data_fine: '2026-12-20', righe });
     r = await salvaPacc([{ etichetta: 'Acconto', importo: 600, innesco: 'firma', giorni: 30 }, { etichetta: 'Saldo', importo: 900, innesco: 'fine', giorni: 30 }]);
     dice(r.stato === 200, 'il piano del pacchetto si salva: 600 + 900', r.stato + ' ' + r.testo.slice(0, 160));

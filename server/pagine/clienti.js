@@ -1143,6 +1143,11 @@ Germano`;
           <div class="az-link"><a href="${esc(client.drive_url)}" target="_blank">Apri la cartella su Drive ↗</a></div>
           <div class="az-btns">
             <button onclick="copyLink(this.dataset.url)" data-url="${attr(client.drive_url)}" class="btn btn-neutral btn-sm">📋 Copia il link</button>
+            ${/* ⭐ 14/09/2026 — anche con la cartella del cliente già fatta, il pulsante
+                  rifà le cartelle dei PERCORSI con una data d'inizio (idempotente). Serve
+                  al percorso nato senza data, che su Drive non aveva Intake/Ongoing/Final. */ ''}
+            <button id="drive-folders-btn" onclick="createDriveFolders()" class="btn btn-neutral btn-sm" title="Rifà le cartelle Intake/Ongoing/Final dei percorsi che hanno una data d'inizio. Quello che c'è già resta.">🔄 Cartelle dei percorsi</button>
+            <span id="drive-folders-msg" style="font-size:12px;color:#6B7280"></span>
           </div>
           <div class="az-stato">Qui vivono i report delle sessioni e la documentazione del cliente.</div>` : `
           <div class="az-btns">
@@ -1854,7 +1859,11 @@ Germano`;
         const r = await fetch('/dashboard/clients/'+CID+'/drive-folders', { method:'POST' });
         const d = await r.json();
         if (d.error) { msg.style.color='#b45309'; msg.textContent = d.error; btn.disabled = false; return; }
-        location.reload();
+        // 14/09: la rotta dice cosa ha fatto e cosa non è riuscita a fare; si legge
+        // prima di ricaricare, altrimenti l'avviso sparisce con la pagina.
+        if (d.avvisi && d.avvisi.length) { msg.style.color='#b45309'; msg.textContent = (d.messaggio ? d.messaggio + ' ' : '') + d.avvisi.join(' '); btn.disabled = false; return; }
+        if (d.messaggio) { msg.style.color='#2f6b46'; msg.textContent = d.messaggio; }
+        setTimeout(function () { location.reload(); }, d.messaggio ? 1500 : 0);
       } catch(e) { msg.style.color='#b45309'; msg.textContent = 'Errore di rete, riprova'; btn.disabled = false; }
     }
     function openMail2() {

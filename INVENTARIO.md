@@ -2,7 +2,7 @@
 
 Non si modifica a mano: lo riscrive `npm run prova`. Se un numero qui non torna con quello che ricordi, è cambiato il codice.
 
-- `server/routes.js`: **3648 righe**, **92 rotte**; `server/pagine/`: **6 file**, **6135 righe**, **15 pagine**
+- `server/routes.js`: **3689 righe**, **92 rotte**; `server/pagine/`: **6 file**, **6144 righe**, **15 pagine**
 - moduli in `server/`: **30** (8 usano `db.js`, 22 no)
 - prove in `npm run prova`: **17**, in questo ordine: prova-file → prova-js → prova-pagine → prova-fiscale → prova-proforma → prova-tranche → prova-incassi → prova-sedute → prova-appuntamenti → prova-final-programmata → prova-migrazione → prova-barriere → prova-conformita → prova-automazione → prova-comuni → inventario → prova-timbro
 
@@ -16,8 +16,8 @@ Non si modifica a mano: lo riscrive `npm run prova`. Se un numero qui non torna 
 - `dashboardPage` (pagine/clienti.js, riga 42)
 - `driveDiagPage` (pagine/clienti.js, riga 192)
 - `clientDetailPage` (pagine/clienti.js, riga 239)
-- `cercaPage` (pagine/clienti.js, riga 2251)
-- `icfPage` (pagine/clienti.js, riga 2333)
+- `cercaPage` (pagine/clienti.js, riga 2260)
+- `icfPage` (pagine/clienti.js, riga 2342)
 - `homePage` (pagine/home.js, riga 18)
 - `leadsPage` (pagine/lead.js, riga 9)
 - `committentiPage` (pagine/progetti.js, riga 16)
@@ -164,7 +164,7 @@ Non si modifica a mano: lo riscrive `npm run prova`. Se un numero qui non torna 
 | `pagina-js.js` | 155 | no |
 | `piano-ui.js` | 598 | no |
 | `proforma.js` | 584 | no |
-| `routes.js` | 3648 | sì |
+| `routes.js` | 3689 | sì |
 | `scan-moduli.js` | 215 | sì |
 | `scan.js` | 416 | sì |
 | `sedute.js` | 53 | no |
