@@ -734,10 +734,24 @@ function renderSessionData(tool, jsonStr) {
       </div>` : '<span style="color:#aaa;font-size:12px">Nessun evento</span>';
     }
     case 'brainstorming': {
+      // Tre fasi nello strumento: le idee esplorate, quelle scelte, e per ognuna
+      // delle scelte le AZIONI (fase 3). Dal 14/09/2026 le azioni si vedono qui:
+      // prima la scheda mostrava le idee e taceva i passi concreti, che sono il
+      // punto d'arrivo dello strumento. Un salvataggio senza `actions` (di prima)
+      // si vede come sempre.
       const esplorate = (d.exploreCards || []).map(c => c.text).filter(Boolean);
-      const selezionate = (d.selectCards || []).map(c => c.text).filter(Boolean);
+      const selezionate = (d.selectCards || []).filter(c => c && c.text);
+      const chipIdea = t => `<span style="display:inline-block;margin:3px 4px 3px 0;padding:3px 10px;border-radius:14px;background:#1A5280;color:#fff;font-size:12px">${esc(t)}</span>`;
+      const blocco = c => {
+        const azioni = (c.actions || []).map(a => a && a.text).filter(Boolean);
+        if (!azioni.length) return chipIdea(c.text);
+        return `<div style="margin:3px 0 8px">${chipIdea(c.text)}
+          <div style="margin:2px 0 0 12px;padding-left:10px;border-left:2px solid #d9dee6"><span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#9AA0AA">Azioni</span>
+            ${azioni.map(t => `<div style="font-size:12px;color:#2C3E50;margin-top:2px">${esc(t)}</div>`).join('')}
+          </div></div>`;
+      };
       return `${esplorate.length ? `<div style="margin-bottom:8px"><span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#9AA0AA">Idee esplorate</span><br>${esplorate.map(t => `<span style="display:inline-block;margin:3px 4px 3px 0;padding:3px 10px;border-radius:14px;background:#eef1f5;color:#4a5568;font-size:12px">${esc(t)}</span>`).join('')}</div>` : ''}
-        ${selezionate.length ? `<div><span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#9AA0AA">Idee selezionate</span><br>${selezionate.map(t => `<span style="display:inline-block;margin:3px 4px 3px 0;padding:3px 10px;border-radius:14px;background:#1A5280;color:#fff;font-size:12px">${esc(t)}</span>`).join('')}</div>` : ''}
+        ${selezionate.length ? `<div><span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#9AA0AA">Idee selezionate</span><br>${selezionate.map(blocco).join('')}</div>` : ''}
         ${!esplorate.length && !selezionate.length ? '<span style="color:#aaa;font-size:12px">—</span>' : ''}`;
     }
     case 'genogramma': {

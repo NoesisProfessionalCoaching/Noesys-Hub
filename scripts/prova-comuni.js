@@ -56,6 +56,27 @@ function prova(titolo, atteso, ottenuto) {
   catch (e) { err = e.message; }
   prova('🔬 un refresh token revocato dice quale collegamento è rotto', 'Rinnovo token Gmail fallito: invalid_grant', err);
 
+  // ── L'ANTEPRIMA DEL BRAINSTORMING (fase 1b del piano strumenti, 14/09/2026) ──
+  // Lo strumento salva per ogni idea scelta le sue AZIONI (fase 3, «⚡ Azioni»).
+  // Fino al 14/09 la scheda cliente mostrava le idee e taceva le azioni.
+  console.log('\n— L\'ANTEPRIMA DEL BRAINSTORMING —');
+  const comune = require('../server/pagine/comune');
+  const bs = comune.renderSessionData('brainstorming', JSON.stringify({
+    currentPhase: 3, nextId: 9,
+    exploreCards: [{ id: 1, text: 'Cambiare lavoro', status: 'active' }, { id: 2, text: 'Aprire un negozio', status: 'suspended' }],
+    selectCards: [
+      { id: 1, text: 'Cambiare lavoro', actions: [{ id: 5, text: 'Aggiornare il CV' }, { id: 6, text: 'Scrivere a <Marta>' }] },
+      { id: 3, text: 'Idea senza passi', actions: [] },
+    ],
+  }));
+  prova('l\'idea scelta si vede', true, bs.includes('Cambiare lavoro'));
+  prova('e sotto ci sono le sue azioni', [true, true], [bs.includes('Aggiornare il CV'), bs.includes('Scrivere a &lt;Marta&gt;')]);
+  prova('  una parentesi angolare nel testo è resa innocua', false, bs.includes('<Marta>'));
+  prova('un\'idea senza azioni si vede lo stesso', true, bs.includes('Idea senza passi'));
+  prova('la voce «Azioni» compare una volta per idea che ne ha', 1, (bs.match(/Azioni/g) || []).length);
+  const bsVecchio = comune.renderSessionData('brainstorming', JSON.stringify({ exploreCards: [{ id: 1, text: 'Solo idee' }], selectCards: [{ id: 1, text: 'Solo idee' }] }));
+  prova('un salvataggio di prima (senza il campo actions) si legge come sempre', [true, 0], [bsVecchio.includes('Solo idee'), (bsVecchio.match(/Azioni/g) || []).length]);
+
   console.log(falliti ? `\n🔴 ${falliti} prove fallite` : '\n✅ pezzi comuni: tutte le prove passano');
   process.exit(falliti ? 1 : 0);
 })();
