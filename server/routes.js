@@ -1069,9 +1069,14 @@ router.post('/dashboard/clients/:id/mail2/invia', requireCoach, express.json(), 
     }
 
     await mailer.sendMail({ to, subject, text: body, attachments });
-    // La Mail 2 «è inviata» quando parte il CONTRATTO, che è la sua sostanza: una
-    // mail con la sola agenda non chiude il passo.
-    if (conContratto) await db.query('UPDATE clients SET mail2_inviata_data = NOW() WHERE id=$1', [req.params.id]);
+    // ⭐ 14/09/2026 (Germano, scelta A per l'Hub allenamento ICF): la Mail 2 «è
+    //    inviata» quando PARTE, con qualunque allegato. La regola del 04/09
+    //    («inviata = è partito il contratto») presupponeva un contratto; qui i
+    //    contratti non esistono dal 05/09 (scambio servizi, decisione con Adolfo),
+    //    e una Mail 2 con informativa e agenda risultava «non inviata» per sempre
+    //    (caso Federica D'Agostino). Il segno segue il fatto: la mail è partita.
+    //    ⚠️ Sull'Hub Noesys (repo Noesys_Hub) resta la regola del contratto.
+    await db.query('UPDATE clients SET mail2_inviata_data = NOW() WHERE id=$1', [req.params.id]);
 
     // ⭐ MANDARE È UN FATTO, e lo stato del contratto si ricava dai fatti: se la
     //    mail è partita, quel contratto è «in attesa di approvazione». Prima

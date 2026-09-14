@@ -234,6 +234,30 @@ const chiama = async (metodo, url, corpo) => {
     dice(dopoM2.rows[0].mail2_inviata_data === null, '  e nessuna delle quattro chiamate ha segnato la Mail 2 come inviata');
     cInd = await db.query("SELECT stato FROM contratti WHERE tipo='cliente' AND percorso_id=$1", [idPercInd]);
     dice(cInd.rows.length === 1 && cInd.rows[0].stato === 'in_attesa', '  né ha toccato lo stato del contratto');
+
+    // ⭐ 14/09/2026 (Germano, scelta A per l'Hub allenamento ICF): la Mail 2 è
+    //    «inviata» quando PARTE, con qualunque allegato. Qui i contratti non
+    //    esistono dal 05/09 (scambio servizi), quindi la Mail 2 parte sempre senza
+    //    contratto: con la regola del 04/09 («inviata = è partito il contratto»)
+    //    risultava «non inviata» per sempre (caso Federica D'Agostino).
+    //    La posta si finge pronta per questo solo blocco, e si rimette com'era.
+    console.log('\n9c. La Mail 2 è inviata quando parte, anche senza contratto (14/09, scelta A)');
+    const prontaPrima = mailer.mailerReady;
+    mailer.mailerReady = () => true;
+    try {
+      const nPostaPrima = postaFinta.length;
+      // (Solo l'agenda: l'informativa porta la firma PNG, che il Drive finto di
+      //  questa prova non sa dare. Per la regola conta che il contratto NON ci sia.)
+      r = await chiama('POST', `/dashboard/clients/${idCli}/mail2/invia`, { ...m2, allegati: ['agenda'] });
+      dice(r.stato === 200, 'la Mail 2 con la sola agenda (senza contratto) parte', r.stato + ' ' + r.testo.slice(0, 120));
+      dice(postaFinta.length === nPostaPrima + 1 && (postaFinta[postaFinta.length - 1].attachments || []).length === 1, '  con un allegato nella posta (finta)');
+      const segno = (await db.query('SELECT mail2_inviata_data FROM clients WHERE id=$1', [idCli])).rows[0].mail2_inviata_data;
+      dice(segno !== null, '🔴 e la scheda la segna come INVIATA anche senza contratto', 'mail2_inviata_data = ' + segno);
+      cInd = await db.query("SELECT stato FROM contratti WHERE tipo='cliente' AND percorso_id=$1", [idPercInd]);
+      dice(cInd.rows[0].stato === 'in_attesa', '  e lo stato del contratto non si muove: il contratto non è partito');
+    } finally {
+      mailer.mailerReady = prontaPrima;
+    }
     // ── La sezione «Contratti» in Amministrazione ───────────────────────────
     // ⚠️ Questa prova esiste perché il 30/08, scrivendo la pagina, avevo chiamato
     //    una `footerNoesys()` che non esiste: `node --check` non se ne accorge,
