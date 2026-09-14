@@ -687,10 +687,21 @@ function renderSessionData(tool, jsonStr) {
         ${top5.length ? top5.map((v,i) => `<span style="display:inline-block;margin:3px 4px 3px 0;padding:3px 10px;border-radius:14px;background:#1A5280;color:#fff;font-size:12px;font-weight:600">${i+1}. ${esc(v)}</span>`).join('') : '<span style="color:#aaa;font-size:12px">—</span>'}</div>
         ${altri.length ? `<div><span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#9AA0AA">Altri valori selezionati</span><br>${altri.map(v => `<span style="display:inline-block;margin:3px 4px 3px 0;padding:3px 10px;border-radius:14px;background:#eef1f5;color:#4a5568;font-size:12px">${esc(v)}</span>`).join('')}</div>` : ''}`;
     }
+    // ⭐ 14/09/2026 — Abilità ha il Top 5 come Valori (chiesto da Germano dopo la
+    //    sessione con trenta abilità accavallate). Un salvataggio di prima non ha
+    //    `top5`: si mostra solo l'elenco, come sempre.
     case 'abilita': {
-      const abilita = (d.zone || []).map(z => z.value).filter(Boolean);
-      return `<span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#9AA0AA">Abilità selezionate</span><br>
-        ${abilita.length ? abilita.map(v => `<span style="display:inline-block;margin:3px 4px 3px 0;padding:3px 10px;border-radius:14px;background:#eef1f5;color:#4a5568;font-size:12px">${esc(v)}</span>`).join('') : '<span style="color:#aaa;font-size:12px">—</span>'}`;
+      const top5 = (d.top5 || []).filter(Boolean);
+      const zone = (d.zone || []).map(z => z.value).filter(Boolean);
+      const altre = zone.filter(v => !top5.includes(v));
+      const chip = (v, forte) => `<span style="display:inline-block;margin:3px 4px 3px 0;padding:3px 10px;border-radius:14px;${forte ? 'background:#B8941E;color:#fff;font-weight:600' : 'background:#eef1f5;color:#4a5568'};font-size:12px">${esc(v)}</span>`;
+      if (!top5.length) {
+        return `<span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#9AA0AA">Abilità selezionate</span><br>
+        ${zone.length ? zone.map(v => chip(v, false)).join('') : '<span style="color:#aaa;font-size:12px">—</span>'}`;
+      }
+      return `<div style="margin-bottom:8px"><span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#9AA0AA">Le 5 che la caratterizzano</span><br>
+        ${top5.map((v,i) => chip((i+1) + '. ' + v, true)).join('')}</div>
+        ${altre.length ? `<div><span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#9AA0AA">Altre abilità selezionate</span><br>${altre.map(v => chip(v, false)).join('')}</div>` : ''}`;
     }
     // Le due ruote nuove salvano esattamente come la Ruota della Vita
     // ({areas:[{name,value}]}): stesso disegno, nessuna riga in più.

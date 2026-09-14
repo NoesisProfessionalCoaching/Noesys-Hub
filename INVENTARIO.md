@@ -2,7 +2,7 @@
 
 Non si modifica a mano: lo riscrive `npm run prova`. Se un numero qui non torna con quello che ricordi, è cambiato il codice.
 
-- `server/routes.js`: **3694 righe**, **92 rotte**; `server/pagine/`: **6 file**, **6144 righe**, **15 pagine**
+- `server/routes.js`: **3694 righe**, **92 rotte**; `server/pagine/`: **6 file**, **6155 righe**, **15 pagine**
 - moduli in `server/`: **30** (8 usano `db.js`, 22 no)
 - prove in `npm run prova`: **17**, in questo ordine: prova-file → prova-js → prova-pagine → prova-fiscale → prova-proforma → prova-tranche → prova-incassi → prova-sedute → prova-appuntamenti → prova-final-programmata → prova-migrazione → prova-barriere → prova-conformita → prova-automazione → prova-comuni → inventario → prova-timbro
 
