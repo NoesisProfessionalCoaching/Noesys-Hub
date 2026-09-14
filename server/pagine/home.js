@@ -178,9 +178,9 @@ function homePage(d, req) {
     <section class="hm-att">
       <h2 style="margin-bottom:14px">Chiede attenzione</h2>
       ${attenzione || `<div class="card" style="color:var(--muted);font-size:13px">Non c'è nulla in sospeso: nessuna bozza da approvare, nessun percorso da chiudere, nessun richiamo in scadenza.</div>`}
-      <div id="ultima-passata" style="font-size:11.5px;color:var(--hint);margin-top:8px">${au.ultima
-        ? `⏱ L'automazione (report e moduli da Drive) è passata l'ultima volta il ${itDateTime(au.ultima)}.`
-        : '⏱ L\'automazione (report e moduli da Drive) non ha ancora lasciato traccia di una passata.'}</div>
+      ${/* 14/09/2026 — la riga «l'automazione è passata l'ultima volta il…» è stata
+            tolta (Germano: in home solo i guasti veri). L'ultima passata resta in
+            `automazione_passate`, e il gruppo qui sopra compare solo se qualcosa si rompe. */ ''}
     </section>
 
   </div>

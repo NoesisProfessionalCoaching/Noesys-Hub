@@ -90,10 +90,11 @@ function perHome(righe) {
     for (const x of e.errori || []) {
       voci.push({ testo: `${x.chi ? x.chi + ' — ' : ''}${x.file ? '«' + x.file + '»: ' : ''}${x.err}`, grave: true });
     }
-    for (const x of e.ignorati || []) {
-      voci.push({ testo: `${x.chi ? x.chi + ' — ' : ''}«${x.file}» non comincia con «Report»: ignorato. Rinominalo e verrà letto.`, grave: false });
-    }
-    if (e.rimasti) voci.push({ testo: `${nome}: ${e.rimasti === 1 ? '1 report lasciato' : e.rimasti + ' report lasciati'} alla prossima passata (tetto raggiunto).`, grave: false });
+    // ⭐ 14/09/2026 (Germano, dopo aver visto dodici righe in home): i file
+    //    IGNORATI perché non cominciano con «Report», e il tetto raggiunto, NON
+    //    sono guasti — sono l'automazione che fa il suo lavoro. Tre volte al
+    //    giorno in home erano rumore. Restano scritti nell'esito della passata
+    //    (`ignorati`, `rimasti`), per chi indaga; in home vanno solo le voci gravi.
   }
   return voci;
 }

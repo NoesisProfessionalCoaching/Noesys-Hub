@@ -142,7 +142,7 @@ Non si modifica a mano: lo riscrive `npm run prova`. Se un numero qui non torna 
 |---|---|---|
 | `appuntamenti.js` | 92 | sì |
 | `auth.js` | 31 | sì |
-| `automazione.js` | 102 | sì |
+| `automazione.js` | 103 | sì |
 | `chiama-ui.js` | 39 | no |
 | `claude.js` | 380 | no |
 | `collaudo.js` | 82 | no |

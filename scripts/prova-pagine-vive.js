@@ -881,8 +881,10 @@ const chiama = async (metodo, url, corpo) => {
     dice(/automazione non è riuscita a/.test(home.testo), '  e ha il gruppo «L\'automazione non è riuscita a…»');
     dice(/Drive giù per prova/.test(home.testo), '  con la passata esplosa e la sua causa');
     dice(new RegExp('Report finto\\.docx').test(home.testo) && /Word vuoto o illeggibile/.test(home.testo), '  col report illeggibile, per nome');
-    dice(new RegExp('Verbale ' + marca + '\\.docx').test(home.testo) && /Rinominalo/.test(home.testo), '  e col file ignorato per nome, con cosa fare');
-    dice(/id="ultima-passata"/.test(home.testo) && /passata l'ultima volta il/.test(home.testo), '  e dice quando è passata l\'ultima volta');
+    // ⭐ 14/09/2026 (Germano, «B»): il file ignorato per nome e la riga «passata
+    //    l'ultima volta» NON stanno più in home: solo i guasti veri.
+    dice(!new RegExp('Verbale ' + marca + '\\.docx').test(home.testo) && !/Rinominalo/.test(home.testo), '🔴 il file ignorato per nome NON compare in home');
+    dice(!/id="ultima-passata"/.test(home.testo) && !/passata l'ultima volta il/.test(home.testo), '🔴 e la riga «passata l\'ultima volta» non c\'è più');
     // il pulsante manuale «Cerca nuovi report» lascia anche lui la riga (qui senza chiavi: esplode, e lo dice)
     r = await chiama('POST', '/dashboard/scan-drive', { client_id: idCli });
     dice(r.stato === 500 && /Chiavi Google mancanti/.test(r.testo), 'il pulsante «Cerca nuovi report» senza chiavi dice perché (500 con la causa)', r.stato + ' ' + r.testo.slice(0, 100));

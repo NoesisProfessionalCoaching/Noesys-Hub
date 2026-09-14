@@ -96,8 +96,13 @@ function prova(titolo, atteso, ottenuto) {
   ]);
   prova('una passata esplosa diventa una voce grave con la causa', true, voci.some(v => v.grave && /Chiavi Google mancanti/.test(v.testo) && /report dei clienti/.test(v.testo)));
   prova('un report illeggibile è una voce grave col nome del file', true, voci.some(v => v.grave && /Rossi/.test(v.testo) && /Report X\.docx/.test(v.testo) && /Word vuoto/.test(v.testo)));
-  prova('un file ignorato per nome è una voce NON grave che dice di rinominarlo', true, voci.some(v => !v.grave && /Appunti\.docx/.test(v.testo) && /Rinominalo/.test(v.testo)));
-  prova('il tetto raggiunto è una voce che dice quanti restano', true, voci.some(v => /1 report lasciato/.test(v.testo)));
+  // ⭐ 14/09/2026 (Germano, «B»): in home stanno SOLO i guasti veri. Un file
+  //    ignorato perché non comincia con «Report» e il tetto raggiunto sono
+  //    l'automazione che fa il suo lavoro, non un fallimento: tre volte al giorno
+  //    in home erano rumore. Restano nell'esito (i log), non nella home.
+  prova('🔴 un file ignorato per nome NON produce nessuna voce in home', false, voci.some(v => /Appunti\.docx/.test(v.testo)));
+  prova('🔴 il tetto raggiunto NON produce nessuna voce in home', false, voci.some(v => /lasciat/.test(v.testo)));
+  prova('  e le voci che restano sono tutte gravi', true, voci.length > 0 && voci.every(v => v.grave));
   prova('una passata pulita non produce voci', 0, au.perHome([{ passata: 'moduli', ok: true, esito: { errori: [], ignorati: [] } }]).length);
   prova('nessuna passata: nessuna voce, non un errore', [], au.perHome([]));
 
