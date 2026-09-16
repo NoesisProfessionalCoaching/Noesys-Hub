@@ -4,6 +4,7 @@ const bcrypt  = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const db      = require('./db');
 const { signToken, requireCoach, COOKIE_NAME } = require('./auth');
+const mailStrumenti = require('./mail-strumenti');   // per la Matrice il permesso «fino alla sessione» chiude la mezzanotte prima
 const { logoCompact, logoPicto } = require('./logo');
 const drive = require('./google-drive');
 const scan = require('./scan');
@@ -756,9 +757,14 @@ router.post('/dashboard/clients/:id/permessi', requireCoach, express.json(), asy
       } else {
         // Fine giornata di quel giorno, ora italiana: durante la sessione successiva
         // il lavoro si deve poter ancora aprire, per guardarlo insieme.
+        // ⭐ Eccezione (Germano, 15/09/2026): la Matrice dell'Identità chiude alla
+        // mezzanotte che APRE il giorno della sessione; in sessione si guarda dall'Hub.
+        // Chi chiude prima lo dice server/mail-strumenti.js, non questa rotta.
+        const fine = mailStrumenti.chiudePrimaDellaSessione(tool)
+          ? `($4::date + INTERVAL '0 second') AT TIME ZONE 'Europe/Rome'`
+          : `(($4::date + INTERVAL '1 day') - INTERVAL '1 second') AT TIME ZONE 'Europe/Rome'`;
         await db.query(
-          `INSERT INTO permessi_strumenti (id, client_id, tool, scade_il)
-           VALUES ($1, $2, $3, ((($4::date + INTERVAL '1 day') - INTERVAL '1 second') AT TIME ZONE 'Europe/Rome'))`,
+          `INSERT INTO permessi_strumenti (id, client_id, tool, scade_il) VALUES ($1, $2, $3, (${fine}))`,
           [pid, client.id, tool, scad]);
       }
     } else {

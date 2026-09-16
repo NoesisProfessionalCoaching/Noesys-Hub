@@ -2,8 +2,8 @@
 
 Non si modifica a mano: lo riscrive `npm run prova`. Se un numero qui non torna con quello che ricordi, è cambiato il codice.
 
-- `server/routes.js`: **3694 righe**, **92 rotte**; `server/pagine/`: **6 file**, **6169 righe**, **15 pagine**
-- moduli in `server/`: **30** (8 usano `db.js`, 22 no)
+- `server/routes.js`: **3700 righe**, **92 rotte**; `server/pagine/`: **6 file**, **6231 righe**, **15 pagine**
+- moduli in `server/`: **31** (8 usano `db.js`, 23 no)
 - prove in `npm run prova`: **17**, in questo ordine: prova-file → prova-js → prova-pagine → prova-fiscale → prova-proforma → prova-tranche → prova-incassi → prova-sedute → prova-appuntamenti → prova-final-programmata → prova-migrazione → prova-barriere → prova-conformita → prova-automazione → prova-comuni → inventario → prova-timbro
 
 ## Le pagine (funzioni che finiscono in Page)
@@ -12,12 +12,12 @@ Non si modifica a mano: lo riscrive `npm run prova`. Se un numero qui non torna 
 - `proformaPage` (pagine/amministrazione.js, riga 77)
 - `contrattiAmmPage` (pagine/amministrazione.js, riga 562)
 - `emittentePage` (pagine/amministrazione.js, riga 677)
-- `loginPage` (pagine/clienti.js, riga 24)
-- `dashboardPage` (pagine/clienti.js, riga 42)
-- `driveDiagPage` (pagine/clienti.js, riga 192)
-- `clientDetailPage` (pagine/clienti.js, riga 239)
-- `cercaPage` (pagine/clienti.js, riga 2260)
-- `icfPage` (pagine/clienti.js, riga 2342)
+- `loginPage` (pagine/clienti.js, riga 25)
+- `dashboardPage` (pagine/clienti.js, riga 43)
+- `driveDiagPage` (pagine/clienti.js, riga 193)
+- `clientDetailPage` (pagine/clienti.js, riga 240)
+- `cercaPage` (pagine/clienti.js, riga 2284)
+- `icfPage` (pagine/clienti.js, riga 2366)
 - `homePage` (pagine/home.js, riga 18)
 - `leadsPage` (pagine/lead.js, riga 9)
 - `committentiPage` (pagine/progetti.js, riga 16)
@@ -150,7 +150,7 @@ Non si modifica a mano: lo riscrive `npm run prova`. Se un numero qui non torna 
 | `contratto-testi.js` | 896 | no |
 | `contratto.js` | 292 | no |
 | `date-it.js` | 58 | no |
-| `db.js` | 1093 | no |
+| `db.js` | 1100 | no |
 | `documenti.js` | 112 | no |
 | `fiscale.js` | 501 | no |
 | `google-drive.js` | 390 | no |
@@ -158,13 +158,14 @@ Non si modifica a mano: lo riscrive `npm run prova`. Se un numero qui non torna 
 | `incassi.js` | 273 | no |
 | `index.js` | 75 | sì |
 | `logo.js` | 37 | no |
+| `mail-strumenti.js` | 83 | no |
 | `mailer.js` | 68 | no |
 | `maturato.js` | 139 | sì |
 | `moduli.js` | 127 | no |
 | `pagina-js.js` | 155 | no |
 | `piano-ui.js` | 598 | no |
 | `proforma.js` | 584 | no |
-| `routes.js` | 3694 | sì |
+| `routes.js` | 3700 | sì |
 | `scan-moduli.js` | 215 | sì |
 | `scan.js` | 416 | sì |
 | `sedute.js` | 53 | no |

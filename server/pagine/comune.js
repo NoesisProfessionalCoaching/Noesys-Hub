@@ -37,6 +37,7 @@ const STRUMENTI = [
   { key: 'swot',              nome: 'SWOT Analysis',             icona: '⚖️' },
   { key: 'covey-eisenhower',  nome: 'Matrice Covey/Eisenhower',  icona: '⏳' },
   { key: 'brainstorming',     nome: 'Brainstorming',             icona: '💡' },
+  { key: 'matrice-identita',  nome: 'Matrice dell\'Identità',    icona: '🪞' },
 ];
 
 const TOOL_LABEL = Object.fromEntries(STRUMENTI.map(t => [t.key, `${t.icona} ${t.nome}`]));
@@ -674,7 +675,7 @@ function renderMatrice(d, cfg) {
   return `${testa}${blocks}${coda}`;
 }
 
-function renderSessionData(tool, jsonStr) {
+function renderSessionData(tool, jsonStr, opts) {
   let d;
   try { d = JSON.parse(jsonStr); } catch(e) { return '<em style="color:#aaa">Dati non leggibili</em>'; }
 
@@ -753,6 +754,43 @@ function renderSessionData(tool, jsonStr) {
       return `${esplorate.length ? `<div style="margin-bottom:8px"><span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#9AA0AA">Idee esplorate</span><br>${esplorate.map(t => `<span style="display:inline-block;margin:3px 4px 3px 0;padding:3px 10px;border-radius:14px;background:#eef1f5;color:#4a5568;font-size:12px">${esc(t)}</span>`).join('')}</div>` : ''}
         ${selezionate.length ? `<div><span style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#9AA0AA">Idee selezionate</span><br>${selezionate.map(blocco).join('')}</div>` : ''}
         ${!esplorate.length && !selezionate.length ? '<span style="color:#aaa;font-size:12px">—</span>' : ''}`;
+    }
+    case 'matrice-identita': {
+      // La Matrice dell'Identità (Dilts e DeLozier): sei riquadri numerati, con
+      // risposta e metafora. Germano, 15/09/2026: i NOMI dei riquadri (Centro,
+      // Potenziale, Limitazione, Confine, Debolezza/Difetto, Ombra) si vedono
+      // solo quando il permesso del cliente è scaduto; prima, i numeri. È il
+      // chiamante a dire com'è messo il permesso (`opts.permessoAperto`).
+      const NOMI = [null, 'Centro', 'Potenziale', 'Limitazione', 'Confine', 'Debolezza / Difetto', 'Ombra'];
+      const SOTTO = [null, 'chi sono e voglio essere', 'chi non sono ma posso essere', 'chi non sono e vorrei essere',
+                     'chi non sono e non voglio essere', 'chi non voglio essere ma posso diventare', 'chi sono e non voglio essere'];
+      const INCROCI = [null, 'Sono · Voglio essere', 'Posso essere · Voglio essere', 'Non sono · Voglio essere',
+                       'Non sono · Non voglio essere', 'Posso essere · Non voglio essere', 'Sono · Non voglio essere'];
+      const DOMANDE = [null, 'Cosa vuoi essere, e credi che sarai sempre?', 'Cosa vuoi essere, e credi che potresti diventare?',
+                       'Cosa vuoi essere, ma credi che non sarai mai?', 'Cosa non vuoi essere, e credi che non sarai mai?',
+                       'Cosa non vuoi essere, ma temi di poter diventare?', 'Cosa non vuoi essere, ma credi che sarai sempre?'];
+      const aperto = !!(opts && opts.permessoAperto);
+      const aperti = Math.min(6, Math.max(1, parseInt(d.aperti, 10) || 1));
+      const vuoto = t => `<div style="color:#aaa;font-size:12px">— ${t}</div>`;
+      const blocchi = [];
+      for (let i = 1; i <= 6; i++) {
+        const r = (d.riquadri && d.riquadri['r' + i]) || {};
+        const risposta = String(r.risposta || '').trim(), metafora = String(r.metafora || '').trim();
+        let corpo;
+        if (i > aperti) corpo = vuoto(aperto ? 'non ancora aperto' : 'non aperto dal cliente');
+        else if (!risposta && !metafora) corpo = vuoto(aperto ? 'ancora vuoto' : 'lasciato vuoto dal cliente');
+        else corpo = (risposta ? `<div style="font-size:12.5px;color:#2C3E50;margin-top:4px;white-space:pre-wrap">${esc(risposta)}</div>` : '')
+                   + (metafora ? `<div style="font-size:12.5px;color:#B8941E;margin-top:4px"><b style="font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;margin-right:6px">Metafora</b>${esc(metafora)}</div>` : '');
+        blocchi.push(`<div style="margin:6px 0 12px;padding-left:10px;border-left:2px solid #d9dee6">
+          <div style="font-size:12px;font-weight:800;color:#1A5280"><span style="display:inline-block;width:18px;height:18px;border-radius:50%;background:#1A5280;color:#fff;font-size:11px;text-align:center;line-height:18px;margin-right:6px">${i}</span>${aperto ? 'Riquadro ' + i : NOMI[i]}</div>
+          <div style="font-size:11px;font-style:italic;color:#9AA0AA">${SOTTO[i]}${aperto ? '' : ' · ' + INCROCI[i]}</div>
+          <div style="font-size:11.5px;color:#6B7280;margin-top:2px">${DOMANDE[i]}</div>
+          ${corpo}</div>`);
+      }
+      const avviso = aperto
+        ? `<div style="font-size:12px;color:#B45309;background:#FFF7E6;border:1px solid #F3D9A4;border-radius:8px;padding:8px 10px;margin:6px 0 10px">Il cliente ci sta ancora lavorando${opts.scadenza ? ': il permesso scade ' + esc(opts.scadenza) : ''}. I nomi dei riquadri compaiono alla scadenza del permesso.</div>`
+        : '';
+      return avviso + blocchi.join('');
     }
     case 'genogramma': {
       const persone = (d.persons || []).filter(p => p.name);

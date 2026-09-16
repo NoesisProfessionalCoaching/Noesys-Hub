@@ -997,6 +997,54 @@ const chiama = async (metodo, url, corpo) => {
     const sc = await stCli();
     dice(r.stato === 200 && sc.stato === 'da_inviare' && !sc.data_invio && !sc.data_approvazione,
       '✅ ma «Modifica contratto approvato» (→ da inviare) resta possibile, e azzera le due date', r.stato + ' ' + JSON.stringify(sc));
+
+    console.log('\n21f. La Matrice dell\'Identità: il permesso chiude la mezzanotte prima della sessione (15/09)');
+    // Germano, 15/09/2026: per la Matrice il permesso «fino alla prossima sessione» scade
+    // «alla mezzanotte del giorno precedente la sessione successiva»; per gli altri
+    // strumenti resta la fine di quel giorno. Vale sia quando la data c'è già (la rotta
+    // scrive scade_il) sia quando arriva dopo (attende_sessione → la vista). E nella
+    // scheda, finché il permesso è aperto, l'anteprima della Matrice non mostra i nomi.
+    {
+      const pM = await db.query(`INSERT INTO percorsi (id, client_id, tipo, n_sessioni_previste, stato) VALUES (gen_random_uuid(), $1, 'Individuale', 8, 'attivo') RETURNING id`, [idCli]);
+      const idPercM = pM.rows[0].id;
+      const giorno = new Date(Date.now() + 7 * 86400000).toLocaleDateString('sv-SE', { timeZone: 'Europe/Rome' });
+      const fineRoma = async (tool, conData) => (await db.query(
+        `SELECT to_char(fine AT TIME ZONE 'Europe/Rome', 'YYYY-MM-DD HH24:MI:SS') AS f, fine
+           FROM permessi_validi WHERE client_id=$1 AND tool=$2 AND (scade_il IS NOT NULL) = $3 ORDER BY created_at DESC LIMIT 1`, [idCli, tool, conData])).rows[0];
+      // 1) prima che la data ci sia: il permesso aspetta la sessione
+      r = await chiama('POST', `/dashboard/clients/${idCli}/permessi`, { tool: 'matrice-identita', durata: 'sessione' });
+      dice(r.stato === 200 && r.dati && r.dati.ok, 'permesso per la Matrice creato prima che la data della sessione esista', r.stato + ' ' + r.testo.slice(0, 100));
+      let v = await fineRoma('matrice-identita', false);
+      dice(!!v && !isFinite(new Date(v.fine)), '  finché la data non c\'è, resta aperto (nessuna scadenza)', v && String(v.fine));
+      // 2) arriva la data (una seduta confermata che porta la prossima sessione fra 7 giorni)
+      await db.query(`INSERT INTO sedute (id, percorso_id, client_id, tipo, data, scadenza, ore, stato) VALUES (gen_random_uuid(), $1, $2, 'Ongoing', CURRENT_DATE, $3, 1, 'confermata')`, [idPercM, idCli, giorno]);
+      v = await fineRoma('matrice-identita', false);
+      dice(!!v && v.f === giorno + ' 00:00:00', '  arrivata la data, la Matrice chiude alla mezzanotte che apre quel giorno (vista)', v && v.f);
+      // 3) con la data già nota: la rotta scrive la scadenza. SWOT a fine giornata, Matrice a mezzanotte
+      r = await chiama('POST', `/dashboard/clients/${idCli}/permessi`, { tool: 'swot', durata: 'sessione' });
+      v = await fineRoma('swot', true);
+      dice(!!v && v.f === giorno + ' 23:59:59', 'la SWOT «fino alla prossima sessione» arriva a fine giornata, come sempre', v && v.f);
+      r = await chiama('POST', `/dashboard/clients/${idCli}/permessi`, { tool: 'matrice-identita', durata: 'sessione' });
+      v = await fineRoma('matrice-identita', true);
+      dice(!!v && v.f === giorno + ' 00:00:00', 'la Matrice «fino alla prossima sessione» chiude alla mezzanotte che apre quel giorno (rotta)', v && v.f);
+      // 4) la scheda: col permesso aperto niente nomi; chiusi i permessi, i nomi
+      const idSess = uuidv4();
+      await db.query(`INSERT INTO sessions (id, client_id, tool, data) VALUES ($1, $2, 'matrice-identita', $3)`,
+        [idSess, idCli, JSON.stringify({ aperti: 2, riquadri: { r1: { risposta: 'Chi sono davvero', metafora: 'Un albero' } } })]);
+      r = await chiama('GET', `/dashboard/clients/${idCli}`);
+      dice(r.testo.includes('Riquadro 1') && r.testo.includes('Un albero') && !/>Ombra</.test(r.testo) && !/>Centro</.test(r.testo), 'nella scheda, col permesso aperto, la Matrice mostra i numeri e non i nomi');
+      dice(r.testo.includes('ancora lavorando'), '  e dice che il cliente ci sta ancora lavorando');
+      const perm = await db.query(`SELECT id FROM permessi_strumenti WHERE client_id=$1 AND revocato_il IS NULL`, [idCli]);
+      for (const p of perm.rows) { r = await chiama('POST', `/dashboard/clients/${idCli}/permessi/${p.id}/chiudi`); }
+      r = await chiama('GET', `/dashboard/clients/${idCli}`);
+      dice(/>Centro</.test(r.testo) && />Ombra</.test(r.testo) && !r.testo.includes('ancora lavorando'), 'chiusi i permessi, nella scheda compaiono i nomi dei riquadri');
+      // 5) la mail di partenza per la Matrice ha le parole di Germano, e la SWOT quelle di sempre
+      dice(r.testo.includes('il lavoro per la prossima sessione') && r.testo.includes('Come compilarla'), 'la pagina porta il testo della mail della Matrice');
+      await db.query('DELETE FROM sessions WHERE id=$1', [idSess]);
+      await db.query('DELETE FROM permessi_strumenti WHERE client_id=$1', [idCli]);
+      await db.query('DELETE FROM sedute WHERE percorso_id=$1', [idPercM]);
+      await db.query('DELETE FROM percorsi WHERE id=$1', [idPercM]);
+    }
   } catch (e) {
     ko++; console.log('\n🔴 ECCEZIONE: ' + e.message + '\n' + e.stack.split('\n')[1]);
   } finally {

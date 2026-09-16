@@ -77,6 +77,43 @@ function prova(titolo, atteso, ottenuto) {
   const bsVecchio = comune.renderSessionData('brainstorming', JSON.stringify({ exploreCards: [{ id: 1, text: 'Solo idee' }], selectCards: [{ id: 1, text: 'Solo idee' }] }));
   prova('un salvataggio di prima (senza il campo actions) si legge come sempre', [true, 0], [bsVecchio.includes('Solo idee'), (bsVecchio.match(/Azioni/g) || []).length]);
 
+  // ── LA MATRICE DELL'IDENTITÀ (fase 2d del piano strumenti, 15/09/2026) ──
+  // Germano, 15/09: i nomi dei riquadri (Centro, Potenziale, Limitazione, Confine,
+  // Debolezza/Difetto, Ombra) compaiono nell'Hub solo quando il permesso è scaduto;
+  // prima, i numeri. Sei riquadri in ordine 1 → 6, ognuno con risposta e metafora.
+  console.log('\n— L\'ANTEPRIMA DELLA MATRICE DELL\'IDENTITÀ —');
+  const mx = JSON.stringify({ aperti: 3, riquadri: {
+    r1: { risposta: 'Sono una persona che <cerca>', metafora: 'Un faro' },
+    r2: { risposta: 'Potrei diventare…', metafora: '' },
+    r3: { risposta: '', metafora: '' },
+  } });
+  const NOMI = ['Centro', 'Potenziale', 'Limitazione', 'Confine', 'Debolezza / Difetto', 'Ombra'];
+  const aperto = comune.renderSessionData('matrice-identita', mx, { permessoAperto: true });
+  prova('col permesso aperto: nessun nome dei riquadri', [], NOMI.filter(n => aperto.includes(n)));
+  prova('  ma i sei numeri sì, con la domanda originale', [true, true], [aperto.includes('Riquadro 6'), aperto.includes('Cosa non vuoi essere, ma credi che sarai sempre?')]);
+  prova('  e un avviso che il cliente ci sta ancora lavorando', true, /ancora lavorando/.test(aperto));
+  prova('  la risposta si vede per intero e innocua', [true, false], [aperto.includes('Sono una persona che &lt;cerca&gt;'), aperto.includes('<cerca>')]);
+  prova('  la metafora ha la sua etichetta', true, /Metafora[\s\S]*Un faro/.test(aperto));
+  prova('  un riquadro vuoto lo dice, uno non ancora aperto anche', [true, true], [/ancora vuoto/.test(aperto), /non ancora aperto/.test(aperto)]);
+  const chiuso = comune.renderSessionData('matrice-identita', mx, { permessoAperto: false });
+  prova('a permesso scaduto: i sei nomi ci sono tutti', NOMI, NOMI.filter(n => chiuso.includes(n)));
+  prova('  e l\'avviso non c\'è più', false, /ancora lavorando/.test(chiuso));
+  prova('senza il terzo argomento vale «scaduto» (i nomi si vedono)', true, comune.renderSessionData('matrice-identita', mx).includes('Ombra'));
+  prova('la Matrice sta nell\'elenco STRUMENTI dell\'Hub', true, comune.STRUMENTI.some(t => t.key === 'matrice-identita'));
+
+  console.log('\n— LA MAIL CHE ACCOMPAGNA UNO STRUMENTO —');
+  const ms = require('../server/mail-strumenti');
+  const m1 = ms.componi('matrice-identita', { nome: 'Marco', strumento: 'Matrice dell\'Identità', link: 'https://x/c/t/tool/matrice-identita', scadenza: ms.fraseScadenza('matrice-identita', 'sessione', 'il 22 settembre', 3) });
+  prova('la Matrice ha l\'oggetto di Germano', 'La Matrice dell\'Identità — il lavoro per la prossima sessione', m1.subject);
+  prova('  il corpo comincia col nome e contiene il link', [true, true], [m1.body.startsWith('Ciao Marco,'), m1.body.includes('https://x/c/t/tool/matrice-identita')]);
+  prova('  e la scadenza dice «mezzanotte prima della nostra sessione, il 22 settembre»', true, m1.body.includes('fino alla mezzanotte prima della nostra sessione, il 22 settembre.'));
+  prova('  nessun segnaposto è rimasto', false, /\{(NOME|LINK|SCADENZA|STRUMENTO|DATA|ORE)\}/.test(m1.subject + m1.body));
+  prova('  senza data: «prima della nostra prossima sessione»', true, ms.fraseScadenza('matrice-identita', 'sessione', '', 3).includes('prossima sessione'));
+  prova('  a ore: le ore', 'il link resta attivo per 3 ore da quando lo apri.', ms.fraseScadenza('matrice-identita', 'ore', '', 3));
+  const m2 = ms.componi('swot', { nome: 'Marco', strumento: 'SWOT Analysis', link: 'L', scadenza: ms.fraseScadenza('swot', 'sessione', 'il 22 settembre', 3) });
+  prova('gli altri strumenti tengono il testo di sempre', ['SWOT Analysis', true, true], [m2.subject, m2.body.includes('lavorare sulla SWOT Analysis'), m2.body.includes('così lo guardiamo insieme')]);
+  prova('la Matrice chiude la mezzanotte prima della sessione; la SWOT no', [true, false], [ms.chiudePrimaDellaSessione('matrice-identita'), ms.chiudePrimaDellaSessione('swot')]);
+
   console.log(falliti ? `\n🔴 ${falliti} prove fallite` : '\n✅ pezzi comuni: tutte le prove passano');
   process.exit(falliti ? 1 : 0);
 })();

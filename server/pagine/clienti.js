@@ -20,6 +20,7 @@ const sedute = require('../sedute');
 const statoUi = require('../stato-ui');
 const tranche = require('../tranche');
 const { AREA_COLOR, FONTE_LABEL, ORE_TIPO, PERMESSO_ORE_SESSIONE, PLATFORM_URL, STATO_CLIENTE, STRUMENTI, TOOL_LABEL, areaOptions, attr, baseStyle, composeAddress, esc, fmtOre, fonteOptions, headerNoesys, isProgrammata, itDate, itDateTime, jsModalePdf, jsStr, meseEsteso, modalePdf, oggiIso, prezzoPercorso, renderSedutaRow, renderSessionData, scegliPercorsoContratto, sezionePieghevole, socialOptions } = require('./comune');
+const mailStrumenti = require('../mail-strumenti');   // i testi della mail che accompagna uno strumento (15/09)
 
 function loginPage(error) {
   return `<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8"><title>Hub allenamento ICF — Accesso</title>${baseStyle()}</head><body>
@@ -801,6 +802,12 @@ Germano`;
   // recenti (le due ruote, SWOT, Covey/Eisenhower): comparivano col nome tecnico.
   // Le etichette vengono da STRUMENTI (in cima al file), la stessa lista che
   // riempie la tendina dei permessi: così non possono divergere.
+  // La Matrice dell'Identità mostra i nomi dei riquadri solo a permesso scaduto (Germano,
+  // 15/09/2026): per ogni strumento si guarda se c'è un permesso ancora valido che lo copre.
+  const permessoPer = tool => permessi.find(p => p.valido && (!p.tool || p.tool === tool));
+  const optsAnteprima = tool => { const p = permessoPer(tool); return p
+    ? { permessoAperto: true, scadenza: p.attende_sessione ? 'con la prossima sessione, non ancora fissata' : ('il ' + itDateTime(p.fine)) }
+    : { permessoAperto: false }; };
   const strumentiItems = sessions.length === 0
     ? `<div class="empty">Nessuno strumento compilato dal cliente.</div>`
     : sessions.map(s => `
@@ -811,7 +818,7 @@ Germano`;
           <span style="color:#aaa;font-size:12px">· ${itDateTime(s.created_at)}</span>
           <span style="margin-left:auto;font-size:11px;color:#aaa">agg. ${itDateTime(s.updated_at)}</span>
         </summary>
-        <div class="acc-body" style="line-height:1.7">${renderSessionData(s.tool, s.data)}</div>
+        <div class="acc-body" style="line-height:1.7">${renderSessionData(s.tool, s.data, optsAnteprima(s.tool))}</div>
       </details>`).join('');
   const strumentiHtml = `
     <div class="card">
@@ -1406,8 +1413,8 @@ Germano`;
         <label id="perm-lbl-sessione" style="display:flex;align-items:flex-start;gap:8px;margin:0;text-transform:none;letter-spacing:0;font-weight:400;font-size:13px">
           <input type="radio" name="perm-durata" value="sessione" id="perm-r-sessione" style="width:auto;margin:3px 0 0">
           <span>${prossimaSess ? `Fino alla prossima sessione — <strong>${itDate(prossimaSess)}</strong>` : 'Fino alla prossima sessione'}<br><span style="color:#8a94a6;font-size:12px">${prossimaSess
-            ? 'Arriva a fine giornata di quel giorno, così il lavoro lo aprite insieme in sessione. Vale per un solo strumento, non per tutto il portale.'
-            : 'La data non è ancora nei report: il collegamento resta aperto finché non la fissate, e allora si aggancia da sé a quel giorno.'}</span></span>
+            ? '<span id="perm-sess-hint">Arriva a fine giornata di quel giorno, così il lavoro lo aprite insieme in sessione.</span> Vale per un solo strumento, non per tutto il portale.'
+            : '<span id="perm-sess-hint">La data non è ancora nei report: il collegamento resta aperto finché non la fissate, e allora si aggancia da sé a quel giorno.</span>'}</span></span>
         </label>
       </div>
 
@@ -1762,6 +1769,8 @@ Germano`;
     ` : ''}
     const PERM_NOME_CLIENTE = ${JSON.stringify(mailNome || client.name).replace(/</g, '\\u003c')};
     const PERM_ORE = ${PERMESSO_ORE_SESSIONE};
+    // I testi della mail per strumento (server/mail-strumenti.js): la Matrice ha le parole di Germano.
+    const PERM_TESTI = ${JSON.stringify(mailStrumenti.testiPerPagina()).replace(/</g, '\\u003c')};
     const SEDUTE = ${JSON.stringify(Object.fromEntries(sedute.map(s => [s.id, { id: s.id, percorso_id: s.percorso_id, tipo: s.tipo, data: s.data, ore: Number(s.ore), obiettivo: s.obiettivo || '', argomenti: s.argomenti || '', attivita: s.attivita || '', scadenza: s.scadenza || '', prossima_ora: s.prossima_ora || '', eseguita: s.eseguita || '', note: s.note || '' }]))).replace(/</g, '\\u003c')};
     // Dati dei percorsi per riempire la finestra quando si preme "Modifica".
     const PERCORSI_DATI = ${JSON.stringify(Object.fromEntries(percorsi.map(p => [p.id, { id: p.id, tipo: p.tipo || 'Individuale', modalita: p.modalita || 'Standard', prezzo: p.prezzo === null || p.prezzo === undefined ? '' : String(p.prezzo), n_sessioni_previste: Number(p.n_sessioni_previste) || 8, promo: !!p.promo, sconto_note: p.sconto_note || '', data_inizio: p.data_inizio ? String(p.data_inizio).slice(0, 10) : '', prestazione_scambio: p.prestazione_scambio || '', nRate: trPerc.filter(t => t.percorso_id === p.id).length }]))).replace(/</g, '\\u003c')};
@@ -1978,6 +1987,16 @@ Germano`;
       // quindi la scelta è comunque disponibile.
       const disponibile = !!tool;
       r.disabled = !disponibile;
+      // La Matrice chiude alla mezzanotte che apre il giorno della sessione (Germano, 15/09):
+      // la riga d'aiuto lo dice quando è lei lo strumento scelto.
+      const hint = document.getElementById('perm-sess-hint');
+      if (hint) {
+        if (!hint.dataset.base) hint.dataset.base = hint.textContent;
+        const t = PERM_TESTI.perStrumento[tool];
+        hint.textContent = (t && t.chiudePrimaDellaSessione)
+          ? 'Per questo strumento il link si chiude alla mezzanotte che apre il giorno della sessione: in sessione lo guardate qui, nell\\'Hub.'
+          : hint.dataset.base;
+      }
       lbl.style.opacity = disponibile ? '1' : '0.45';
       if (!disponibile) document.querySelector('input[name="perm-durata"][value="ore"]').checked = true;
       // La mail si manda solo per uno strumento singolo, mai per il portale.
@@ -1996,26 +2015,31 @@ Germano`;
       const art = (g === 8 || g === 11) ? "l'" : 'il ';
       return art + g + ' ' + PERM_MESI[parseInt(p[1], 10) - 1];
     }
+    // Il testo di partenza della mail: per strumento (PERM_TESTI, da server/mail-strumenti.js).
+    // La Matrice dell'Identità ha le parole di Germano (15/09); gli altri il testo di sempre.
     function componiMail() {
       const tool = document.getElementById('perm-tool').value;
       if (!tool) return;
       const durata = document.querySelector('input[name="perm-durata"]:checked').value;
       const nome = PERM_NOMI[tool] || tool;
       const link = PERM_BASE + '/tool/' + tool;
+      const t = PERM_TESTI.perStrumento[tool] || PERM_TESTI.generico;
       let scadenza;
-      if (durata !== 'sessione') {
+      if (t.scadenza) {
+        scadenza = durata !== 'sessione' ? t.scadenza.ore.replace('{ORE}', PERM_ORE)
+                 : PERM_SCAD ? t.scadenza.sessioneConData.replace('{DATA}', permDataInLettere(PERM_SCAD))
+                 : t.scadenza.sessioneSenzaData;
+      } else if (durata !== 'sessione') {
         scadenza = 'Resta attivo per ' + PERM_ORE + ' ore da quando lo apri.';
       } else if (PERM_SCAD) {
         scadenza = 'Resta attivo fino alla nostra prossima sessione, ' + permDataInLettere(PERM_SCAD) + ', così lo guardiamo insieme.';
       } else {
         scadenza = 'Resta attivo fino alla nostra prossima sessione: appena fissiamo la data lo guardiamo insieme.';
       }
-      document.getElementById('perm-subject').value = nome;
-      document.getElementById('perm-body').value =
-        'Ciao ' + PERM_NOME_CLIENTE + ',\\n\\n' +
-        'qui sotto trovi il collegamento per lavorare sulla ' + nome +
-        ': puoi aprirlo quando vuoi e riprenderlo più volte, quello che scrivi resta salvato.\\n' +
-        scadenza + '\\n\\n' + link + '\\n\\nA presto,\\nGermano';
+      const sost = s => s.split('{NOME}').join(PERM_NOME_CLIENTE).split('{STRUMENTO}').join(nome)
+                         .split('{LINK}').join(link).split('{SCADENZA}').join(scadenza);
+      document.getElementById('perm-subject').value = sost(t.subject);
+      document.getElementById('perm-body').value = sost(t.body);
     }
     async function creaPermesso(conMail) {
       const tool   = document.getElementById('perm-tool').value;

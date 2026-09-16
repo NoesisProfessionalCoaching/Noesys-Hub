@@ -930,6 +930,13 @@ async function init() {
   // quell'errore e l'applicazione NON PARTE. Con DROP + CREATE qualunque cambio
   // futuro passa. La vista non contiene dati, solo il modo di calcolare la
   // scadenza: buttarla e rifarla a ogni avvio non perde niente.
+  // Gli strumenti che chiudono la mezzanotte PRIMA della sessione (oggi la Matrice
+  // dell'Identità, Germano 15/09/2026) li dice server/mail-strumenti.js; qui entrano
+  // nella vista come elenco fra apici. Se l'elenco è vuoto, un valore che non
+  // combacia con nessuna key.
+  const primaDellaSessione = Object.keys(require('./mail-strumenti').TESTI)
+    .filter(k => require('./mail-strumenti').chiudePrimaDellaSessione(k))
+    .map(k => `'${k.replace(/'/g, '')}'`).join(', ') || "'nessuno'";
   await query(`DROP VIEW IF EXISTS permessi_validi`);
   await query(`
     CREATE VIEW permessi_validi AS
@@ -938,7 +945,7 @@ async function init() {
            CASE
              WHEN p.scade_il IS NOT NULL      THEN p.scade_il
              WHEN p.attende_sessione          THEN COALESCE(
-                    (SELECT ((s.scadenza::date + INTERVAL '1 day' - INTERVAL '1 second')
+                    (SELECT ((s.scadenza::date + (CASE WHEN p.tool IN (${primaDellaSessione}) THEN INTERVAL '0 second' ELSE INTERVAL '1 day' - INTERVAL '1 second' END))
                              AT TIME ZONE 'Europe/Rome')
                        FROM sedute s
                       WHERE s.client_id = p.client_id AND s.stato = 'confermata'

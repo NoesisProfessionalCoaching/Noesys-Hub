@@ -122,8 +122,8 @@ if (fs.existsSync(path.join(TOOLS_REPO, 'server', 'routes.js'))) {
     const q = k.replace(/[-]/g, '\\-');
     const elenco = new RegExp(`\\{\\s*key:\\s*'${q}',\\s*label:`).test(src);
     const famiglia = new RegExp(`keys:\\s*\\[[^\\]]*'${q}'`).test(src);
-    const etichetta = new RegExp(`(?:^|[{,])\\s*'?${q}'?\\s*:\\s*'[^']+'`, 'm').test(src);
-    const descrizione = new RegExp(`key:\\s*'${q}',\\s*label:\\s*'[^']+',\\s*desc:`).test(src);
+    const etichetta = new RegExp(`(?:^|[{,])\\s*'?${q}'?\\s*:\\s*'(?:[^'\\\\]|\\\\.)+'`, 'm').test(src);
+    const descrizione = new RegExp(`key:\\s*'${q}',\\s*label:\\s*'(?:[^'\\\\]|\\\\.)+',\\s*desc:`).test(src);
     const file = fs.existsSync(path.join(TOOLS_REPO, 'public', 'tools', k + '.html'));
     return { elenco, famiglia, etichetta, descrizione, file };
   }
