@@ -3,8 +3,8 @@
 Non si modifica a mano: lo riscrive `npm run prova`. Se un numero qui non torna con quello che ricordi, è cambiato il codice.
 
 - `server/routes.js`: **3700 righe**, **92 rotte**; `server/pagine/`: **6 file**, **6231 righe**, **15 pagine**
-- moduli in `server/`: **31** (8 usano `db.js`, 23 no)
-- prove in `npm run prova`: **17**, in questo ordine: prova-file → prova-js → prova-pagine → prova-fiscale → prova-proforma → prova-tranche → prova-incassi → prova-sedute → prova-appuntamenti → prova-final-programmata → prova-migrazione → prova-barriere → prova-conformita → prova-automazione → prova-comuni → inventario → prova-timbro
+- moduli in `server/`: **32** (8 usano `db.js`, 24 no)
+- prove in `npm run prova`: **18**, in questo ordine: prova-file → prova-js → prova-pagine → prova-fiscale → prova-proforma → prova-tranche → prova-incassi → prova-sedute → prova-appuntamenti → prova-firma-mail → prova-final-programmata → prova-migrazione → prova-barriere → prova-conformita → prova-automazione → prova-comuni → inventario → prova-timbro
 
 ## Le pagine (funzioni che finiscono in Page)
 
@@ -152,6 +152,7 @@ Non si modifica a mano: lo riscrive `npm run prova`. Se un numero qui non torna 
 | `date-it.js` | 58 | no |
 | `db.js` | 1100 | no |
 | `documenti.js` | 112 | no |
+| `firma-mail.js` | 83 | no |
 | `fiscale.js` | 501 | no |
 | `google-drive.js` | 390 | no |
 | `google-token.js` | 48 | no |
@@ -159,7 +160,7 @@ Non si modifica a mano: lo riscrive `npm run prova`. Se un numero qui non torna 
 | `index.js` | 75 | sì |
 | `logo.js` | 37 | no |
 | `mail-strumenti.js` | 83 | no |
-| `mailer.js` | 68 | no |
+| `mailer.js` | 77 | no |
 | `maturato.js` | 139 | sì |
 | `moduli.js` | 127 | no |
 | `pagina-js.js` | 155 | no |

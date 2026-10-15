@@ -35,18 +35,27 @@ async function getAccessToken() {
 }
 
 // Costruisce il messaggio MIME completo (RFC822) con eventuali allegati.
-function buildRaw({ from, to, subject, text, attachments }) {
+function buildRaw({ from, to, subject, text, html, attachments }) {
   return new Promise((resolve, reject) => {
-    new MailComposer({ from, to, subject, text, attachments: attachments || [] })
+    new MailComposer({ from, to, subject, text, html, attachments: attachments || [] })
       .compile().build((err, msg) => (err ? reject(err) : resolve(msg)));
   });
 }
 
-// Invia una mail via Gmail API. `attachments` = [{ filename, content(Buffer), contentType }].
-async function sendMail({ to, subject, text, attachments }) {
+// ✍️ 15/10/2026 — ogni mail esce con la firma di Germano (firma a mano, nome, logo,
+// sito e mail: server/firma-mail.js), in due versioni, grafica e solo testo. Il testo
+// che arriva qui è quello di sempre: il nome in fondo lo toglie la firma.
+const firma = require('./firma-mail');
+async function preparaMessaggio({ to, subject, text, attachments }) {
   const mittente = process.env.GMAIL_USER || 'noesys.professionalcoaching@gmail.com';
   const from = '"Noesys Professional Coaching" <' + mittente + '>';
-  const rawBuf = await buildRaw({ from, to, subject, text, attachments });
+  const f = firma.componi(text);
+  return buildRaw({ from, to, subject, text: f.text, html: f.html, attachments: [...(attachments || []), ...f.immagini] });
+}
+
+// Invia una mail via Gmail API. `attachments` = [{ filename, content(Buffer), contentType }].
+async function sendMail({ to, subject, text, attachments }) {
+  const rawBuf = await preparaMessaggio({ to, subject, text, attachments });
   const raw = rawBuf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   const token = await getAccessToken();
   // ⏱ Fetta 2.3: un limite di tempo. Niente ritentativo: una mail ripetuta
@@ -64,4 +73,4 @@ async function sendMail({ to, subject, text, attachments }) {
   return { id: d.id, threadId: d.threadId, accepted: [to] };
 }
 
-module.exports = { sendMail, mailerReady };
+module.exports = { sendMail, mailerReady, preparaMessaggio };
