@@ -40,7 +40,7 @@ const ultima = t => t.trim().split('\n').pop().trim();
   const c = firma.componi('Ciao Anna,\n\nscarica da qui:\nhttps://esempio.it/x.\n\n<b>non grassetto</b> & co\n\nA presto,\nGermano');
   prova('la firma a mano c\'è (in linea, cid)', c.html.includes(`src="cid:${firma.CID_FIRMA}"`));
   prova('il logo c\'è (in linea, cid)', c.html.includes(`src="cid:${firma.CID_LOGO}"`));
-  prova('sito e mail cliccabili, uno sotto l\'altro, col trattino davanti (variante A)', /—&nbsp;<a href="https:\/\/noesys-group\.com"[^]*?<br>\s*—&nbsp;<a href="mailto:info@noesys-group\.com"/.test(c.html));
+  prova('mail e sito cliccabili, uno sotto l\'altro, col trattino davanti, PRIMA la mail', /—&nbsp;<a href="mailto:info@noesys-group\.com"[^]*?<br>\s*—&nbsp;<a href="https:\/\/noesys-group\.com"/.test(c.html));
   prova('il logo è largo 196 px (−15%)', /cid:logo-noesys@noesys" alt="[^"]*" width="196"/.test(c.html));
   prova('il collegamento del testo è cliccabile, il punto finale resta fuori', c.html.includes('<a href="https://esempio.it/x" style="color:#223B6E">https://esempio.it/x</a>.'));
   prova('il testo non diventa codice (< e & protetti)', c.html.includes('&lt;b&gt;non grassetto&lt;/b&gt; &amp; co') && !c.html.includes('<b>non'));
@@ -48,7 +48,7 @@ const ultima = t => t.trim().split('\n').pop().trim();
   prova('due immagini da allegare, in linea', c.immagini.length === 2 && c.immagini.every(i => i.cid && i.content.length > 1000 && i.contentDisposition === 'inline'));
 
   console.log('== la versione solo testo');
-  prova('finisce con nome, Noesys, sito e mail (col trattino)', /A presto,\n\nGermano Guerriero\nNoesys Professional Coaching\n— noesys-group\.com\n— info@noesys-group\.com\n$/.test(c.text), JSON.stringify(c.text.slice(-120)));
+  prova('finisce con nome, Noesys, sito e mail (col trattino)', /A presto,\n\nGermano Guerriero\nNoesys Professional Coaching\n— info@noesys-group\.com\n— noesys-group\.com\n$/.test(c.text), JSON.stringify(c.text.slice(-120)));
 
   console.log('== il messaggio che spedirebbe l\'Hub');
   process.env.GMAIL_USER = 'info@noesys-group.com';

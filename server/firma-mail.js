@@ -4,7 +4,8 @@
 // la sua firma a mano, il nome scritto, il logo NOESYS Professional Coaching e,
 // uno sotto l'altro, il sito e l'indirizzo (niente social finché non ci sono).
 // Approvata sull'anteprima: logo più piccolo del 15% (196 px), sito e mail in colonna,
-// ognuno con un trattino davanti (variante A: riprende i trattini del logo).
+// ognuno con un trattino davanti (variante A: riprende i trattini del logo); prima la mail,
+// poi il sito (Germano, 15/10 16:30: «telefono, mail, sito» — il telefono solo nella sua casella).
 //
 // Tutte le mail dell'Hub (benvenuto, contratto, permessi degli strumenti, proforma,
 // e-book) si chiudono già col suo nome: qui l'ultima riga «Germano» o «Germano
@@ -57,7 +58,7 @@ function corpoHtml(testo) {
  */
 function componi(testo) {
   const corpo = togliNomeFinale(testo);
-  const text = `${corpo}\n\nGermano Guerriero\nNoesys Professional Coaching\n— ${SITO}\n— ${POSTA}\n`;
+  const text = `${corpo}\n\nGermano Guerriero\nNoesys Professional Coaching\n— ${POSTA}\n— ${SITO}\n`;
   const html = `<!doctype html><html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
 <body style="margin:0;background:#ffffff">
 <div style="max-width:600px;padding:24px 20px;font-family:Helvetica,Arial,sans-serif;font-size:15px;line-height:1.55;color:#2b2b2b">
@@ -67,8 +68,8 @@ ${corpoHtml(corpo)}
 <div style="border-top:1px solid #e3e1db;margin:22px 0 16px;width:240px;height:0;line-height:0;font-size:0">&nbsp;</div>
 <img src="cid:${CID_LOGO}" alt="NOESYS Professional Coaching" width="196" style="display:block;width:196px;height:auto;border:0">
 <div style="font-size:13px;line-height:1.6;color:#6b6b6b;margin-top:10px">
-—&nbsp;<a href="https://${SITO}" style="color:${BLU};text-decoration:none">${SITO}</a><br>
-—&nbsp;<a href="mailto:${POSTA}" style="color:${BLU};text-decoration:none">${POSTA}</a>
+—&nbsp;<a href="mailto:${POSTA}" style="color:${BLU};text-decoration:none">${POSTA}</a><br>
+—&nbsp;<a href="https://${SITO}" style="color:${BLU};text-decoration:none">${SITO}</a>
 </div>
 </div>
 </body></html>`;

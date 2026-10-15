@@ -152,7 +152,7 @@ Non si modifica a mano: lo riscrive `npm run prova`. Se un numero qui non torna 
 | `date-it.js` | 58 | no |
 | `db.js` | 1100 | no |
 | `documenti.js` | 112 | no |
-| `firma-mail.js` | 83 | no |
+| `firma-mail.js` | 84 | no |
 | `fiscale.js` | 501 | no |
 | `google-drive.js` | 390 | no |
 | `google-token.js` | 48 | no |
